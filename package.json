@@ -1,0 +1,43 @@
+{
+  "name": "dp-pi-extensions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpm run check:root && pnpm --filter pi-web-tools check",
+    "check:root": "pnpm run format:check && pnpm run lint && pnpm run typecheck",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "typecheck": "tsc --noEmit",
+    "lsp": "typescript-language-server --stdio"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.82.1",
+    "@earendil-works/pi-coding-agent": "^0.82.1",
+    "@earendil-works/pi-tui": "^0.82.1",
+    "@types/node": "^24.12.4",
+    "oxfmt": "^0.61.0",
+    "oxlint": "^1.76.0",
+    "typebox": "^1.1.38",
+    "typescript": "^5.9.3",
+    "typescript-language-server": "^5.3.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "packageManager": "pnpm@11.17.0",
+  "pi": {
+    "extensions": [
+      "./src/index.ts",
+      "./extensions/web-tools/index.ts"
+    ],
+    "skills": [
+      "./extensions/web-tools/skills"
+    ]
+  }
+}
