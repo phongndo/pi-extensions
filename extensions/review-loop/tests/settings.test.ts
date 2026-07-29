@@ -1,0 +1,108 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import {
+  defaultSettings,
+  loadSettings,
+  normalizeSettings,
+  ReviewLoopSettingsStore,
+  saveSettings,
+} from "../settings.ts";
+
+test("defaults and migrates the pre-versioned shape", () => {
+  assert.deepEqual(defaultSettings(), {
+    version: 1,
+    maximumPasses: 4,
+    requiredCleanRuns: 1,
+    fixP3Findings: true,
+    fixerContext: "continuous",
+  });
+  assert.deepEqual(
+    normalizeSettings({
+      maxPasses: 6,
+      requiredCleanRuns: 2,
+      fixP3: false,
+      fixerContext: "fresh",
+      reviewerModel: "openai/gpt-test",
+    }),
+    {
+      version: 1,
+      maximumPasses: 6,
+      requiredCleanRuns: 2,
+      fixP3Findings: false,
+      fixerContext: "fresh",
+      reviewerModel: { provider: "openai", modelId: "gpt-test" },
+    },
+  );
+});
+
+test("supports an unlimited pass cap", () => {
+  assert.equal(
+    normalizeSettings({ maximumPasses: "unlimited", requiredCleanRuns: 20 }).maximumPasses,
+    "unlimited",
+  );
+  assert.throws(
+    () => normalizeSettings({ maximumPasses: "unlimited", requiredCleanRuns: 21 }),
+    /between 1 and 20/,
+  );
+});
+
+test("rejects invalid ranges and model references", () => {
+  assert.throws(() => normalizeSettings({ maximumPasses: 0 }), /between 1 and 20/);
+  assert.throws(
+    () => normalizeSettings({ maximumPasses: 2, requiredCleanRuns: 3 }),
+    /between 1 and 2/,
+  );
+  assert.throws(() => normalizeSettings({ reviewerModel: "missing-slash" }), /provider\/model/);
+  assert.throws(() => normalizeSettings({ reviewerThinking: "ultra" }), /not a supported/);
+  assert.throws(() => normalizeSettings({ version: 99 }), /Unsupported/);
+});
+
+test("rejects unknown settings and model-reference fields", () => {
+  assert.throws(
+    () => normalizeSettings({ verificationComand: "pnpm test" }),
+    /unknown field: verificationComand/,
+  );
+  assert.throws(
+    () =>
+      normalizeSettings({
+        reviewerModel: { provider: "openai", modelId: "gpt-test", modelID: "typo" },
+      }),
+    /unknown field: modelID/,
+  );
+});
+
+test("persists atomically and reports corrupt files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "review-loop-settings-"));
+  const path = join(directory, "nested", "review-loop.json");
+  const settings = defaultSettings();
+  settings.verificationCommand = "pnpm test";
+  await saveSettings(settings, path);
+  assert.deepEqual(await loadSettings(path), settings);
+  assert.equal((JSON.parse(await readFile(path, "utf8")) as { version: number }).version, 1);
+
+  await writeFile(path, '{"verificationComand":"pnpm test"}', "utf8");
+  await assert.rejects(loadSettings(path), /Invalid review-loop settings.*verificationComand/);
+
+  await writeFile(path, "{bad", "utf8");
+  await assert.rejects(loadSettings(path), /Malformed JSON/);
+});
+
+test("serializes immediate store updates", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "review-loop-store-"));
+  const path = join(directory, "review-loop.json");
+  const store = new ReviewLoopSettingsStore(defaultSettings(), path);
+  const first = store.update((settings) => {
+    settings.maximumPasses = 8;
+  });
+  const second = store.update((settings) => {
+    settings.fixP3Findings = false;
+  });
+  await Promise.all([first, second]);
+  await store.flush();
+  const loaded = await loadSettings(path);
+  assert.equal(loaded.maximumPasses, 8);
+  assert.equal(loaded.fixP3Findings, false);
+});

@@ -8,6 +8,9 @@ local Pi package.
 - `src/index.ts` — workspace status command (`/extension-dev-status`)
 - `extensions/web-tools/` — Firecrawl web tools, configuration command
   (`/web-tools`), and the bundled `research` skill
+- `extensions/review-loop/` — bounded independent review/fix/re-review loop
+  (`/loop-review`)
+- `prompt/yeet.md` — publish the current work as a ready pull request (`/yeet`)
 
 ## Commands
 
