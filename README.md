@@ -1,53 +1,256 @@
-# Pi extensions
+# Pi Extensions
 
-Personal Pi extensions developed as a pnpm workspace and loaded through one
-local Pi package.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): faster Codex requests, bounded web research, independent review/fix loops, observable multi-agent procedures, and a safe PR-publishing prompt.
 
-## Extensions
+The workspace is one Pi package, so installation exposes every extension, the bundled research skill, and prompt templates together.
 
-- `src/index.ts` — workspace status command (`/extension-dev-status`)
-- `extensions/fast-mode/` — global Codex Fast mode toggle (`/fast`)
-- `extensions/web-tools/` — Firecrawl web tools, configuration command
-  (`/web-tools`), and the bundled `research` skill
-- `extensions/review-loop/` — bounded independent review/fix/re-review loop
-  (`/loop-review`)
-- `prompt/yeet.md` — publish the current work as a ready pull request (`/yeet`)
+## Extension suite
 
-## Commands
+| Extension                                       | Use it when…                                                                                                                | Main entry point                | Side effects                                                               |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
+| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                                                | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
+| [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research                            | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
+| [Review Loop](extensions/review-loop/README.md) | You want an independent reviewer to find issues, a guarded fixer to repair them, and a fresh reviewer to verify convergence | `/loop-review`                  | May edit the selected worktree target; never commits or rewrites history   |
+| [Procedures](extensions/procedures/README.md)   | A task benefits from visible, code-driven multi-agent orchestration                                                         | `/proc`, `/monitor`             | Depends on reviewed procedure source and approved child tools              |
+| Workspace Status                                | You need to verify that this checkout loaded                                                                                | `/extension-dev-status`         | None                                                                       |
+
+Also included: [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work.
+
+## Quick start
+
+### Requirements
+
+- Pi with package/extension support
+- Node.js 22.19 or newer
+- pnpm 11
+- Provider credentials for the models you use
+- A Firecrawl API key only if using Web Tools
+- GitHub CLI (`gh`) only for Review Loop PR targets or `/yeet`
+
+### Install this checkout
 
 ```bash
-pnpm check          # oxformat check, oxlint, and TypeScript
-pnpm format         # apply oxformat
-pnpm lint           # run oxlint
-pnpm lint:fix       # apply safe oxlint fixes
-pnpm typecheck      # TypeScript only
-pnpm lsp            # stdio TypeScript language server
+git clone <repository-url> pi-extensions
+cd pi-extensions
+pnpm install
+pi install "$(pwd)"
 ```
 
-## Git hooks
+Pi packages execute code with the user's permissions. Review the checkout before installing it.
 
-This repo uses [hk](https://hk.jdx.dev/) (`hk.pkl`). With global hk hooks
-installed (`hk install --global`), pre-commit/pre-push run automatically:
+Start Pi, then verify the package:
 
-- **pre-commit** — fix with oxfmt + oxlint, then typecheck with `tsc`
-- **pre-push** — check-only (same tools)
+```text
+/extension-dev-status
+```
 
-Manual runs:
+The expected notification is `Local extension workspace loaded`.
+
+For local development, changes become active after:
+
+```text
+/reload
+```
+
+To remove the package later, use `pi remove` with the same package source shown by Pi's package configuration.
+
+## Five-minute tour
+
+### 1. Toggle priority Codex service
+
+```text
+/fast
+```
+
+Eligible `openai-codex` requests gain `service_tier: "priority"`; the built-in footer shows `ϟ` while the selected model is eligible.
+
+### 2. Configure bounded web access
+
+```text
+/web-tools
+```
+
+Add a Firecrawl key, inspect credits, choose context/cost limits, and decide which specialized capabilities can be activated. For a sourced research task:
+
+```text
+/skill:research Compare the current migration guidance from the two primary vendors.
+```
+
+### 3. Run an independent review/fix loop
+
+```text
+/loop-review uncommitted --extra "Prioritize auth boundaries and regression coverage"
+```
+
+The reviewer is fresh each pass, the fixer is guarded, deterministic verification is optional, and the loop ends only when its convergence policy is satisfied or a bound is reached.
+
+### 4. Generate an observable workflow
+
+```text
+/proc Inspect this service, propose the smallest safe implementation, ask before editing, implement it, and verify the focused tests.
+```
+
+Review the generated JavaScript body, approve its child-agent tools, then follow execution in:
+
+```text
+/monitor
+```
+
+Generated procedures are ephemeral unless promoted explicitly with `/proc save`.
+
+### 5. Publish finished work
+
+```text
+/yeet
+```
+
+`/yeet` inspects the repository, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template.
+
+## Choosing the right primitive
+
+| Need                                                     | Prefer                               | Why                                                                |
+| -------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| One known page                                           | `web_fetch`                          | Smallest live-web operation                                        |
+| Unknown source                                           | `web_search`, then selective fetches | Bounded discovery before extraction                                |
+| Rigorous multi-source report                             | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations        |
+| One independent quality pass with repairs                | `/loop-review`                       | Purpose-built convergence and Git safety                           |
+| Custom fan-out/fan-in, approvals, or role specialization | `/proc`                              | Ordinary JavaScript owns control flow; `/monitor` exposes progress |
+| Finished changes ready for GitHub                        | `/yeet`                              | Repo-native verification and PR-template workflow                  |
+
+A useful sequence for larger changes is:
+
+```text
+research → procedure → review loop → yeet
+```
+
+Each stage has a different trust boundary: external evidence, controlled implementation, independent verification, then publication.
+
+## Command reference
+
+| Command                      | Description                                                    |
+| ---------------------------- | -------------------------------------------------------------- |
+| `/extension-dev-status`      | Confirm that this workspace is loaded                          |
+| `/fast`                      | Toggle global Codex Fast Mode                                  |
+| `/web-tools`                 | Open Firecrawl configuration                                   |
+| `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry |
+| `/skill:research <question>` | Run the bundled evidence-grounded research workflow            |
+| `/loop-review [target]`      | Review, fix, verify, and re-review a Git target                |
+| `/loop-review settings`      | Configure role models and convergence                          |
+| `/proc <goal>`               | Generate, review, and launch an ephemeral procedure            |
+| `/proc run <name> [goal]`    | Run a saved procedure                                          |
+| `/proc save <run-id> [name]` | Promote an ephemeral run to `.pi/procedures/`                  |
+| `/monitor [run-id]`          | Inspect and control procedure runs                             |
+| `/yeet [instructions]`       | Publish appropriate work as one ready PR                       |
+
+See each extension README for complete syntax, safety constraints, and troubleshooting.
+
+## Configuration and persisted data
+
+Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
+
+| Feature             | Location                                     | Contains                                                            |
+| ------------------- | -------------------------------------------- | ------------------------------------------------------------------- |
+| Fast Mode           | `~/.pi/agent/fast-mode.json`                 | Global on/off state                                                 |
+| Web Tools           | `~/.pi/agent/web.json`                       | Tool toggles, context limits, and credit guards                     |
+| Firecrawl key       | macOS Keychain or `FIRECRAWL_API_KEY`        | API credential; environment takes precedence                        |
+| Web telemetry       | `~/.pi/agent/web-telemetry.jsonl`            | Rotating privacy-safe operation metrics and input fingerprints      |
+| Review Loop         | `~/.pi/agent/review-loop.json`               | Role model references, reasoning, convergence, verification command |
+| Procedure run store | `~/.pi/agent/procedure-runs/<project-hash>/` | Run snapshots and ephemeral generated source                        |
+| Saved procedures    | `<project>/.pi/procedures/`                  | Explicitly promoted manifests and JavaScript source                 |
+
+Credentials are not written into Review Loop settings or procedure definitions.
+
+## Security model
+
+These are trusted local extensions, not sandboxes around Pi itself.
+
+- Pi extensions run with the user's process permissions.
+- Web content, repository content, GitHub data, and model output are treated as untrusted data.
+- Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
+- Review Loop confines fixer tools and forbids generic shell/Git-history mutation; an optional host verification command still executes locally.
+- Procedures isolate orchestration code in a bounded worker/VM, but approved child agents can edit files or run shell commands. Review generated source before launch.
+- `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
+
+Read the extension-specific safety section before enabling mutating or billed capabilities.
+
+## Repository layout
+
+```text
+.
+├── src/index.ts                    # /extension-dev-status
+├── extensions/
+│   ├── fast-mode/                  # /fast
+│   ├── web-tools/                  # web_* tools and research skill
+│   ├── review-loop/                # /loop-review
+│   └── procedures/                 # /proc, /monitor, procedure_status
+├── prompt/yeet.md                  # /yeet prompt template
+├── package.json                    # root Pi package manifest
+└── pnpm-workspace.yaml             # extension workspace packages
+```
+
+## Development
+
+Install dependencies once:
 
 ```bash
-hk check            # or: mise run check
-hk fix              # or: mise run fix
+pnpm install
+```
+
+Run the complete workspace validation:
+
+```bash
+pnpm check
+```
+
+Common focused commands:
+
+```bash
+pnpm check:root
+pnpm --filter pi-fast-mode check
+pnpm --filter pi-web-tools check
+pnpm --filter pi-review-loop check
+pnpm --filter pi-procedures check
+pnpm format
+pnpm lint
+pnpm lint:fix
+pnpm typecheck
+pnpm lsp
+```
+
+### Git hooks
+
+The repository uses [hk](https://hk.jdx.dev/) through `hk.pkl`.
+
+```bash
+hk install --global
+hk check
+hk fix
 hk run pre-commit
 ```
 
-Pi loads this checkout as a local package. After changing an extension, run
-`/reload` in Pi. Use `/extension-dev-status` to confirm that it loaded.
+- **pre-commit:** formats/fixes with Oxfmt and Oxlint, then type-checks.
+- **pre-push:** runs the check-only equivalent.
 
-Add extension packages under `extensions/`, include them in
-`pnpm-workspace.yaml`, and expose their resources through the root `pi` manifest
-in `package.json`.
+### Adding an extension
 
-Pi framework packages belong in both `peerDependencies` (runtime contract) and
-`devDependencies` (local editor and type-checking support). Other runtime
-libraries belong in `dependencies`; developer tooling belongs in
-`devDependencies`.
+1. Create a package under `extensions/<name>/`.
+2. Add it to `pnpm-workspace.yaml`.
+3. Expose its entry point in the root `package.json` `pi.extensions` array.
+4. Put Pi framework packages in both `peerDependencies` and `devDependencies`.
+5. Put non-Pi runtime libraries in `dependencies`.
+6. Add focused tests, a complete README, and the package to the root `check` script.
+7. Run `pnpm check`, then smoke-test with Pi and `/reload`.
+
+## Documentation map
+
+- [Fast Mode](extensions/fast-mode/README.md)
+- [Web Tools](extensions/web-tools/README.md)
+- [Web Tools evaluations](extensions/web-tools/evals/README.md)
+- [Research skill](extensions/web-tools/skills/research/SKILL.md)
+- [Review Loop](extensions/review-loop/README.md)
+- [Review Loop design plan](extensions/review-loop/PLAN.md)
+- [Procedures](extensions/procedures/README.md)
+- [Procedure authoring guide](extensions/procedures/AUTHORING.md)
+- [Procedure research/design rationale](extensions/procedures/RESEARCH.md)
+- [Procedure manual QA](extensions/procedures/QA.md)
+- [`/yeet` prompt](prompt/yeet.md)
