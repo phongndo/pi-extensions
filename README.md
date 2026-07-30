@@ -24,6 +24,22 @@ pnpm typecheck      # TypeScript only
 pnpm lsp            # stdio TypeScript language server
 ```
 
+## Git hooks
+
+This repo uses [hk](https://hk.jdx.dev/) (`hk.pkl`). With global hk hooks
+installed (`hk install --global`), pre-commit/pre-push run automatically:
+
+- **pre-commit** — fix with oxfmt + oxlint, then typecheck with `tsc`
+- **pre-push** — check-only (same tools)
+
+Manual runs:
+
+```bash
+hk check            # or: mise run check
+hk fix              # or: mise run fix
+hk run pre-commit
+```
+
 Pi loads this checkout as a local package. After changing an extension, run
 `/reload` in Pi. Use `/extension-dev-status` to confirm that it loaded.
 

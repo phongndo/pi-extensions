@@ -1,0 +1,14 @@
+[tools]
+hk = "1.51.0"
+
+[tasks.pre-commit]
+description = "Run hk pre-commit hooks"
+run = "hk run pre-commit"
+
+[tasks.check]
+description = "Run hk check (oxfmt, oxlint, tsc)"
+run = "hk check"
+
+[tasks.fix]
+description = "Run hk fix (oxfmt, oxlint)"
+run = "hk fix"

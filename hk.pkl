@@ -1,0 +1,41 @@
+amends "package://github.com/jdx/hk/releases/download/v1.51.0/hk@1.51.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.51.0/hk@1.51.0#/Builtins.pkl"
+
+// Use workspace-local tools via pnpm.
+local pnpm = new Step {
+  prefix = "pnpm exec"
+}
+
+local linters = new Mapping<String, Step> {
+  ["oxfmt"] = (Builtins.oxfmt) {
+    ...pnpm
+    batch = true
+  }
+  ["ox_lint"] = (Builtins.ox_lint) {
+    ...pnpm
+    batch = true
+  }
+  ["tsc"] = (Builtins.tsc) {
+    ...pnpm
+    // Typecheck is whole-project and read-only.
+    stomp = true
+  }
+}
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps = linters
+  }
+  ["pre-push"] {
+    steps = linters
+  }
+  ["check"] {
+    steps = linters
+  }
+  ["fix"] {
+    fix = true
+    steps = linters
+  }
+}
