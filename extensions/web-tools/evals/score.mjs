@@ -53,6 +53,63 @@ let credits = 0;
 let durationMs = 0;
 const missing = [];
 const caseFailures = {};
+const retrievalTotals = new Map();
+const unboundedRetrievalMetrics = new Set([
+  "context_chars_per_evidence",
+  "credits_per_evidence",
+]);
+
+function retrievalMetric(
+  result,
+  testCase,
+  field,
+  direction,
+  required,
+  failures,
+) {
+  const thresholdField = `${direction}_${field}`;
+  const threshold = testCase[thresholdField];
+  if (
+    threshold !== undefined &&
+    (typeof threshold !== "number" ||
+      !Number.isFinite(threshold) ||
+      threshold < 0)
+  ) {
+    failures.push(`${thresholdField} must be a non-negative finite number`);
+    return;
+  }
+  if (
+    threshold !== undefined &&
+    !unboundedRetrievalMetrics.has(field) &&
+    threshold > 1
+  ) {
+    failures.push(`${thresholdField} must be between 0 and 1`);
+    return;
+  }
+  const raw = result[field];
+  if (raw === undefined) {
+    if (required) failures.push(`${field} is required`);
+    return;
+  }
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    failures.push(`${field} must be a non-negative finite number`);
+    return;
+  }
+  const value = raw;
+  if (!unboundedRetrievalMetrics.has(field) && value > 1) {
+    failures.push(`${field} must be between 0 and 1`);
+    return;
+  }
+  const current = retrievalTotals.get(field) ?? { total: 0, count: 0 };
+  current.total += value;
+  current.count++;
+  retrievalTotals.set(field, current);
+  if (threshold === undefined) return;
+  if (direction === "min" && value < threshold)
+    failures.push(`${field} ${value} is below ${threshold}`);
+  if (direction === "max" && value > threshold)
+    failures.push(`${field} ${value} exceeds ${threshold}`);
+}
 
 for (const testCase of cases) {
   const result = results.find((item) => item.case_id === testCase.id);
@@ -126,6 +183,29 @@ for (const testCase of cases) {
   if (result.success !== true)
     failures.push("result did not report success=true");
 
+  const retrievalGated = [
+    "min_evidence_recall_at_5",
+    "min_reciprocal_rank",
+    "min_primary_source_rate",
+    "max_duplicate_rate",
+    "max_unfetchable_url_rate",
+    "max_context_chars_per_evidence",
+    "max_credits_per_evidence",
+  ].some((field) => testCase[field] !== undefined);
+  for (const field of [
+    "evidence_recall_at_5",
+    "reciprocal_rank",
+    "primary_source_rate",
+  ])
+    retrievalMetric(result, testCase, field, "min", retrievalGated, failures);
+  for (const field of [
+    "duplicate_rate",
+    "unfetchable_url_rate",
+    "context_chars_per_evidence",
+    "credits_per_evidence",
+  ])
+    retrievalMetric(result, testCase, field, "max", retrievalGated, failures);
+
   if (failures.length === 0) success++;
   else caseFailures[testCase.id] = failures;
 
@@ -140,6 +220,12 @@ for (const testCase of cases) {
 const completed = cases.length - missing.length;
 const percentage = (value, denominator = completed) =>
   denominator ? `${((100 * value) / denominator).toFixed(1)}%` : "n/a";
+const retrieval = Object.fromEntries(
+  [...retrievalTotals].map(([field, { total, count }]) => [
+    field,
+    count ? Number((total / count).toFixed(4)) : null,
+  ]),
+);
 const report = {
   cases: cases.length,
   completed,
@@ -154,6 +240,7 @@ const report = {
   total_result_chars: resultChars,
   total_credits: credits,
   average_duration_ms: completed ? Math.round(durationMs / completed) : 0,
+  retrieval,
 };
 console.log(JSON.stringify(report, null, 2));
 if (missing.length > 0 || Object.keys(caseFailures).length > 0)

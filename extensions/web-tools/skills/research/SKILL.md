@@ -24,7 +24,7 @@ Use ordinary `web_search` or `web_fetch` without this workflow for a simple look
 | `deep`     | Obscure, adversarial, multi-hop, or report task | 15 searches, 25 fetches, 10 rounds                 |
 | `broad`    | Many independent entities or facets             | 16 searches, 30 fetches, 6 rounds, up to 4 workers |
 
-Scale down whenever the answer is already supported. Parallelize only independent breadth-first facets. If no delegation tool is active, interleave facets in one agent rather than enabling more tools.
+Scale down whenever the answer is already supported. Parallelize only independent breadth-first facets: use `web_search_many` with `mode=facets` when 2–4 searches are known before seeing any result, and `mode=fusion` only for alternate queries targeting one retrieval objective. Keep adaptive reformulation sequential. If no delegation tool is active, interleave facets in one agent rather than enabling more tools.
 
 ## 2. Define the answer contract before searching
 
@@ -80,7 +80,7 @@ For each round:
 1. Select the highest-value uncovered criterion, gap, or contradiction.
 2. Issue one short, discriminative query. Use at most five results initially. Apply date filters for genuinely temporal criteria.
 3. Treat snippets only as discovery signals. Select at most 2–3 promising pages.
-4. Prefer primary or authoritative sources and fetch those pages. For long pages, request targeted `highlights` rather than expanding the character budget. A generated page answer may locate information, but it is not a supporting quotation.
+4. Prefer primary or authoritative sources and fetch those pages concurrently with separate `web_fetch` calls in one turn. Give each page a focused `relevance_query`; do not start a batch job for this small adaptive set. For larger predetermined URL sets, load `batch` and use bounded concurrency. A generated page answer may locate information, but it is not a supporting quotation.
 5. Extract only claim-bearing evidence: exact claim, short supporting excerpt, URL, title, date, source tier, confidence, criterion IDs, and facet.
 6. Record the complete round in the ledger.
 7. Follow the ledger's stop recommendation unless a clearly stated reason justifies one more bounded round.

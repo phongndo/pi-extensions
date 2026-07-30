@@ -4,7 +4,12 @@
     "prompt": "What changed in the latest stable Rust release? Cite sources.",
     "expected_first_tool": "web_search",
     "allowed_tools": ["web_search", "web_fetch", "web_search_feedback"],
-    "category": "routing"
+    "category": "routing",
+    "min_evidence_recall_at_5": 0.8,
+    "min_reciprocal_rank": 0.5,
+    "min_primary_source_rate": 0.5,
+    "max_duplicate_rate": 0.2,
+    "max_unfetchable_url_rate": 0.1
   },
   {
     "id": "search-news",
@@ -43,11 +48,33 @@
     "category": "routing"
   },
   {
-    "id": "batch-known",
+    "id": "parallel-known",
     "prompt": "Compare the content of https://a.example/docs and https://b.example/docs.",
+    "expected_first_tool": "web_fetch",
+    "allowed_tools": ["web_fetch"],
+    "category": "routing",
+    "max_tool_calls": 2
+  },
+  {
+    "id": "batch-known",
+    "prompt": "Compare five known documentation URLs using bounded batch concurrency.",
     "expected_first_tool": "web_batch_fetch",
     "allowed_tools": ["web_batch_fetch"],
     "category": "routing"
+  },
+  {
+    "id": "multi-search-facets",
+    "prompt": "Search four independent product-limit questions concurrently and preserve results for every question.",
+    "expected_first_tool": "web_search_many",
+    "allowed_tools": ["web_search_many", "web_fetch"],
+    "category": "coverage"
+  },
+  {
+    "id": "multi-search-fusion",
+    "prompt": "Run three alternate searches for the same obscure record and fuse duplicate rankings.",
+    "expected_first_tool": "web_search_many",
+    "allowed_tools": ["web_search_many", "web_fetch"],
+    "category": "retrieval"
   },
   {
     "id": "map-docs",

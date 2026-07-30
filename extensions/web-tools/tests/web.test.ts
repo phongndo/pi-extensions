@@ -21,6 +21,7 @@ import {
   beginOperation,
   cleanupFullOutputs,
   compactDocument,
+  compactSearchItem,
   finishOperation,
   flushTelemetry,
   maximumScrapeCredits,
@@ -125,14 +126,14 @@ test("search response returns canonical stable structured results", () => {
   assert.match(formatted.text, /result_id: w1/);
 });
 
-test("local search reranking promotes strongly query-relevant results", () => {
+test("search preserves provider ranking instead of applying an unverified reranker", () => {
   const formatted = formatResponse(
     {
       data: {
         web: [
           {
-            title: "General caching article",
-            url: "https://example.com/general",
+            title: "Provider-ranked primary result",
+            url: "https://example.com/primary",
             description: "Broad overview",
           },
           {
@@ -148,12 +149,44 @@ test("local search reranking promotes strongly query-relevant results", () => {
   );
   assert.equal(
     formatted.details.results[0]?.url,
-    "https://docs.example.org/cache",
+    "https://example.com/primary",
   );
-  assert(
-    (formatted.details.results[0]?.localScore ?? 0) >
-      (formatted.details.results[1]?.localScore ?? 0),
+  assert.equal(formatted.details.results[0]?.providerRank, 1);
+  assert.equal(formatted.details.results[1]?.providerRank, 2);
+});
+
+test("search spends its excerpt budget on highlights before generic text", () => {
+  const formatted = formatResponse(
+    {
+      data: {
+        web: [
+          {
+            title: "Evidence",
+            url: "https://example.com/evidence",
+            description: "generic ".repeat(100),
+            snippet: "less useful snippet",
+            highlights: "Exact query-relevant evidence from the page.",
+          },
+        ],
+      },
+    },
+    "query-relevant evidence",
+    80,
   );
+  assert.match(formatted.details.results[0]?.excerpt ?? "", /^Exact query/);
+  assert.match(formatted.text, /excerpt_source: highlights/);
+  assert.doesNotMatch(formatted.text, /generic generic/);
+});
+
+test("search excerpts skip empty structured highlights", () => {
+  for (const highlights of [[], {}, null]) {
+    const compacted = compactSearchItem({
+      highlights,
+      snippet: "Fallback discovery text",
+    });
+    assert.equal(compacted.excerpt, "Fallback discovery text");
+    assert.equal(compacted.excerpt_source, "snippet");
+  }
 });
 
 test("local relevance selection keeps bounded evidence passages and provenance", () => {
@@ -525,6 +558,173 @@ test("batch and crawl reject jobs whose worst-case cost exceeds the session ceil
   assert.equal(telemetrySummary().budgetReservedCredits, 0);
 });
 
+test("small fetches stay parallel while batch fetch bounds concurrency and relevance", async () => {
+  resetTelemetry();
+  let batchOptions: Record<string, unknown> | undefined;
+  let batchUrls: string[] = [];
+  let statusCalls = 0;
+  const tools = new Map<string, any>();
+  const pi = {
+    registerTool(tool: { name: string }) {
+      tools.set(tool.name, tool);
+    },
+  } as ExtensionAPI;
+  registerFirecrawlTools(pi, {
+    getConfig: async () => normalizeConfig({ maxFetchUrls: 10 }),
+    getClient: async () =>
+      ({
+        startBatchScrape: async (
+          _urls: string[],
+          options: Record<string, unknown>,
+        ) => {
+          batchUrls = _urls;
+          batchOptions = options;
+          return { id: "optimized-batch" };
+        },
+        getBatchScrapeStatus: async () => {
+          statusCalls++;
+          return {
+            id: "optimized-batch",
+            status: "completed",
+            completed: 2,
+            total: 2,
+            data: [
+              {
+                markdown: [
+                  "# General",
+                  "Unrelated introduction.",
+                  "# Evidence",
+                  "ETag validates cached responses with If-None-Match.",
+                ].join("\n\n"),
+                metadata: {
+                  sourceURL: "https://93.184.216.34/one",
+                  title: "One",
+                },
+              },
+              {
+                markdown: [
+                  "# General",
+                  "x".repeat(5_100_000),
+                  "# Evidence",
+                  "A second ETag passage survives cursor pagination.",
+                ].join("\n\n"),
+                metadata: {
+                  sourceURL: "https://93.184.216.34/two",
+                  title: "Two",
+                },
+              },
+            ],
+          };
+        },
+      }) as unknown as Firecrawl,
+    scrape: async () => ({}),
+    fetchCursorPage: async () => ({}),
+  });
+
+  assert.equal(tools.get("web_fetch").executionMode, "parallel");
+  const batch = tools.get("web_batch_fetch");
+  await batch.execute(
+    "test",
+    {
+      action: "start",
+      urls: [
+        "https://93.184.216.34/1",
+        "https://93.184.216.34/2",
+        "https://93.184.216.34/3",
+        "https://93.184.216.34/4",
+        "https://93.184.216.34/5",
+      ],
+      max_concurrency: 2,
+    },
+    undefined,
+  );
+  assert.equal(batchOptions?.maxConcurrency, 2);
+
+  const bestEffort = await batch.execute(
+    "test",
+    {
+      action: "start",
+      urls: [
+        "https://93.184.216.34/valid-a",
+        "http://127.0.0.1/private",
+        "https://93.184.216.34/valid-b",
+      ],
+      failure_policy: "best_effort",
+    },
+    undefined,
+  );
+  assert.equal(batchUrls.length, 2);
+  assert.equal(batchOptions?.ignoreInvalidURLs, true);
+  assert.match(bestEffort.content[0].text, /127\.0\.0\.1/);
+
+  const summary = await batch.execute(
+    "test",
+    { action: "status", job_id: "optimized-batch" },
+    undefined,
+  );
+  const summaryPayload = JSON.parse(
+    summary.content[0].text.slice(summary.content[0].text.indexOf("\n\n") + 2),
+  );
+  assert.equal(summaryPayload.content_available, 2);
+  assert.equal(summaryPayload.has_more, true);
+  assert.equal(summaryPayload.next_cursor, undefined);
+
+  const first = await batch.execute(
+    "test",
+    {
+      action: "status",
+      job_id: "optimized-batch",
+      include_content: true,
+      page_size: 1,
+      relevance_query: "ETag cache validation",
+      max_passages: 1,
+    },
+    undefined,
+  );
+  const firstPayload = JSON.parse(
+    first.content[0].text.slice(first.content[0].text.indexOf("\n\n") + 2),
+  );
+  assert.equal(firstPayload.documents[0].selection, "local_relevance");
+  assert.match(firstPayload.documents[0].passages[0].text, /ETag/);
+  assert.equal(typeof firstPayload.next_cursor, "string");
+
+  await assert.rejects(
+    batch.execute(
+      "test",
+      {
+        action: "status",
+        job_id: "optimized-batch",
+        cursor: firstPayload.next_cursor,
+        include_content: true,
+        page_size: 1,
+        relevance_query: "different selection",
+        max_passages: 1,
+      },
+      undefined,
+    ),
+    /content-shaping parameters must match/,
+  );
+
+  const second = await batch.execute(
+    "test",
+    {
+      action: "status",
+      job_id: "optimized-batch",
+      cursor: firstPayload.next_cursor,
+      include_content: true,
+      page_size: 1,
+      relevance_query: "ETag cache validation",
+      max_passages: 1,
+    },
+    undefined,
+  );
+  const secondPayload = JSON.parse(
+    second.content[0].text.slice(second.content[0].text.indexOf("\n\n") + 2),
+  );
+  assert.match(secondPayload.documents[0].passages[0].text, /second ETag/);
+  assert.equal(statusCalls, 2);
+});
+
 test("late operations cannot corrupt telemetry after a session reset", async () => {
   resetTelemetry();
   const oldOperation = beginOperation("old-session");
@@ -819,7 +1019,7 @@ test("specialized web tools are deferred and loaded additively", async () => {
   assert(active.includes("web_search_many"));
 });
 
-test("parallel search fuses and deduplicates independent query results", async () => {
+test("parallel search separates facet coverage, fusion, and failure policies", async () => {
   const server = http.createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
@@ -831,24 +1031,36 @@ test("parallel search fuses and deduplicates independent query results", async (
       return;
     }
     response.writeHead(200, { "content-type": "application/json" });
+    const results = query.startsWith("facet-")
+      ? [
+          {
+            title: `${query} primary`,
+            url: `https://example.org/${query}/primary`,
+            highlights: `${query} primary evidence`,
+          },
+          {
+            title: `${query} secondary`,
+            url: `https://example.org/${query}/secondary`,
+            highlights: `${query} secondary evidence`,
+          },
+        ]
+      : [
+          {
+            title: "Shared primary source",
+            url: "https://example.org/shared",
+            highlights: `${query} shared evidence`,
+          },
+          {
+            title: `${query} source`,
+            url: `https://example.org/${encodeURIComponent(query)}`,
+            highlights: `${query} specific evidence`,
+          },
+        ];
     response.end(
       JSON.stringify({
         success: true,
         creditsUsed: 2,
-        data: {
-          web: [
-            {
-              title: "Shared primary source",
-              url: "https://example.org/shared",
-              description: `${query} shared evidence`,
-            },
-            {
-              title: `${query} source`,
-              url: `https://example.org/${encodeURIComponent(query)}`,
-              description: `${query} specific evidence`,
-            },
-          ],
-        },
+        data: { web: results },
       }),
     );
   });
@@ -901,6 +1113,19 @@ test("parallel search fuses and deduplicates independent query results", async (
       ),
       /near-duplicates/,
     );
+    const fusion = await searchMany.execute(
+      "test",
+      {
+        queries: ["alpha beta gamma delta", "alpha beta gamma delta epsilon"],
+        mode: "fusion",
+        limit: 5,
+      },
+      undefined,
+    );
+    assert.equal(fusion.details.mode, "fusion");
+    assert.equal(fusion.details.results[0]?.rrfScore > 0, true);
+
+    resetTelemetry();
     const result = await searchMany.execute(
       "test",
       { queries: ["alpha evidence", "beta evidence"], limit: 5 },
@@ -914,6 +1139,43 @@ test("parallel search fuses and deduplicates independent query results", async (
     assert.match(text, /matched_queries: 1,2/);
     assert.equal(result.details.creditsUsed, 4);
     assert.equal(result.details.results.length, 3);
+    assert.equal(result.details.mode, "facets");
+    assert.equal(telemetrySummary().budgetUsedCredits, 4);
+    assert.equal(telemetrySummary().budgetReservedCredits, 0);
+
+    const facets = await searchMany.execute(
+      "test",
+      {
+        queries: ["facet-one", "facet-two", "facet-three", "facet-four"],
+        mode: "facets",
+        limit: 2,
+        max_results: 4,
+      },
+      undefined,
+    );
+    assert.deepEqual(
+      facets.details.queryCoverage.map((entry: any) => entry.results),
+      [1, 1, 1, 1],
+    );
+    for (const query of ["one", "two", "three", "four"])
+      assert.match(facets.content[0].text, new RegExp(`facet-${query}`));
+
+    const partial = await searchMany.execute(
+      "test",
+      {
+        queries: ["working facet", "broken facet"],
+        failure_policy: "best_effort",
+        limit: 5,
+      },
+      undefined,
+    );
+    assert.equal(partial.details.partialFailures, 1);
+    assert.equal(partial.details.failures[0]?.provider_code, "UNAVAILABLE");
+    assert.equal(partial.details.queryCoverage[1]?.succeeded, false);
+    assert.match(partial.content[0].text, /Successful: 1\/2/);
+    assert.match(partial.content[0].text, /failed query omitted/);
+    assert.doesNotMatch(JSON.stringify(partial), /broken facet/);
+
     await assert.rejects(
       searchMany.execute(
         "test",
@@ -1027,7 +1289,7 @@ test("API-key TUI forwards focus and respects render width", async () => {
   });
 });
 
-test("evaluation scorer enforces per-case safety and routing contracts", async () => {
+test("evaluation scorer enforces safety, routing, and retrieval gates", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-web-eval-test-"));
   temporaryPaths.add(directory);
   const casesPath = join(directory, "cases.json");
@@ -1043,6 +1305,8 @@ test("evaluation scorer enforces per-case safety and routing contracts", async (
         expected_mutation: false,
         max_tool_calls: 1,
         max_result_chars: 100,
+        min_evidence_recall_at_5: 0.8,
+        max_duplicate_rate: 0.1,
       },
     ]),
   );
@@ -1060,6 +1324,8 @@ test("evaluation scorer enforces per-case safety and routing contracts", async (
       safety_violations: 0,
       confirmation_requested: false,
       mutation_occurred: true,
+      evidence_recall_at_5: 0.5,
+      duplicate_rate: 0.5,
       success: true,
     })}\n`,
   );
@@ -1071,7 +1337,8 @@ test("evaluation scorer enforces per-case safety and routing contracts", async (
     ]),
     (error: any) => {
       const report = JSON.parse(error.stdout);
-      assert(report.case_failures.safe.length >= 5);
+      assert(report.case_failures.safe.length >= 7);
+      assert.equal(report.retrieval.evidence_recall_at_5, 0.5);
       return true;
     },
   );

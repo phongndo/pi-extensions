@@ -26,7 +26,7 @@ A good query has one retrieval objective and a few discriminative terms. Prefer 
 4. **Contradiction query:** search the competing claim, correction, retraction, or later update.
 5. **Verification query:** target the exact fact once a candidate answer is known.
 
-Use search operators only when they narrow the intended corpus. Avoid long natural-language questions containing every constraint; search engines often drop terms. Split entangled constraints and intersect candidates through reasoning.
+Use search operators only when they narrow the intended corpus. Avoid long natural-language questions containing every constraint; search engines often drop terms. Split entangled constraints and intersect candidates through reasoning. Use facet-balanced parallel search only when the queries are independent and known in advance; use fusion only for alternate formulations of one retrieval objective. Any query that depends on newly observed evidence remains sequential.
 
 ## Candidate selection
 
@@ -38,7 +38,7 @@ Before fetching, score candidates qualitatively:
 - Independence: does it add a new organization or evidence chain?
 - Accessibility: can the actual supporting page be fetched and cited?
 
-Fetch the highest expected-evidence candidates, not simply positions 1–3. Skip mirrors, scraped copies, SEO summaries, and duplicate syndication when an original exists.
+Fetch the highest expected-evidence candidates, not simply positions 1–3. Fetch 2–4 selected pages concurrently as separate calls so each retains its own relevance query and provenance. Reserve asynchronous batch fetch for larger predetermined URL sets. Skip mirrors, scraped copies, SEO summaries, and duplicate syndication when an original exists.
 
 ## Source tiers
 

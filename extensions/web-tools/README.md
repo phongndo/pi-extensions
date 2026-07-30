@@ -7,10 +7,12 @@ Run `/web-tools` to configure credentials, context budgets, cost limits, and cap
 ## Default model-facing tools
 
 - `web_search` — bounded discovery when the URL is unknown
-- `web_fetch` — synchronous extraction of exactly one URL
+- `web_fetch` — synchronous extraction of exactly one URL; issue 2–4 calls together for parallel selective fetching
 - `web_map` — bounded URL discovery within one site
 
-All other capabilities are disabled by default. Enable batch, crawl, interact, extract, browser, agent, parse, monitor, search-feedback, or research capabilities from `/web-tools` only when needed. When **Defer specialized tools** is enabled, configured capabilities remain available but only `web_capabilities` is initially exposed; it activates the smallest required group additively for prompt-cache and tool-selection efficiency.
+All other capabilities are disabled by default. `multi_search` is available whenever search is enabled; load it with `web_capabilities`. Enable `batch` in `/web-tools` before loading it for larger known URL sets. Crawl, interact, extract, browser, agent, parse, monitor, search-feedback, and research capabilities are likewise opt-in. When **Defer specialized tools** is enabled, only `web_capabilities` is initially exposed and activation remains additive for prompt-cache efficiency.
+
+Programmable orchestration is intentionally narrow: tools automate predictable concurrency, deduplication, coverage, ranking, pagination, and failure handling, while adaptive query reformulation and citation decisions return to the model. There is no generic code executor over web tools because it would weaken portability, provenance, and approval boundaries without a demonstrated retrieval gain.
 
 ## Evidence-grounded research skill
 
@@ -24,13 +26,15 @@ It provides adaptive quick/standard/deep/broad budgets, a private expiring evide
 
 ## Compact contracts
 
-- Search defaults to 5 results and 500 characters per snippet, keeps a five-minute session cache for identical requests, and returns stable result IDs plus canonical URLs in structured details. The deferred `multi_search` capability runs 2–4 independent queries concurrently and fuses deduplicated results with Reciprocal Rank Fusion.
-- Documents default to 4,000 content characters. `web_fetch.relevance_query` performs local query-aware passage selection without semantic-highlight charges.
+- Search defaults to 5 results and one 500-character excerpt per result, preferring Firecrawl highlights over snippets and descriptions. Provider order is preserved unless a caller explicitly chooses multi-query fusion. Identical requests use a five-minute session cache.
+- The deferred `multi_search` capability runs 2–4 queries concurrently after one aggregate credit-budget preflight. `mode=facets` fairly covers independent questions; `mode=fusion` uses Reciprocal Rank Fusion for alternate queries targeting one answer. Failure behavior is explicit.
+- Documents default to 4,000 content characters. `web_fetch.relevance_query` performs local query-aware passage selection without semantic-highlight charges. Issue 2–4 `web_fetch` calls in one turn for small selected sets; Pi executes them concurrently while preserving per-page relevance and provenance.
+- For larger known sets, enable and load `batch`. `web_batch_fetch` supports Firecrawl concurrency limits, compact status polling, cursor pagination, and local relevance selection when content is requested.
 - Tool output defaults to a 12,000-character ceiling and can never exceed 20,000 characters.
 - Autonomous agent jobs default to a 100-credit hard ceiling configurable in `/web-tools`.
 - Browser sessions reserve their maximum TTL cost at 2 credits per minute before opening; execution is allowed only for sessions tracked by the current Pi session, and close reconciles the reservation with `creditsBilled`.
 - Batch and crawl starts reserve their worst-case proxy, requested-format, and bounded PDF parsing cost for every requested URL/page before the provider accepts the job.
-- Batch and crawl status omit documents unless `include_content` is true.
+- Batch and crawl status omit documents unless `include_content` is true. Batch pagination retains raw provider documents until each page is shaped, so relevance-selected passages survive cursor traversal.
 - Large jobs return bounded pages and opaque `next_cursor` values.
 - Full shaped output is written to a private temporary file when clipped.
 - SDK responses are normalized before entering model context.

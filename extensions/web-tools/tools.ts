@@ -477,10 +477,19 @@ function documentMetadata(document: unknown): JsonRecord {
   };
 }
 
+interface JobPageShape {
+  documentChars: number;
+  format: ResponseFormat;
+  relevanceQuery: string | undefined;
+  maxPassages: number | undefined;
+}
+
 interface CachedPage {
   documents: unknown[];
+  documentsShaped: boolean;
   next: string | null | undefined;
   summary: JsonRecord;
+  shape: JobPageShape;
   expiresAt: number;
   sizeChars: number;
 }
@@ -507,15 +516,16 @@ function cleanPageCache(): void {
 }
 
 function cachePage(
-  documents: unknown[],
+  documents: JsonRecord[],
   next: string | null | undefined,
   summary: JsonRecord,
+  shape: JobPageShape,
 ): string | undefined {
   if (documents.length === 0 && !next) return undefined;
   cleanPageCache();
   let sizeChars: number;
   try {
-    sizeChars = JSON.stringify({ documents, next, summary }).length;
+    sizeChars = JSON.stringify({ documents, next, summary, shape }).length;
   } catch {
     throw new Error("Pagination state could not be serialized safely.");
   }
@@ -526,8 +536,10 @@ function cachePage(
   const token = randomUUID();
   pageCache.set(token, {
     documents,
+    documentsShaped: true,
     next,
     summary,
+    shape,
     expiresAt: Date.now() + 10 * 60_000,
     sizeChars,
   });
@@ -562,6 +574,7 @@ async function pageFromCursor(
   token: string,
   jobId: string,
   jobType: "batch_fetch" | "crawl" | undefined,
+  shape: JobPageShape,
   deps: Dependencies,
   signal?: AbortSignal,
 ): Promise<CachedPage> {
@@ -579,6 +592,16 @@ async function pageFromCursor(
       "Pagination cursor does not belong to this job and operation.",
     );
   }
+  if (
+    cached.shape.documentChars !== shape.documentChars ||
+    cached.shape.format !== shape.format ||
+    cached.shape.relevanceQuery !== shape.relevanceQuery ||
+    cached.shape.maxPassages !== shape.maxPassages
+  ) {
+    throw new Error(
+      "Cursor content-shaping parameters must match the original status request.",
+    );
+  }
   if (cached.documents.length > 0 || !cached.next) {
     pageCache.delete(token);
     return cached;
@@ -589,6 +612,7 @@ async function pageFromCursor(
   return {
     ...cached,
     documents: nextPage.documents,
+    documentsShaped: false,
     next: nextPage.next,
     sizeChars: 0,
   };
@@ -600,6 +624,8 @@ interface JobPageParams extends ResponseFormatParams {
   cursor?: string;
   job_id: string;
   max_chars_per_document?: number;
+  relevance_query?: string;
+  max_passages?: number;
 }
 
 async function formatJobPage(
@@ -612,7 +638,23 @@ async function formatJobPage(
 ): Promise<{ data: JsonRecord; details: JsonRecord }> {
   const pageSize = Math.min(params.page_size ?? config.defaultPageSize, 20);
   const includeContent = params.include_content === true;
+  const requestedDocumentChars = Math.min(
+    params.max_chars_per_document ?? config.maxDocumentChars,
+    20_000,
+  );
+  const pageBudgetPerDocument = Math.max(
+    500,
+    Math.floor((config.maxToolOutputChars - 2_000) / Math.max(1, pageSize)),
+  );
+  const relevanceQuery = params.relevance_query?.trim();
+  const shape: JobPageShape = {
+    documentChars: Math.min(requestedDocumentChars, pageBudgetPerDocument),
+    format: responseFormat(params),
+    relevanceQuery,
+    maxPassages: relevanceQuery ? (params.max_passages ?? 5) : undefined,
+  };
   let documents: unknown[];
+  let documentsShaped = false;
   let next: string | null | undefined;
   let summary: JsonRecord;
   if (params.cursor) {
@@ -620,10 +662,12 @@ async function formatJobPage(
       params.cursor,
       params.job_id,
       jobType,
+      shape,
       deps,
       signal,
     );
     documents = cached.documents;
+    documentsShaped = cached.documentsShaped;
     next = cached.next;
     summary = cached.summary;
   } else {
@@ -641,22 +685,29 @@ async function formatJobPage(
     };
   }
   await Promise.all(documents.map(validateReturnedDocumentUrl));
-  const requestedDocumentChars = Math.min(
-    params.max_chars_per_document ?? config.maxDocumentChars,
-    20_000,
-  );
-  const pageBudgetPerDocument = Math.max(
-    500,
-    Math.floor((config.maxToolOutputChars - 2_000) / Math.max(1, pageSize)),
-  );
-  const documentChars = Math.min(requestedDocumentChars, pageBudgetPerDocument);
-  const format = responseFormat(params);
-  const compacted = documents.map((document) =>
-    compactDocument(document, documentChars, format),
-  );
-  const shaped = includeContent ? compacted.slice(0, pageSize) : [];
-  const remaining = includeContent ? compacted.slice(pageSize) : compacted;
-  const cursor = cachePage(remaining, next, summary);
+  // Cursor state must never retain unbounded raw provider documents. Shape the
+  // whole provider page once so later pages preserve this relevance selection.
+  const shapedDocuments: JsonRecord[] = includeContent
+    ? documentsShaped
+      ? (documents as JsonRecord[])
+      : documents.map((document) =>
+          compactDocument(
+            document,
+            shape.documentChars,
+            shape.format,
+            shape.relevanceQuery,
+            shape.maxPassages ?? 5,
+          ),
+        )
+    : [];
+  const shaped = shapedDocuments.slice(0, pageSize);
+  const remaining = shapedDocuments.slice(pageSize);
+  const cursor = includeContent
+    ? cachePage(remaining, next, summary, shape)
+    : undefined;
+  const hasMore = includeContent
+    ? Boolean(cursor)
+    : documents.length > 0 || Boolean(next);
   return {
     data: {
       ...summary,
@@ -665,7 +716,7 @@ async function formatJobPage(
       ...(includeContent
         ? { documents: shaped }
         : { content_available: documents.length }),
-      has_more: Boolean(cursor),
+      has_more: hasMore,
       ...(cursor ? { next_cursor: cursor } : {}),
     },
     details: {
@@ -673,8 +724,9 @@ async function formatJobPage(
       status: summary.status,
       creditsUsed: summary.credits_used,
       pageSize,
-      contentFieldCharLimit: documentChars,
-      hasMore: Boolean(cursor),
+      contentFieldCharLimit: shape.documentChars,
+      ...(shape.relevanceQuery ? { selection: "local_relevance" } : {}),
+      hasMore,
     },
   };
 }
@@ -957,7 +1009,7 @@ export function registerFirecrawlTools(
     name: "web_fetch",
     label: "Web Fetch",
     description:
-      "Fetch and extract exactly one known URL, always completing synchronously. Use web_search when the source is unknown, or web_map when the site is known but the page is not. relevance_query selects bounded passages locally without semantic-highlight charges. Load specialized batch or extract capabilities only when needed. Returns bounded content, provenance metadata, credits, cache state, and a scrape_id for interaction.",
+      "Fetch and extract exactly one known URL, always completing synchronously. Issue 2–4 independent web_fetch calls in the same turn to run them concurrently with per-page relevance queries; use deferred web_batch_fetch for larger known sets. Use web_search when the source is unknown or web_map within a known site. Returns bounded content and provenance.",
     promptSnippet: "Fetch one known URL into bounded, model-ready content",
     parameters: Type.Object(
       {
@@ -977,6 +1029,10 @@ export function registerFirecrawlTools(
       return runOperation("fetch", async (op) => {
         assertNotAborted(signal);
         const config = await deps.getConfig();
+        if (params.relevance_query !== undefined)
+          requireField(params.relevance_query, "relevance_query");
+        if (params.max_passages !== undefined && !params.relevance_query)
+          throw new Error("max_passages requires relevance_query.");
         const url = await validatePublicUrlWithDns(params.url);
         const document = await deps.scrape(
           url,
@@ -1007,7 +1063,7 @@ export function registerFirecrawlTools(
     name: "web_batch_fetch",
     label: "Web Batch Fetch",
     description:
-      "Manage asynchronous extraction of several known URLs. start always returns a job_id; status returns progress only unless include_content is true, and then returns one bounded page plus next_cursor. Use web_fetch for one URL and web_crawl for linked site-wide coverage. cancel stops an active batch job.",
+      "Manage asynchronous extraction of larger sets of known URLs, normally 5–100. For 2–4 selected pages, issue parallel web_fetch calls so each can use its own relevance query. start supports bounded Firecrawl concurrency and returns a job_id; status omits content unless requested and can select relevant passages; cancel stops an active job.",
     parameters: Type.Object(
       {
         action: StringEnum(["start", "status", "cancel"] as const),
@@ -1036,7 +1092,22 @@ export function registerFirecrawlTools(
         max_chars_per_document: Type.Optional(
           Type.Integer({ minimum: 500, maximum: 20_000 }),
         ),
+        max_concurrency: Type.Optional(
+          Type.Integer({
+            description:
+              "Maximum concurrent Firecrawl scrapes for this job. Defaults to the team's concurrency limit.",
+            minimum: 1,
+            maximum: 100,
+          }),
+        ),
+        failure_policy: Type.Optional(
+          StringEnum(["all_or_nothing", "best_effort"] as const, {
+            description:
+              "Whether one invalid URL rejects the start or is reported while valid URLs continue. Defaults to all_or_nothing.",
+          }),
+        ),
         ...FetchFields,
+        ...RelevanceFields,
         response_format: ResponseFields.response_format,
       },
       Strict,
@@ -1055,7 +1126,12 @@ export function registerFirecrawlTools(
           assertActionFields(
             "web_batch_fetch",
             params,
-            ["urls", ...FETCH_OPTION_FIELDS],
+            [
+              "urls",
+              "max_concurrency",
+              "failure_policy",
+              ...FETCH_OPTION_FIELDS,
+            ],
             ["urls"],
           );
           requireField(params.urls, "urls");
@@ -1063,11 +1139,28 @@ export function registerFirecrawlTools(
             throw new Error(
               `Requested ${params.urls.length} URLs; /web-tools allows at most ${config.maxFetchUrls}.`,
             );
-          const urls = await Promise.all(
+          const failurePolicy = params.failure_policy ?? "all_or_nothing";
+          const validated = await Promise.allSettled(
             params.urls.map((url, index) =>
               validatePublicUrlWithDns(url, `urls[${index}]`),
             ),
           );
+          const invalidUrls = validated.flatMap((entry, index) =>
+            entry.status === "rejected" ? [params.urls![index]!] : [],
+          );
+          const firstFailure = validated.find(
+            (entry): entry is PromiseRejectedResult =>
+              entry.status === "rejected",
+          );
+          if (firstFailure && failurePolicy === "all_or_nothing")
+            throw firstFailure.reason;
+          const urls = validated.flatMap((entry) =>
+            entry.status === "fulfilled" ? [entry.value] : [],
+          );
+          if (urls.length < 2)
+            throw new Error(
+              "At least two valid public URLs are required to start a batch; use web_fetch for one URL.",
+            );
           if (new Set(urls).size !== urls.length)
             throw new Error(
               "urls must not contain duplicates after URL normalization.",
@@ -1079,6 +1172,12 @@ export function registerFirecrawlTools(
             async () =>
               (await deps.getClient(signal)).startBatchScrape(urls, {
                 options,
+                ...(params.max_concurrency !== undefined
+                  ? { maxConcurrency: params.max_concurrency }
+                  : {}),
+                ...(failurePolicy === "best_effort"
+                  ? { ignoreInvalidURLs: true }
+                  : {}),
               }),
           );
           requireField(job.id, "Firecrawl batch job id");
@@ -1089,7 +1188,8 @@ export function registerFirecrawlTools(
               status: "queued",
               job_type: "batch_fetch",
               job_id: job.id,
-              invalid_urls: job.invalidURLs ?? [],
+              failure_policy: failurePolicy,
+              invalid_urls: [...invalidUrls, ...(job.invalidURLs ?? [])],
             },
             { jobId: job.id },
             resultBudget(config, 4_000),
@@ -1124,11 +1224,17 @@ export function registerFirecrawlTools(
             "include_content",
             "page_size",
             "max_chars_per_document",
+            "relevance_query",
+            "max_passages",
             "response_format",
           ],
           ["job_id"],
         );
         requireField(params.job_id, "job_id");
+        if (params.relevance_query !== undefined)
+          requireField(params.relevance_query, "relevance_query");
+        if (params.max_passages !== undefined && !params.relevance_query)
+          throw new Error("max_passages requires relevance_query.");
         if (params.cursor && params.include_content !== true)
           throw new Error(
             "cursor requires include_content=true so the requested page is actually consumed.",
@@ -1153,6 +1259,12 @@ export function registerFirecrawlTools(
           ...(params.cursor ? { cursor: params.cursor } : {}),
           ...(params.max_chars_per_document !== undefined
             ? { max_chars_per_document: params.max_chars_per_document }
+            : {}),
+          ...(params.relevance_query
+            ? { relevance_query: params.relevance_query }
+            : {}),
+          ...(params.max_passages !== undefined
+            ? { max_passages: params.max_passages }
             : {}),
           ...(params.response_format
             ? { response_format: params.response_format }

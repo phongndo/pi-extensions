@@ -725,26 +725,28 @@ export function compactSearchItem(
         { maxString: 500, depth: 2 },
       );
   }
-  let remaining = Math.max(0, maxDescriptionChars);
-  for (const key of ["description", "snippet", "highlights"] as const) {
-    if (item[key] === undefined || remaining === 0) continue;
-    const compacted = compactUnknown(item[key], {
+  const excerptLimit = Math.max(0, maxDescriptionChars);
+  for (const key of ["highlights", "snippet", "description"] as const) {
+    const candidate = item[key];
+    if (
+      candidate === undefined ||
+      candidate === null ||
+      (Array.isArray(candidate) && candidate.length === 0) ||
+      (isRecord(candidate) && Object.keys(candidate).length === 0) ||
+      excerptLimit === 0
+    )
+      continue;
+    const compacted = compactUnknown(candidate, {
       maxItems: 5,
-      maxString: remaining,
+      maxString: excerptLimit,
       depth: 2,
     });
     const serialized =
       typeof compacted === "string" ? compacted : safeSerialize(compacted);
-    output[key] =
-      serialized.length <= remaining
-        ? compacted
-        : clipText(serialized, remaining);
-    remaining -= Math.min(
-      remaining,
-      typeof output[key] === "string"
-        ? (output[key] as string).length
-        : safeSerialize(output[key]).length,
-    );
+    if (!serialized.trim()) continue;
+    output.excerpt = clipText(serialized, excerptLimit);
+    output.excerpt_source = key;
+    break;
   }
   return output;
 }
