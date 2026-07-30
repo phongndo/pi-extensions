@@ -1,4 +1,5 @@
-import { basename } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename, relative, resolve, sep } from "node:path";
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -20,16 +21,10 @@ import type {
   ProcedureDefinition,
   ProcedureModelChoice,
   ProcedureRun,
-  ProcedureTool,
 } from "./models.ts";
-import {
-  PROCEDURE_DEFAULT_MODEL,
-  PROCEDURE_MODEL_ALLOWLIST,
-  READ_ONLY_TOOLS,
-  RISKY_TOOLS,
-} from "./models.ts";
+import { PROCEDURE_DEFAULT_MODEL, PROCEDURE_MODEL_ALLOWLIST, READ_ONLY_TOOLS } from "./models.ts";
 import { showAuthoringProgress, showMonitor } from "./monitor.ts";
-import type { ProcedureRegistry } from "./runner.ts";
+import { activeRuns, type ProcedureRegistry } from "./runner.ts";
 import {
   normalizeProcedureName,
   terminalText,
@@ -44,7 +39,7 @@ import {
 import type { ProcedureDefinitionStore, ProcedureRunStore } from "./store.ts";
 
 const USAGE =
-  "Usage: /proc <goal> | /proc create <goal> | /proc run <name> [goal] | /proc save <run-id> [name] | /proc list | /proc stop [run-id] | /proc approve <run-id> | /proc deny <run-id>";
+  "Usage: /proc <goal> | /proc create <goal> | /proc run <name> [goal] | /proc save <run-id> [name] | /proc pause <run-id> | /proc resume <run-id> | /proc stop <run-id> | /proc restart <run-id>";
 const RUN_ENTRY_TYPE = "procedure-run";
 const PROCEDURE_MODELS = new Set<string>(PROCEDURE_MODEL_ALLOWLIST);
 const PROCEDURE_MODEL_PRIORITY = new Map<string, number>(
@@ -180,10 +175,6 @@ function runSummary(run: ProcedureRun): Record<string, unknown> {
   };
 }
 
-function riskyTools(definition: ProcedureDefinition): string[] {
-  return definition.allowedTools.filter((tool) => RISKY_TOOLS.has(tool));
-}
-
 function transientDefinition(
   authored: AuthoredProcedure,
   goal: string,
@@ -201,33 +192,14 @@ function transientDefinition(
   };
 }
 
-async function confirmTools(
-  ctx: ExtensionCommandContext,
-  title: string,
-  tools: readonly string[],
-): Promise<boolean> {
-  const risky = tools.filter((tool) => RISKY_TOOLS.has(tool as ProcedureTool));
-  return ctx.ui.confirm(
-    terminalText(title, 200),
-    [
-      `Allowed child-agent tools: ${tools.join(", ") || "none"}`,
-      risky.length > 0
-        ? `Warning: ${risky.join(", ")} can change files or execute shell commands. The script itself remains isolated, but those approved agents are not a security sandbox.`
-        : "All child agents are read-only.",
-      "The orchestration source is retained with this run. Use /proc save <run-id> to promote it to a reusable project procedure.",
-    ].join("\n\n"),
-  );
-}
-
 async function launch(
-  pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   service: ProcedureService,
   definition: ProcedureDefinition,
   source: string,
-  sourcePath: string,
   goal: string,
 ): Promise<ProcedureRun> {
+  const sourcePath = await service.runs.writeSource(source);
   const choices = modelChoices(ctx);
   const environment = await createProcedureModelEnvironment(
     ctx.modelRegistry,
@@ -264,16 +236,78 @@ async function launch(
       ),
     }),
   });
-  pi.appendEntry(RUN_ENTRY_TYPE, runSummary(run));
   ctx.ui.notify(
-    `Started ${terminalText(run.title, 160)} (${run.id.slice(0, 8)}). Use /monitor for live progress.`,
+    `Started ${terminalText(run.title, 160)} (${run.id.slice(0, 8)}) in the background. Continue chatting normally; use /monitor when needed.`,
     "info",
   );
   return run;
 }
 
+/**
+ * Read source retained by a historical run.
+ * Current runs snapshot into the private run store; older `/proc run` launches
+ * pointed at the project-local saved procedure file and are accepted as legacy.
+ */
+async function readRetainedRunSource(
+  service: ProcedureService,
+  sourcePath: string,
+): Promise<string> {
+  if (!basename(sourcePath).endsWith(".proc.js")) {
+    throw new Error("The previous run does not reference a valid procedure source file.");
+  }
+  const candidate = resolve(sourcePath);
+  const privateRoot = resolve(service.runs.directory, "sources");
+  const fromPrivate = relative(privateRoot, candidate);
+  if (fromPrivate !== ".." && !fromPrivate.startsWith(`..${sep}`)) {
+    return service.runs.readSource(sourcePath);
+  }
+  // Legacy path: `.pi/procedures/<name>.proc.js` from pre-snapshot `/proc run`.
+  const legacyRoot = resolve(service.definitions.directory);
+  const fromLegacy = relative(legacyRoot, candidate);
+  if (
+    fromLegacy === ".." ||
+    fromLegacy.startsWith(`..${sep}`) ||
+    fromLegacy !== basename(fromLegacy)
+  ) {
+    throw new Error(
+      "The previous run does not retain a usable procedure source. Rerun it with /proc run or /proc <goal>.",
+    );
+  }
+  const source = await readFile(candidate, "utf8");
+  validateProcedureSource(source);
+  return source;
+}
+
+async function restartRun(
+  ctx: ExtensionCommandContext,
+  service: ProcedureService,
+  runId: string,
+): Promise<ProcedureRun> {
+  if (!ctx.isProjectTrusted()) {
+    throw new Error("Trust this project before creating or running procedures.");
+  }
+  const previous = service.registry.get(runId);
+  if (!previous) throw new Error(`No procedure run matches ${runId}.`);
+  if (activeRuns([previous]).length > 0) {
+    throw new Error(
+      `Procedure ${previous.id.slice(0, 8)} is still active. Use resume for a paused run or stop it before restarting.`,
+    );
+  }
+  const source = await readRetainedRunSource(service, previous.sourcePath);
+  const definition: ProcedureDefinition = {
+    version: 1,
+    name: previous.procedureName,
+    title: previous.title,
+    description: previous.description,
+    goal: previous.goal,
+    sourceFile: basename(previous.sourcePath),
+    allowedTools: [...previous.allowedTools],
+    createdAt: previous.createdAt,
+  };
+  return launch(ctx, service, definition, source, previous.goal);
+}
+
 async function createAndLaunch(
-  pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   service: ProcedureService,
   initialGoal: string,
@@ -313,8 +347,6 @@ async function createAndLaunch(
   if (reviewedSource === undefined) return;
   validateProcedureSource(reviewedSource);
   const authored: AuthoredProcedure = { ...generated.authored, source: reviewedSource.trim() };
-  const tools = [...new Set(["read", "grep", "find", "ls", ...authored.requiredTools])];
-  if (!(await confirmTools(ctx, `Launch ${authored.title}?`, tools))) return;
   const sourcePath = await service.runs.writeSource(authored.source);
   const definition = transientDefinition(authored, goal, sourcePath);
   const thinkingLevel = generated.thinkingLevel;
@@ -344,9 +376,8 @@ async function createAndLaunch(
       ),
     }),
   });
-  pi.appendEntry(RUN_ENTRY_TYPE, runSummary(run));
   ctx.ui.notify(
-    `Started ephemeral run ${run.id.slice(0, 8)}. Use /monitor to inspect it or /proc save ${run.id.slice(0, 8)} to keep it.`,
+    `Started ephemeral run ${run.id.slice(0, 8)} in the background. Continue chatting normally; use /monitor, and /proc save ${run.id.slice(0, 8)} to keep it.`,
     "info",
   );
 }
@@ -356,9 +387,10 @@ const COMPLETIONS: AutocompleteItem[] = [
   { value: "run ", label: "run", description: "run a saved procedure" },
   { value: "save ", label: "save", description: "promote a run to a reusable procedure" },
   { value: "list", label: "list", description: "list saved procedures" },
+  { value: "pause ", label: "pause", description: "pause new work in a run" },
+  { value: "resume ", label: "resume", description: "resume a paused run" },
   { value: "stop ", label: "stop", description: "stop a run" },
-  { value: "approve ", label: "approve", description: "approve a waiting checkpoint" },
-  { value: "deny ", label: "deny", description: "deny a waiting checkpoint" },
+  { value: "restart ", label: "restart", description: "start a stopped run again" },
 ];
 
 function completions(prefix: string): AutocompleteItem[] | null {
@@ -413,7 +445,7 @@ export function registerProcedureCommands(
           if (parsed.length > 3) throw new Error("save accepts only a run id and optional name.");
           const run = service.registry.get(id);
           if (!run) throw new Error(`No procedure run matches ${id}.`);
-          const source = await service.runs.readSource(run.sourcePath);
+          const source = await readRetainedRunSource(service, run.sourcePath);
           const definition = await service.definitions.save(
             {
               name: parsed[2] ?? run.procedureName,
@@ -430,11 +462,29 @@ export function registerProcedureCommands(
           );
           return;
         }
+        if (action === "pause" || action === "resume") {
+          const id = parsed[1];
+          if (!id) throw new Error(`${action} requires a run id.`);
+          if (parsed.length !== 2) throw new Error(`${action} accepts exactly one run id.`);
+          const changed =
+            action === "pause" ? service.registry.pause(id) : service.registry.resume(id);
+          if (!changed) throw new Error(`Procedure ${id} cannot ${action} from its current state.`);
+          ctx.ui.notify(`${action === "pause" ? "Paused" : "Resumed"} procedure ${id}.`, "info");
+          return;
+        }
         if (action === "stop") {
           const id = parsed[1];
           if (!id) throw new Error("stop requires a run id. Open /monitor to choose one.");
+          if (parsed.length !== 2) throw new Error("stop accepts exactly one run id.");
           if (!service.registry.stop(id)) throw new Error(`No active procedure matches ${id}.`);
           ctx.ui.notify(`Stopping procedure ${id}.`, "info");
+          return;
+        }
+        if (action === "restart" || action === "start") {
+          const id = parsed[1];
+          if (!id) throw new Error(`${action} requires a run id.`);
+          if (parsed.length !== 2) throw new Error(`${action} accepts exactly one run id.`);
+          await restartRun(ctx, service, id);
           return;
         }
         if (action === "approve" || action === "deny") {
@@ -450,14 +500,12 @@ export function registerProcedureCommands(
           if (!name) throw new Error("run requires a saved procedure name.");
           const definition = await service.definitions.load(name);
           const goal = parsed.slice(2).join(" ").trim() || definition.goal;
-          if (!(await confirmTools(ctx, `Run ${definition.title}?`, definition.allowedTools)))
-            return;
           const saved = await service.definitions.source(definition);
-          await launch(pi, ctx, service, definition, saved.source, saved.path, goal);
+          await launch(ctx, service, definition, saved.source, goal);
           return;
         }
         const goal = action === "create" ? parsed.slice(1).join(" ") : args;
-        await createAndLaunch(pi, ctx, service, goal);
+        await createAndLaunch(ctx, service, goal);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         ctx.ui.notify(`${message}\n${USAGE}`, "error");
@@ -477,7 +525,15 @@ export function registerProcedureCommands(
         ctx.ui.notify("/monitor requires TUI mode.", "error");
         return;
       }
-      await showMonitor(ctx, service.registry, args.trim() || undefined);
+      await showMonitor(ctx, service.registry, args.trim() || undefined, {
+        restart: async (runId) => {
+          try {
+            await restartRun(ctx, service, runId);
+          } catch (error) {
+            ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+          }
+        },
+      });
     },
   });
 
@@ -553,4 +609,4 @@ export function registerProcedureCommands(
   });
 }
 
-export { RUN_ENTRY_TYPE, runSummary, riskyTools };
+export { RUN_ENTRY_TYPE, runSummary };

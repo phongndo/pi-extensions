@@ -7,6 +7,10 @@ import { terminalText } from "./security.ts";
 type Theme = ExtensionCommandContext["ui"]["theme"];
 type View = "runs" | "run" | "task";
 
+export interface MonitorActions {
+  restart?: (runId: string) => Promise<void>;
+}
+
 function statusIcon(status: RunStatus, theme: Theme): string {
   switch (status) {
     case "completed":
@@ -82,6 +86,8 @@ class MonitorComponent implements Component {
   private readonly keybindings: KeybindingsManager;
   private readonly requestRender: () => void;
   private readonly close: () => void;
+  private readonly actions: MonitorActions;
+  private readonly restarting = new Set<string>();
 
   constructor(
     registry: ProcedureRegistry,
@@ -90,12 +96,14 @@ class MonitorComponent implements Component {
     requestRender: () => void,
     close: () => void,
     initialRunId?: string,
+    actions: MonitorActions = {},
   ) {
     this.registry = registry;
     this.theme = theme;
     this.keybindings = keybindings;
     this.requestRender = requestRender;
     this.close = close;
+    this.actions = actions;
     if (initialRunId) {
       const index = registry.list().findIndex((run) => run.id.startsWith(initialRunId));
       if (index >= 0) {
@@ -175,6 +183,17 @@ class MonitorComponent implements Component {
       this.registry.approve(run.id, true);
     } else if (data === "d") {
       this.registry.approve(run.id, false);
+    } else if (
+      data === "r" &&
+      activeRuns([run]).length === 0 &&
+      !this.restarting.has(run.id) &&
+      this.actions.restart
+    ) {
+      this.restarting.add(run.id);
+      void this.actions.restart(run.id).finally(() => {
+        this.restarting.delete(run.id);
+        this.requestRender();
+      });
     }
   }
 
@@ -228,7 +247,7 @@ class MonitorComponent implements Component {
     lines.push(
       this.theme.fg(
         "dim",
-        ` ↑↓ select · enter inspect · p pause/resume · x stop · a approve · d deny · esc back`,
+        ` ↑↓ select · enter inspect · p pause/resume · x stop · r restart finished${run.pendingApproval ? " · a approve · d deny" : ""} · esc back`,
       ),
     );
     if (run.pendingApproval) {
@@ -344,6 +363,7 @@ export async function showMonitor(
   ctx: ExtensionCommandContext,
   registry: ProcedureRegistry,
   initialRunId?: string,
+  actions: MonitorActions = {},
 ): Promise<void> {
   await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
     let unsubscribe = () => {};
@@ -358,6 +378,7 @@ export async function showMonitor(
       () => tui.requestRender(),
       close,
       initialRunId,
+      actions,
     );
     unsubscribe = registry.subscribe(() => tui.requestRender());
     return component;

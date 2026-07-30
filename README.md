@@ -11,7 +11,7 @@ The workspace is one Pi package, so installation exposes every extension, the bu
 | [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                                                | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
 | [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research                            | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
 | [Review Loop](extensions/review-loop/README.md) | You want an independent reviewer to find issues, a guarded fixer to repair them, and a fresh reviewer to verify convergence | `/loop-review`                  | May edit the selected worktree target; never commits or rewrites history   |
-| [Procedures](extensions/procedures/README.md)   | A task benefits from visible, code-driven multi-agent orchestration                                                         | `/proc`, `/monitor`             | Depends on reviewed procedure source and approved child tools              |
+| [Procedures](extensions/procedures/README.md)   | A task benefits from visible, code-driven multi-agent orchestration                                                         | `/proc`, `/monitor`             | Depends on reviewed procedure source and declared child tools              |
 | Workspace Status                                | You need to verify that this checkout loaded                                                                                | `/extension-dev-status`         | None                                                                       |
 
 Also included: [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work.
@@ -90,7 +90,7 @@ The reviewer is fresh each pass, the fixer is guarded, deterministic verificatio
 /proc Inspect this service, propose the smallest safe implementation, ask before editing, implement it, and verify the focused tests.
 ```
 
-Review the generated JavaScript body, approve its child-agent tools, then follow execution in:
+Review the generated JavaScript body and its declared child-agent tools. It then runs autonomously in the background; inspect it only when needed:
 
 ```text
 /monitor
@@ -108,14 +108,14 @@ Generated procedures are ephemeral unless promoted explicitly with `/proc save`.
 
 ## Choosing the right primitive
 
-| Need                                                     | Prefer                               | Why                                                                |
-| -------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
-| One known page                                           | `web_fetch`                          | Smallest live-web operation                                        |
-| Unknown source                                           | `web_search`, then selective fetches | Bounded discovery before extraction                                |
-| Rigorous multi-source report                             | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations        |
-| One independent quality pass with repairs                | `/loop-review`                       | Purpose-built convergence and Git safety                           |
-| Custom fan-out/fan-in, approvals, or role specialization | `/proc`                              | Ordinary JavaScript owns control flow; `/monitor` exposes progress |
-| Finished changes ready for GitHub                        | `/yeet`                              | Repo-native verification and PR-template workflow                  |
+| Need                                                                | Prefer                               | Why                                                                |
+| ------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| One known page                                                      | `web_fetch`                          | Smallest live-web operation                                        |
+| Unknown source                                                      | `web_search`, then selective fetches | Bounded discovery before extraction                                |
+| Rigorous multi-source report                                        | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations        |
+| One independent quality pass with repairs                           | `/loop-review`                       | Purpose-built convergence and Git safety                           |
+| Custom fan-out/fan-in, optional checkpoints, or role specialization | `/proc`                              | Ordinary JavaScript owns control flow; `/monitor` exposes progress |
+| Finished changes ready for GitHub                                   | `/yeet`                              | Repo-native verification and PR-template workflow                  |
 
 A useful sequence for larger changes is:
 
@@ -139,6 +139,10 @@ Each stage has a different trust boundary: external evidence, controlled impleme
 | `/proc <goal>`               | Generate, review, and launch an ephemeral procedure            |
 | `/proc run <name> [goal]`    | Run a saved procedure                                          |
 | `/proc save <run-id> [name]` | Promote an ephemeral run to `.pi/procedures/`                  |
+| `/proc pause <run-id>`       | Pause new task scheduling                                      |
+| `/proc resume <run-id>`      | Resume a paused run                                            |
+| `/proc stop <run-id>`        | Stop an active run                                             |
+| `/proc restart <run-id>`     | Start a terminal run again                                     |
 | `/monitor [run-id]`          | Inspect and control procedure runs                             |
 | `/yeet [instructions]`       | Publish appropriate work as one ready PR                       |
 
@@ -168,7 +172,7 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
 - Review Loop confines fixer tools and forbids generic shell/Git-history mutation; an optional host verification command still executes locally.
-- Procedures isolate orchestration code in a bounded worker/VM, but approved child agents can edit files or run shell commands. Review generated source before launch.
+- Procedures isolate orchestration code in a bounded worker/VM, but source-declared child agents can edit files or run shell commands. Source review is the launch safety boundary.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 
 Read the extension-specific safety section before enabling mutating or billed capabilities.

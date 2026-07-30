@@ -15,40 +15,43 @@ import { activeRuns, ProcedureRegistry } from "./runner.ts";
 import { terminalText } from "./security.ts";
 import { ProcedureDefinitionStore, ProcedureRunStore } from "./store.ts";
 
-function refreshVisibility(ctx: ExtensionContext, service: ProcedureService): void {
+export function refreshVisibility(ctx: ExtensionContext, service: ProcedureService): void {
   const running = activeRuns(service.registry.list());
   if (running.length === 0) {
     ctx.ui.setStatus("procedures", undefined);
     ctx.ui.setWidget("procedures", undefined);
     return;
   }
-  const waiting = running.filter((run) => run.status === "waiting").length;
+  const waitingRuns = running.filter((run) => run.status === "waiting");
+  const working = running.reduce(
+    (count, run) =>
+      count +
+      run.tasks.filter((task) => task.status === "running" || task.status === "retrying").length,
+    0,
+  );
   ctx.ui.setStatus(
     "procedures",
     ctx.ui.theme.fg(
-      waiting > 0 ? "warning" : "accent",
-      `proc ${running.length} active${waiting ? ` · ${waiting} waiting` : ""}`,
+      waitingRuns.length > 0 ? "warning" : "accent",
+      `proc ${running.length}${working ? ` · ${working} working` : ""}${waitingRuns.length ? ` · ${waitingRuns.length} waiting` : ""}`,
     ),
   );
+
+  // Normal background work stays in the footer. Reserve below-editor space only for an
+  // actionable approval so procedures do not turn the main chat into a live log pane.
+  const waiting = waitingRuns[0];
+  if (!waiting) {
+    ctx.ui.setWidget("procedures", undefined);
+    return;
+  }
   ctx.ui.setWidget(
     "procedures",
-    (_tui, theme) => {
-      const lines = running.slice(0, 3).map((run) => {
-        const task = run.tasks.find(
-          (entry) => entry.status === "running" || entry.status === "retrying",
-        );
-        const detail = run.pendingApproval
-          ? `approval: ${run.pendingApproval.label}`
-          : task
-            ? `${task.id}: ${task.activity ?? task.status}`
-            : run.phase;
-        return `${theme.fg(run.status === "waiting" ? "warning" : "accent", "●")} ${theme.fg("muted", run.id.slice(0, 8))} ${terminalText(run.title, 60)} ${theme.fg("dim", `· ${terminalText(detail, 100)}`)}`;
-      });
-      lines.push(
-        theme.fg("dim", "  /monitor for live phases, tasks, tools, results, and controls"),
-      );
-      return new Text(lines.join("\n"), 0, 0);
-    },
+    (_tui, theme) =>
+      new Text(
+        `${theme.fg("warning", "?")} ${theme.fg("muted", waiting.id.slice(0, 8))} ${terminalText(waiting.pendingApproval?.label ?? waiting.title, 100)} ${theme.fg("dim", `· /monitor ${waiting.id.slice(0, 8)} to decide`)}`,
+        0,
+        0,
+      ),
     { placement: "belowEditor" },
   );
 }
@@ -76,7 +79,7 @@ export default function proceduresExtension(pi: ExtensionAPI): void {
           : status === "cancelled"
             ? theme.fg("warning", "■")
             : theme.fg("accent", "●");
-    const text = `${icon} ${theme.fg("accent", terminalText(data.title ?? "Procedure", 160))} ${theme.fg("muted", terminalText(data.id ?? "", 40).slice(0, 8))}\n${theme.fg("dim", `${terminalText(status, 40)} · ${terminalText(data.phase ?? "", 120)} · ${String(data.tasks ?? 0)} tasks${data.error ? ` · ${terminalText(data.error, 220)}` : ""}`)}`;
+    const text = `${icon} ${theme.fg("muted", terminalText(data.id ?? "", 40).slice(0, 8))} ${theme.fg("accent", terminalText(data.title ?? "Procedure", 120))} ${theme.fg("dim", `· ${terminalText(status, 40)} · ${terminalText(data.phase ?? "", 80)} · ${String(data.tasks ?? 0)} tasks${data.error ? ` · ${terminalText(data.error, 140)}` : ""}`)}`;
     return new Text(text, 1, 0);
   });
 

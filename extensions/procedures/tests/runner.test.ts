@@ -82,6 +82,49 @@ test("worker orchestrates parallel agents and records visibility state", async (
   assert.equal(terminal.usage.input, 20);
 });
 
+test("pause and resume keep background scheduling user-controlled", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-procedure-controls-"));
+  let calls = 0;
+  const executor: AgentExecutor = {
+    async execute() {
+      calls += 1;
+      return { text: "done", usage: emptyUsage() };
+    },
+  };
+  const registry = new ProcedureRegistry({ store: new ProcedureRunStore(directory, directory) });
+  const run = registry.start({
+    definition: definition(),
+    source:
+      'await $.phase("delay"); await $.sleep(100); return await $.agent("after-pause", "continue", { tools: ["read"] });',
+    sourcePath: join(directory, "test.proc.js"),
+    input: {},
+    cwd: directory,
+    model: "test/model",
+    thinkingLevel: "off",
+    executor,
+  });
+  await new Promise<void>((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for delay phase")), 5_000);
+    const check = () => {
+      if (registry.get(run.id)?.phase === "delay") {
+        clearTimeout(timer);
+        unsubscribe();
+        resolvePromise();
+      }
+    };
+    const unsubscribe = registry.subscribe(check);
+    check();
+  });
+  assert.ok(registry.pause(run.id));
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+  assert.equal(calls, 0);
+  assert.equal(registry.get(run.id)?.status, "paused");
+  assert.ok(registry.resume(run.id));
+  const terminal = await waitForTerminal(registry, run.id);
+  assert.equal(terminal.status, "completed");
+  assert.equal(calls, 1);
+});
+
 test("a procedure cannot finish while a host operation is unawaited", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-procedure-runner-"));
   const executor: AgentExecutor = {

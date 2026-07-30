@@ -4,7 +4,7 @@ This guide is injected into the isolated procedure-author agent on every `/proc`
 
 ## Design contract
 
-A procedure is orchestration code, not implementation code. JavaScript decides **when**, **what can run in parallel**, **what evidence moves forward**, **where approval is required**, and **when to stop**. Child Pi agents inspect or change the project.
+A procedure is orchestration code, not implementation code. JavaScript decides **when**, **what can run in parallel**, **what evidence moves forward**, **whether an explicit approval is genuinely required**, and **when to stop**. Child Pi agents inspect or change the project.
 
 Use the smallest useful workflow:
 
@@ -13,7 +13,7 @@ Use the smallest useful workflow:
 3. Keep intermediate results in script variables.
 4. Pass only relevant evidence into later prompts.
 5. Use a stronger model or higher thinking level only for work that benefits from it.
-6. Put approval before the first mutation or shell task.
+6. Let routine project edits and verification run autonomously after source review; use `$.approval` only when the goal requests it or an irreversible external side effect needs a fresh decision.
 7. Bound every loop and await every `$` operation.
 8. Return a small JSON-serializable result.
 
@@ -111,10 +111,6 @@ const plan = await $.agent(
     thinking: "high",
   },
 );
-
-if (!(await $.approval("Apply the reviewed plan?", plan.text.slice(0, 6000)))) {
-  return { status: "declined", plan: plan.text };
-}
 
 await $.phase("implementation");
 const implementation = await $.agent("implementer", `Implement this plan:\n${plan.text}`, {
@@ -223,7 +219,8 @@ Before `submit_procedure`, verify:
 - Every `$` call is awaited.
 - All loops have explicit small bounds.
 - Tools are minimal and `requiredTools` includes their union.
-- Mutation/shell work follows an approval checkpoint.
+- Routine edits and verification do not add unnecessary runtime approvals.
+- Any approval that remains is explicitly requested by the goal or protects an irreversible external side effect.
 - Mutation/shell work does not request retries.
 - Prompts have concrete deliverables and scope.
 - The returned value is bounded and JSON-serializable.

@@ -1,8 +1,8 @@
 # Pi Procedures
 
-> Visibility-first, code-driven multi-agent workflows for Pi: generate a small orchestration program, review it, approve its capabilities, run it in the background, and watch every task in `/monitor`.
+> Visibility-first, code-driven multi-agent workflows for Pi: generate a small orchestration program, review its declared capabilities, run it autonomously in the background, and inspect it only when needed.
 
-Procedures are for work that needs more structure than one agent turn but less machinery than a workflow DSL. Ordinary JavaScript owns branching, loops, fan-out/fan-in, approvals, and intermediate state. Isolated Pi `AgentSession`s own judgment and project interaction.
+Procedures are for work that needs more structure than one agent turn but less machinery than a workflow DSL. Ordinary JavaScript owns branching, loops, fan-out/fan-in, optional human checkpoints, and intermediate state. Isolated Pi `AgentSession`s own judgment and project interaction.
 
 Generated procedures are **ephemeral by default**. Nothing enters `.pi/procedures/` unless you explicitly promote a run with `/proc save`.
 
@@ -25,18 +25,17 @@ Generated procedures are **ephemeral by default**. Nothing enters `.pi/procedure
 Ask Procedures to design a workflow:
 
 ```text
-/proc Inspect the authentication change, run independent API and test scouts in parallel, propose the smallest safe plan, ask before editing, implement it, and run focused verification.
+/proc Inspect the authentication change, run independent API and test scouts in parallel, propose the smallest safe plan, implement it autonomously, and run focused verification.
 ```
 
 The lifecycle is intentionally reviewable:
 
 1. An isolated author agent inspects the project and writes a JavaScript function body.
-2. Pi opens the generated source in an editor. Review or modify it.
-3. Pi shows the union of child-agent tools and warns about mutation/shell access.
-4. You approve or cancel launch.
-5. The run starts in the background.
-6. `/monitor` shows phases, tasks, tools, models, reasoning, usage, artifacts, approvals, and results.
-7. The source remains private to that run unless you save it explicitly.
+2. Pi opens the generated source in an editor. Review or modify its tasks and declared tools.
+3. Closing the reviewed editor launches the run without another confirmation dialog.
+4. The run continues autonomously in the background while the main session remains available.
+5. `/monitor` provides on-demand phases, tasks, tools, models, usage, controls, and results.
+6. The source remains private to that run unless you save it explicitly.
 
 Open the dashboard:
 
@@ -64,9 +63,10 @@ Rerun it later:
 /proc save <run-id> [name]   promote one run into a reusable project procedure
 /proc run <name> [goal]      rerun saved source; optional goal replaces the saved goal
 /proc list                   list saved procedures and their allowed tools
+/proc pause <run-id>         pause new task scheduling
+/proc resume <run-id>        resume a paused run
 /proc stop <run-id>          stop an active run
-/proc approve <run-id>       approve a waiting checkpoint
-/proc deny <run-id>          deny a waiting checkpoint
+/proc restart <run-id>       start a finished/stopped run again from its retained source
 /monitor [run-id]            open the live dashboard, optionally focused on one run
 ```
 
@@ -76,19 +76,19 @@ Full or unique run-ID prefixes are accepted where the registry can resolve them 
 
 ## Monitor controls
 
-| Key       | Action                                      |
-| --------- | ------------------------------------------- |
-| `↑` / `↓` | Select run or task                          |
-| `Enter`   | Drill into the selected run/task            |
-| `Esc`     | Move back or close                          |
-| `p`       | Pause/resume new scheduling                 |
-| `x`       | Stop the selected run                       |
-| `a`       | Approve a waiting `$.approval()` checkpoint |
-| `d`       | Deny a waiting checkpoint                   |
+| Key       | Action                                               |
+| --------- | ---------------------------------------------------- |
+| `↑` / `↓` | Select run or task                                   |
+| `Enter`   | Drill into the selected run/task                     |
+| `Esc`     | Move back or close                                   |
+| `p`       | Pause/resume new scheduling                          |
+| `x`       | Stop the selected run                                |
+| `r`       | Restart a finished/stopped run from retained source  |
+| `a` / `d` | Decide an optional explicit checkpoint, when present |
 
 Pausing does not kill an already-running child; it prevents new tasks from acquiring a scheduling slot. Stopping aborts the worker and active child sessions but does not revert completed file edits.
 
-A compact widget below the editor shows active runs and current task activity while the dashboard is closed.
+Normal background work occupies only one compact footer status such as `proc 1 · 1 working`; it does not reserve space below the editor or stream progress into the main chat. A one-line below-editor notice appears only for the rare procedure that explicitly contains `$.approval`. Use `/monitor` for on-demand detail and controls. Once source review finishes, the main session remains free while execution continues.
 
 ## Procedure source model
 
@@ -116,10 +116,6 @@ await $.artifact("inspection", {
   api: api.text.slice(0, 12000),
   tests: tests.text.slice(0, 12000),
 });
-
-if (!(await $.approval("Apply the implementation?", `${api.text}\n\n${tests.text}`))) {
-  return { status: "declined" };
-}
 
 await $.phase("implement");
 const implementation = await $.agent(
@@ -205,7 +201,7 @@ Persists one JSON-serializable intermediate result for inspection in `/monitor`.
 
 ### `await $.approval(label, details?)`
 
-Pauses the run until approved or denied. Put an approval before the first mutation or shell task and include enough detail for an informed decision. Returns `true` for approval and `false` for denial.
+Pauses the run until approved or denied and returns a boolean. This is optional: generated procedures should run routine edits and verification autonomously after source review. Use it only when the user's goal explicitly requests a checkpoint or an irreversible external side effect needs a fresh decision.
 
 ### `await $.sleep(ms)`
 
@@ -257,7 +253,7 @@ The author does not rely on a vague one-line prompt. Every creation receives:
 - the live model JSON catalog;
 - decomposition and model-allocation rules;
 - good and bad orchestration examples;
-- approval, retry, and side-effect rules;
+- autonomy, retry, optional-checkpoint, and side-effect rules;
 - context-compression guidance;
 - a final submission checklist.
 
@@ -288,7 +284,7 @@ The project path is hashed, and up to 100 historical snapshots are restored for 
 
 The manifest records title, description, default goal, source filename, allowed tools, and creation time. Name collisions receive a numeric suffix instead of overwriting an existing procedure.
 
-Saved procedures remain source-controlled only if you choose to commit them. Every `/proc run` still asks for tool approval.
+Saved procedures remain source-controlled only if you choose to commit them. `/proc run` starts the reviewed saved source directly; use pause, stop, restart, or `/monitor` to control it.
 
 ## Visibility and data boundaries
 
@@ -319,8 +315,8 @@ Node's VM is defense in depth, not a formal hostile-code security boundary. Sour
 - Child sessions do not recursively load extensions, skills, or prompt templates.
 - Read/find/grep/list/edit/write paths are confined to the trusted project after symlink resolution.
 - Mutations to `.git` are rejected.
-- Child tools are limited to the launch-approved union recorded by the procedure.
-- `bash` is not sandboxed; use it only for narrow verification after explicit approval.
+- Child tools are limited to the source-declared union recorded by the procedure.
+- `bash` is not sandboxed; source review is the safety boundary, and authors should use it only for narrow setup or verification.
 - Credentials are transferred through runtime auth facilities and never included in source, author prompts, or saved manifests.
 
 ### Bounds
@@ -373,7 +369,9 @@ return { verification: verification.text };
 
 Use an explicit small bound; never ask a model-controlled loop to “continue until good.”
 
-### Human decision boundary
+### Optional explicit human decision
+
+Use this only when the goal asks for it or the next step has an irreversible external effect:
 
 ```js
 const plan = await $.agent("planner", "Produce a concrete plan and changed-file list.", {
@@ -398,13 +396,17 @@ Authenticate and enable at least one model from the four-model policy. If the Pi
 
 The model must exactly match the live catalog shown to the author. Availability can also change between authoring and execution; regenerate or edit the source to a currently available reference.
 
-### The run is waiting indefinitely
+### The run is not scheduling new tasks
 
-Open `/monitor`. It may be paused or waiting for `$.approval()`. Use `a`/`d`, or `/proc approve <run-id>` and `/proc deny <run-id>`.
+Check `/monitor`. If paused, use `/proc resume <run-id>` or `p`. If a hand-written/saved procedure explicitly uses `$.approval`, decide it with `a`/`d` in `/monitor`.
+
+### Starting a stopped run again
+
+Use `/proc restart <run-id>` or select the finished run in `/monitor` and press `r`. Restart creates a new run from the retained source and goal, preserving the old run as history.
 
 ### The run is marked interrupted after `/reload`
 
-Version 1 does not resume active workers across reload/process exit. Start a new run from the saved procedure or original goal.
+Version 1 does not resume an in-flight worker across reload/process exit. Use `/proc restart <run-id>` to launch a new run from retained source.
 
 ### A read-only task did not retry
 
