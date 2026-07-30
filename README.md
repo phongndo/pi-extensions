@@ -6,6 +6,7 @@ local Pi package.
 ## Extensions
 
 - `src/index.ts` — workspace status command (`/extension-dev-status`)
+- `extensions/fast-mode/` — global Codex Fast mode toggle (`/fast`)
 - `extensions/web-tools/` — Firecrawl web tools, configuration command
   (`/web-tools`), and the bundled `research` skill
 - `extensions/review-loop/` — bounded independent review/fix/re-review loop
