@@ -320,7 +320,7 @@ export async function ensureModelAuth(runtime: ModelRuntime, model: Model<Api>):
   const auth = await runtime.getAuth(model);
   if (!auth) {
     throw new Error(
-      `No usable authentication for ${model.provider}/${model.id}. Open /loop-review settings or run /login ${model.provider}.`,
+      `No usable authentication for ${model.provider}/${model.id}. Open /settings-review or run /login ${model.provider}.`,
     );
   }
 }
@@ -351,7 +351,7 @@ async function resolveOneRole(
   const model = runtime.getModel(reference.provider, reference.modelId);
   if (!model) {
     throw new Error(
-      `${role} model ${formatModelReference(reference)} is unavailable. Choose another model in /loop-review settings.`,
+      `${role} model ${formatModelReference(reference)} is unavailable. Choose another model in /settings-review.`,
     );
   }
   await ensureModelAuth(runtime, model);
@@ -363,7 +363,7 @@ async function resolveOneRole(
   });
   if (!available.some((candidate) => candidate.id === reference.modelId)) {
     throw new Error(
-      `${role} model ${formatModelReference(reference)} is not available with the configured account. Choose another model in /loop-review settings.`,
+      `${role} model ${formatModelReference(reference)} is not available with the configured account. Choose another model in /settings-review.`,
     );
   }
   const requestedThinking = configuredThinking ?? currentThinking;
@@ -438,7 +438,7 @@ export async function resolveRoleModels(options: {
     const model = options.outerRegistry.find(reference.provider, reference.modelId);
     if (!model) {
       throw new Error(
-        `${role} model ${formatModelReference(reference)} is unavailable. Choose another model in /loop-review settings.`,
+        `${role} model ${formatModelReference(reference)} is unavailable. Choose another model in /settings-review.`,
       );
     }
     if (
@@ -448,7 +448,7 @@ export async function resolveRoleModels(options: {
       )
     ) {
       throw new Error(
-        `${role} model ${formatModelReference(reference)} is not available with the selected outer-session account. Choose another model in /loop-review settings.`,
+        `${role} model ${formatModelReference(reference)} is not available with the selected outer-session account. Choose another model in /settings-review.`,
       );
     }
   }

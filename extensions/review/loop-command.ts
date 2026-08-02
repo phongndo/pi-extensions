@@ -14,6 +14,7 @@ import {
   listRecentCommits,
   type ExecGit,
 } from "./git.ts";
+import { isInteractiveReviewActive } from "./interactive-review-state.ts";
 import type { ReviewLoopResult, ReviewLoopRunState, ReviewTargetRequest } from "./models.ts";
 import { runReviewLoop } from "./orchestrator.ts";
 import {
@@ -86,7 +87,7 @@ export function tokenizeArgs(value: string): string[] {
       current += character;
     }
   }
-  if (quote) throw new Error("Unterminated quote in loop-review arguments.");
+  if (quote) throw new Error("Unterminated quote in review arguments.");
   if (current) tokens.push(current);
   return tokens;
 }
@@ -273,6 +274,38 @@ function latestRunState(ctx: ExtensionContext): ReviewLoopRunState | undefined {
   return latest;
 }
 
+export async function openReviewSettings(ctx: ExtensionCommandContext): Promise<void> {
+  if (ctx.mode !== "tui") {
+    ctx.ui.notify("Review settings require TUI mode.", "error");
+    return;
+  }
+
+  let settings;
+  try {
+    settings = await loadSettings();
+  } catch (error) {
+    ctx.ui.notify(terminalErrorText(error), "error");
+    return;
+  }
+
+  await showReviewLoopSettings(ctx, settings).catch((error) => {
+    ctx.ui.notify(terminalErrorText(error), "error");
+  });
+}
+
+export function registerReviewSettingsCommand(pi: ExtensionAPI): void {
+  pi.registerCommand("settings-review", {
+    description: "Configure Review Loop models, verification, and convergence",
+    handler: async (args, ctx) => {
+      if (args.trim()) {
+        ctx.ui.notify("Usage: /settings-review", "error");
+        return;
+      }
+      await openReviewSettings(ctx);
+    },
+  });
+}
+
 export function registerReviewLoopCommand(pi: ExtensionAPI): void {
   registerRenderers(pi);
   let running = false;
@@ -311,23 +344,28 @@ export function registerReviewLoopCommand(pi: ExtensionAPI): void {
         return;
       }
 
+      // Settings routing deliberately precedes Git checks.
+      if (parsed.action === "settings") {
+        await openReviewSettings(ctx);
+        return;
+      }
+      if (isInteractiveReviewActive(ctx)) {
+        ctx.ui.notify(
+          "Cannot start a repair loop during a read-only interactive review. Use /end-review first.",
+          "error",
+        );
+        return;
+      }
+      if (running) {
+        ctx.ui.notify("A review loop is already running.", "warning");
+        return;
+      }
+
       let settings;
       try {
         settings = await loadSettings();
       } catch (error) {
         ctx.ui.notify(terminalErrorText(error), "error");
-        return;
-      }
-
-      // Settings routing deliberately precedes Git checks.
-      if (parsed.action === "settings") {
-        await showReviewLoopSettings(ctx, settings).catch((error) => {
-          ctx.ui.notify(terminalErrorText(error), "error");
-        });
-        return;
-      }
-      if (running) {
-        ctx.ui.notify("A review loop is already running.", "warning");
         return;
       }
 

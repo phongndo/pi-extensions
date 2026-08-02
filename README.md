@@ -6,13 +6,12 @@ The workspace is one Pi package, so installation exposes every extension, the bu
 
 ## Extension suite
 
-| Extension                                       | Use it when…                                                                                                                | Main entry point                | Side effects                                                               |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                                                | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
-| [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research                            | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
-| [Review Loop](extensions/review-loop/README.md) | You want an independent reviewer to find issues, a guarded fixer to repair them, and a fresh reviewer to verify convergence | `/loop-review`                  | May edit the selected worktree target; never commits or rewrites history   |
-| [Procedures](extensions/procedures/README.md)   | A task benefits from visible, code-driven multi-agent orchestration                                                         | `/proc`, `/monitor`             | Depends on reviewed procedure source and declared child tools              |
-| Workspace Status                                | You need to verify that this checkout loaded                                                                                | `/extension-dev-status`         | None                                                                       |
+| Extension                                     | Use it when…                                                                                              | Main entry point                | Side effects                                                               |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
+| [Fast Mode](extensions/fast-mode/README.md)   | You want eligible Codex requests to ask for priority service                                              | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
+| [Web Tools](extensions/web-tools/README.md)   | You need live search, page extraction, site mapping, browser work, or evidence-grounded research          | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
+| [Review](extensions/review/README.md)         | You want either an interactive review handoff or an independent review/fix loop that verifies convergence | `/review`, `/loop-review`       | `/review` may check out a PR; `/loop-review` may edit its target           |
+| [Procedures](extensions/procedures/README.md) | A task benefits from visible, code-driven multi-agent orchestration                                       | `/proc`, `/monitor`             | Depends on reviewed procedure source and declared child tools              |
 
 Also included: [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work.
 
@@ -38,15 +37,7 @@ pi install "$(pwd)"
 
 Pi packages execute code with the user's permissions. Review the checkout before installing it.
 
-Start Pi, then verify the package:
-
-```text
-/extension-dev-status
-```
-
-The expected notification is `Local extension workspace loaded`.
-
-For local development, changes become active after:
+Start Pi. For local development, changes become active after:
 
 ```text
 /reload
@@ -76,13 +67,22 @@ Add a Firecrawl key, inspect credits, choose context/cost limits, and decide whi
 /skill:research Compare the current migration guidance from the two primary vendors.
 ```
 
-### 3. Run an independent review/fix loop
+### 3. Review changes
+
+Start a one-pass review in an empty branch of the current Pi session, then return with a structured handoff:
+
+```text
+/review uncommitted
+/end-review
+```
+
+For automatic repair and independent convergence checking, use the bounded loop:
 
 ```text
 /loop-review uncommitted --extra "Prioritize auth boundaries and regression coverage"
 ```
 
-The reviewer is fresh each pass, the fixer is guarded, deterministic verification is optional, and the loop ends only when its convergence policy is satisfied or a bound is reached.
+The loop uses a fresh reviewer each pass, a guarded fixer, and optional deterministic verification.
 
 ### 4. Generate an observable workflow
 
@@ -113,7 +113,8 @@ Generated procedures are ephemeral unless promoted explicitly with `/proc save`.
 | One known page                                                      | `web_fetch`                          | Smallest live-web operation                                        |
 | Unknown source                                                      | `web_search`, then selective fetches | Bounded discovery before extraction                                |
 | Rigorous multi-source report                                        | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations        |
-| One independent quality pass with repairs                           | `/loop-review`                       | Purpose-built convergence and Git safety                           |
+| One interactive review with a handoff                               | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes            |
+| Independent review, repair, and convergence                         | `/loop-review`                       | Purpose-built convergence and Git safety                           |
 | Custom fan-out/fan-in, optional checkpoints, or role specialization | `/proc`                              | Ordinary JavaScript owns control flow; `/monitor` exposes progress |
 | Finished changes ready for GitHub                                   | `/yeet`                              | Repo-native verification and PR-template workflow                  |
 
@@ -127,24 +128,25 @@ Each stage has a different trust boundary: external evidence, controlled impleme
 
 ## Command reference
 
-| Command                      | Description                                                    |
-| ---------------------------- | -------------------------------------------------------------- |
-| `/extension-dev-status`      | Confirm that this workspace is loaded                          |
-| `/fast`                      | Toggle global Codex Fast Mode                                  |
-| `/web-tools`                 | Open Firecrawl configuration                                   |
-| `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry |
-| `/skill:research <question>` | Run the bundled evidence-grounded research workflow            |
-| `/loop-review [target]`      | Review, fix, verify, and re-review a Git target                |
-| `/loop-review settings`      | Configure role models and convergence                          |
-| `/proc <goal>`               | Generate, review, and launch an ephemeral procedure            |
-| `/proc run <name> [goal]`    | Run a saved procedure                                          |
-| `/proc save <run-id> [name]` | Promote an ephemeral run to `.pi/procedures/`                  |
-| `/proc pause <run-id>`       | Pause new task scheduling                                      |
-| `/proc resume <run-id>`      | Resume a paused run                                            |
-| `/proc stop <run-id>`        | Stop an active run                                             |
-| `/proc restart <run-id>`     | Start a terminal run again                                     |
-| `/monitor [run-id]`          | Inspect and control procedure runs                             |
-| `/yeet [instructions]`       | Publish appropriate work as one ready PR                       |
+| Command                      | Description                                                       |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `/fast`                      | Toggle global Codex Fast Mode                                     |
+| `/web-tools`                 | Open Firecrawl configuration                                      |
+| `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
+| `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
+| `/review [target]`           | Start an interactive review in an empty branch or current session |
+| `/settings-review`           | Configure Review Loop models and convergence                      |
+| `/end-review`                | Return from an isolated review, optionally summarize or fix       |
+| `/loop-review [target]`      | Review, fix, verify, and re-review a Git target                   |
+| `/proc <goal>`               | Generate, review, and launch an ephemeral procedure               |
+| `/proc run <name> [goal]`    | Run a saved procedure                                             |
+| `/proc save <run-id> [name]` | Promote an ephemeral run to `.pi/procedures/`                     |
+| `/proc pause <run-id>`       | Pause new task scheduling                                         |
+| `/proc resume <run-id>`      | Resume a paused run                                               |
+| `/proc stop <run-id>`        | Stop an active run                                                |
+| `/proc restart <run-id>`     | Start a terminal run again                                        |
+| `/monitor [run-id]`          | Inspect and control procedure runs                                |
+| `/yeet [instructions]`       | Publish appropriate work as one ready PR                          |
 
 See each extension README for complete syntax, safety constraints, and troubleshooting.
 
@@ -158,7 +160,8 @@ Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 | Web Tools           | `~/.pi/agent/web.json`                       | Tool toggles, context limits, and credit guards                     |
 | Firecrawl key       | macOS Keychain or `FIRECRAWL_API_KEY`        | API credential; environment takes precedence                        |
 | Web telemetry       | `~/.pi/agent/web-telemetry.jsonl`            | Rotating privacy-safe operation metrics and input fingerprints      |
-| Review Loop         | `~/.pi/agent/review-loop.json`               | Role model references, reasoning, convergence, verification command |
+| Interactive review  | Current Pi session                           | Review-branch origin and custom instructions                        |
+| Review loop         | `~/.pi/agent/review-loop.json`               | Role model references, reasoning, convergence, verification command |
 | Procedure run store | `~/.pi/agent/procedure-runs/<project-hash>/` | Run snapshots and ephemeral generated source                        |
 | Saved procedures    | `<project>/.pi/procedures/`                  | Explicitly promoted manifests and JavaScript source                 |
 
@@ -171,7 +174,7 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Pi extensions run with the user's process permissions.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
-- Review Loop confines fixer tools and forbids generic shell/Git-history mutation; an optional host verification command still executes locally.
+- `/review pr` checks out a GitHub PR locally; `/loop-review` confines fixer tools and forbids generic shell/Git-history mutation, though optional host verification still executes locally.
 - Procedures isolate orchestration code in a bounded worker/VM, but source-declared child agents can edit files or run shell commands. Source review is the launch safety boundary.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 
@@ -181,11 +184,11 @@ Read the extension-specific safety section before enabling mutating or billed ca
 
 ```text
 .
-├── src/index.ts                    # /extension-dev-status
+├── src/index.ts                    # Reserved workspace-wide extension entry point
 ├── extensions/
 │   ├── fast-mode/                  # /fast
 │   ├── web-tools/                  # web_* tools and research skill
-│   ├── review-loop/                # /loop-review
+│   ├── review/                     # /review, /end-review, /loop-review
 │   └── procedures/                 # /proc, /monitor, procedure_status
 ├── prompt/yeet.md                  # /yeet prompt template
 ├── package.json                    # root Pi package manifest
@@ -212,7 +215,7 @@ Common focused commands:
 pnpm check:root
 pnpm --filter pi-fast-mode check
 pnpm --filter pi-web-tools check
-pnpm --filter pi-review-loop check
+pnpm --filter pi-review check
 pnpm --filter pi-procedures check
 pnpm format
 pnpm lint
@@ -251,8 +254,8 @@ hk run pre-commit
 - [Web Tools](extensions/web-tools/README.md)
 - [Web Tools evaluations](extensions/web-tools/evals/README.md)
 - [Research skill](extensions/web-tools/skills/research/SKILL.md)
-- [Review Loop](extensions/review-loop/README.md)
-- [Review Loop design plan](extensions/review-loop/PLAN.md)
+- [Review](extensions/review/README.md)
+- [Review Loop design plan](extensions/review/PLAN.md)
 - [Procedures](extensions/procedures/README.md)
 - [Procedure authoring guide](extensions/procedures/AUTHORING.md)
 - [Procedure research/design rationale](extensions/procedures/RESEARCH.md)

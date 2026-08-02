@@ -1,6 +1,6 @@
 # Third-party notices
 
-Portions of the target-selection behavior and review rubric are adapted from [pi-review](https://github.com/earendil-works/pi-review).
+`review-command.ts` incorporates [pi-review](https://github.com/earendil-works/pi-review) at commit `f1de050504936046c0f85b21fec0e0a93ef394eb`. Portions of the Review Loop target-selection behavior and review rubric are adapted from the same project.
 
 ## pi-review
 

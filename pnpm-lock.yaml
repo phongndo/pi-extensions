@@ -84,7 +84,7 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
-  extensions/review-loop:
+  extensions/review:
     devDependencies:
       '@earendil-works/pi-ai':
         specifier: 0.82.1

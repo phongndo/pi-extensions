@@ -5,7 +5,7 @@ import {
   commitSelectionItems,
   parseReviewLoopArgs,
   tokenizeArgs,
-} from "../command.ts";
+} from "../loop-command.ts";
 
 test("tokenizes quotes and escapes", () => {
   assert.deepEqual(tokenizeArgs(`branch main --extra "focus on errors"`), [

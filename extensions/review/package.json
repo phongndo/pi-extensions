@@ -1,8 +1,8 @@
 {
-  "name": "pi-review-loop",
+  "name": "pi-review",
   "version": "0.1.0",
   "private": true,
-  "description": "Bounded independent review/fix/re-review loop for Pi",
+  "description": "Unified interactive and bounded review workflows for Pi",
   "type": "module",
   "scripts": {
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",

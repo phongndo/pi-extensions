@@ -1,14 +1,45 @@
-# Pi Review Loop
+# Pi Review
+
+One extension provides two complementary review workflows while preserving their existing commands and behavior:
+
+| Workflow                     | Commands                 | Use it for                                                                            |
+| ---------------------------- | ------------------------ | ------------------------------------------------------------------------------------- |
+| Interactive review branch    | `/review`, `/end-review` | One review pass with an optional structured handoff or queued fix turn                |
+| Bounded independent fix loop | `/loop-review`           | Fresh review, guarded repair, verification, and re-review until clean or safely bound |
+
+## Interactive review with `/review`
+
+Start directly or open the target selector:
+
+```text
+/review
+/review uncommitted
+/review branch main
+/review commit abc123 [display title]
+/review pr <number-or-github-url>
+/review folder src docs
+/review branch main --extra "Focus on performance and error handling"
+/settings-review
+```
+
+For an existing conversation, choose **Empty branch** to isolate the review or **Current session** to review inline. Review turns expose only repository-confined read/search tools plus a bounded, read-only Git target tool; mutation and shell tools are blocked. `/loop-review` is unavailable on an active empty review branch. Empty-branch reviews remain read-only until they are completed with:
+
+```text
+/end-review
+```
+
+The completion menu can return without a summary, return with a structured findings summary, or return and queue the findings for fixing. `/end-review` applies only to an Empty-branch review.
+
+The `/review` selector also lets you add or remove session-persisted custom review instructions. A `REVIEW_GUIDELINES.md` next to the nearest ancestor `.pi` directory is appended when present. PR review requires authenticated GitHub CLI access and refuses checkout when tracked changes or ignored files are present. Ordinary untracked files retain the original `pi-review` behavior and do not block checkout.
+
+## Bounded review/fix loop with `/loop-review`
 
 > Independent review → guarded fix → deterministic verification → fresh re-review, repeated until the target is convincingly clean or a safety bound stops the run.
 
-`/loop-review` gives quality control its own isolated contexts. Reviewers never inherit a fixer's claims, fixer outcomes are treated as candidates until a later reviewer confirms the finding disappeared, and Git invariants prevent the target from moving underneath the loop.
-
-## At a glance
+Reviewers never inherit a fixer's claims, fixer outcomes are treated as candidates until a later reviewer confirms the finding disappeared, and Git invariants prevent the target from moving underneath the loop.
 
 |                    |                                                                         |
 | ------------------ | ----------------------------------------------------------------------- |
-| Command            | `/loop-review`                                                          |
 | UI                 | Blocking TUI progress panel; `Esc` requests cancellation                |
 | Default passes     | 4                                                                       |
 | Default clean runs | 1                                                                       |
@@ -40,8 +71,10 @@ Add one run-specific instruction without changing global settings:
 Configure role models, reasoning, verification, and convergence:
 
 ```text
-/loop-review settings
+/settings-review
 ```
+
+`/loop-review settings` remains available as a compatibility alias.
 
 While a run is active, press `Esc` to stop. Completed edits remain in the worktree so no user work is silently discarded.
 
@@ -54,10 +87,10 @@ While a run is active, press `Esc` to stop. Completed edits remain in the worktr
 /loop-review commit <revision> [display title]
 /loop-review pr <number-or-github-url>
 /loop-review folder <path...>
-/loop-review settings
+/settings-review
 ```
 
-`setting` is accepted as an alias for `settings`.
+`/loop-review settings` remains available for compatibility, including its `setting` alias.
 
 Every run target accepts one quoted extra instruction:
 
@@ -72,7 +105,7 @@ With no target, the TUI opens a selector with a smart default:
 - clean feature branch → default base branch;
 - otherwise → current commit.
 
-## Review targets
+## Review Loop targets
 
 | Target              | What is reviewed and repaired                                         | Preconditions and important behavior                                                                |
 | ------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -128,8 +161,10 @@ When P3 fixing is disabled, excluded findings remain visible in the final result
 Open the interactive editor:
 
 ```text
-/loop-review settings
+/settings-review
 ```
+
+The legacy `/loop-review settings` route opens the same editor.
 
 Settings persist globally in `~/.pi/agent/review-loop.json` by default.
 
@@ -246,7 +281,7 @@ Expand the final custom message in Pi to inspect per-pass verdicts, finding ledg
 
 ### Review a feature branch with stronger convergence
 
-1. Open `/loop-review settings`.
+1. Open `/settings-review`.
 2. Set `required clean runs` to 2 and a focused verification command.
 3. Run:
 
@@ -305,12 +340,12 @@ Open settings and choose an authenticated model currently visible to Pi, or swit
 ## Development
 
 ```bash
-pnpm --filter pi-review-loop check
-pnpm --filter pi-review-loop format
+pnpm --filter pi-review check
+pnpm --filter pi-review format
 ```
 
 After local changes, run `/reload` in Pi. Tests cover argument parsing, target safety, symlink/Git-metadata confinement, model resolution, reviewer pagination/protocols, fixer restrictions, verification cancellation, convergence, and custom rendering.
 
 ## Attribution
 
-Target-selection behavior and the review rubric are adapted from [`pi-review`](https://github.com/earendil-works/pi-review), Copyright © 2026 Earendil Inc., under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The `/review` implementation was incorporated from [`pi-review`](https://github.com/earendil-works/pi-review) commit `f1de050504936046c0f85b21fec0e0a93ef394eb`. Review Loop target-selection behavior and its review rubric were also adapted from that project. Copyright © 2026 Earendil Inc., under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

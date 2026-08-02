@@ -12,7 +12,7 @@ target, review it, fix actionable findings, and repeat until a fresh review is
 clean or a bounded safety condition stops the loop.
 
 The normal command must remain minimal. Configuration belongs in
-`/loop-review settings`, not in the target-selection flow.
+`/settings-review`, not in the target-selection flow.
 
 ## User experience
 
@@ -25,11 +25,10 @@ The normal command must remain minimal. Configuration belongs in
 /loop-review commit abc123
 /loop-review pr 123
 /loop-review folder src docs
-/loop-review settings
+/settings-review
 ```
 
-Also accept `setting` as an alias for `settings`. Argument completion should
-offer target subcommands and `settings`.
+Keep `/loop-review settings` and its `setting` alias for compatibility. Argument completion for `/loop-review` should continue to offer target subcommands and `settings`.
 
 ### `/loop-review`
 
@@ -54,7 +53,7 @@ Use the same smart default as `pi-review`:
 After the target is resolved, start immediately. Do not show a setup summary or
 second confirmation screen.
 
-### `/loop-review settings`
+### `/settings-review`
 
 Open a separate `SettingsList` containing:
 
@@ -211,7 +210,7 @@ Create child sessions with a controlled `DefaultResourceLoader`:
 
 Resolve selected models before making any edits. Preflight authentication for
 both roles and fail with a concise message directing the user to
-`/loop-review settings` when a model is unavailable.
+`/settings-review` when a model is unavailable.
 
 Test extension-registered providers separately. If a selected provider exists
 only through another extension, explicitly transfer/register that provider in
@@ -436,13 +435,13 @@ marked `interrupted`; version one will not automatically resume it.
 ## Proposed file layout
 
 ```text
-extensions/review-loop/
+extensions/review/
   PLAN.md
   README.md
   package.json
   tsconfig.json
   index.ts
-  command.ts
+  loop-command.ts
   settings.ts
   models.ts
   targets.ts
@@ -479,7 +478,7 @@ unit tests can use deterministic fake reviewer/fixer runners.
 
 Exit criteria:
 
-- `/loop-review settings` opens independently.
+- `/settings-review` opens independently.
 - `/loop-review` shows only target choices.
 - Direct target arguments parse consistently with `pi-review`.
 
@@ -586,7 +585,7 @@ Use fake sessions first, then opt-in live-model smoke tests:
 
 1. `/loop-review` contains no settings or setup screen—only target selection.
 2. Selecting a target starts the loop immediately.
-3. `/loop-review settings` owns all persistent configuration.
+3. `/settings-review` owns all persistent configuration.
 4. Reviewer and fixer models can differ without changing the outer Pi model.
 5. Every reviewer pass uses a fresh, read-only in-memory session.
 6. The fixer uses the configured context policy and mutation tools.

@@ -214,7 +214,7 @@ async function lstatIfPresent(path: string): Promise<Stats | undefined> {
 const OTHER_FILE_LIST_MAX_BYTES = 16 * 1024 * 1024;
 const DIFF_STAT_MAX_BYTES = 1024 * 1024;
 
-async function cappedGitText(
+export async function cappedGitText(
   git: GitClient,
   repositoryRoot: string,
   args: string[],
@@ -287,7 +287,7 @@ export async function listUntrackedFiles(
   return otherFiles(git, repositoryRoot, false, maxFiles);
 }
 
-const TARGET_DIFF_MAX_BYTES = 8 * 1024 * 1024;
+export const TARGET_DIFF_MAX_BYTES = 8 * 1024 * 1024;
 const TARGET_DIFF_LIMIT_MESSAGE = `Target diff exceeds the ${TARGET_DIFF_MAX_BYTES / (1024 * 1024)} MiB safety limit.`;
 
 function assertDiffExitCode(result: GitCommandResult, allowedExitCodes: readonly number[]): void {

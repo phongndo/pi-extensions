@@ -636,7 +636,7 @@ async function loadBaselineReviewGuidelines(
   return content.trim() || undefined;
 }
 
-async function loadWorktreeReviewGuidelines(
+export async function loadWorktreeReviewGuidelines(
   directory: string,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
