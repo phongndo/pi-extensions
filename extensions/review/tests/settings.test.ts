@@ -68,6 +68,8 @@ test("rejects invalid ranges and model references", () => {
   assert.equal(normalizeSettings({ reviewMode: "adversarial" }).reviewMode, "adversarial");
   assert.equal(normalizeSettings({ reviewMode: "adversarial" }).reviewerCount, 2);
   assert.equal(normalizeSettings({ reviewMode: "adversarial", reviewerCount: 4 }).reviewerCount, 4);
+  assert.equal(normalizeSettings({ reviewMode: "security" }).reviewMode, "adversarial");
+  assert.equal(normalizeSettings({ reviewMode: "migration" }).reviewMode, "adversarial");
   assert.throws(() => normalizeSettings({ version: 99 }), /Unsupported/);
 });
 

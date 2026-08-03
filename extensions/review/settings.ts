@@ -125,6 +125,8 @@ function parseThinkingLevel(value: unknown, field: string): ModelThinkingLevel |
 
 function parseReviewMode(value: unknown): ReviewLoopSettings["reviewMode"] {
   if (value === undefined) return "standard";
+  // Modes briefly supported before the panel was simplified map to the remaining specialized mode.
+  if (value === "security" || value === "migration") return "adversarial";
   if (
     typeof value !== "string" ||
     !REVIEW_MODES.includes(value as ReviewLoopSettings["reviewMode"])

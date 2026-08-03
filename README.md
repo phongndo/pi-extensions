@@ -80,7 +80,7 @@ For automatic repair and independent convergence checking, use the bounded loop.
 
 ```text
 /loop-review uncommitted --mode adversarial
-/loop-review uncommitted --mode security --extra "Prioritize auth boundaries and regression coverage"
+/loop-review uncommitted --mode adversarial --extra "Prioritize auth boundaries and regression coverage"
 ```
 
 The loop uses a fresh reviewer each pass, a guarded fixer, and optional deterministic verification.

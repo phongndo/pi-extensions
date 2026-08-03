@@ -71,7 +71,7 @@ Run the configured blind adversarial review panel in parallel:
 Add one run-specific instruction without changing global settings:
 
 ```text
-/loop-review uncommitted --mode security --extra "Prioritize authorization boundaries and missing regression tests"
+/loop-review uncommitted --mode adversarial --extra "Prioritize authorization boundaries and missing regression tests"
 ```
 
 Configure the review mode, parallel agent count, role models, reasoning, verification, and convergence:
@@ -93,7 +93,7 @@ While a run is active, press `Esc` to stop. Completed edits remain in the worktr
 /loop-review commit <revision> [display title]
 /loop-review pr <number-or-github-url>
 /loop-review folder <path...>
-/loop-review <target> --mode <standard|adversarial|security|migration>
+/loop-review <target> --mode <standard|adversarial>
 /settings-review
 ```
 
@@ -103,21 +103,19 @@ Every run target accepts a mode override and one quoted extra instruction:
 
 ```text
 --mode adversarial
---mode=security
+--mode=adversarial
 --extra "instruction"
 --extra="instruction"
 ```
 
 ## Review modes
 
-| Mode          | Reviewer assignments                                              |
+| Mode          | Reviewer assignment                                               |
 | ------------- | ----------------------------------------------------------------- |
 | `standard`    | Balanced general review                                           |
-| `adversarial` | Root-cause analysis and whole-system design challenge             |
-| `security`    | Trust boundaries and attacker/abuse cases                         |
-| `migration`   | Behavioral equivalence and compatibility/ownership/platform risks |
+| `adversarial` | Assume the change is wrong and prove a concrete way that it fails |
 
-The **Review agents** setting controls how many independent sessions run concurrently on every pass (1–8). Specialized assignments rotate across larger panels; a one-agent specialized panel receives the combined mode brief.
+The **Review agents** setting controls how many independent sessions run concurrently on every pass (1–8). In adversarial mode every session gets the same brief in a fresh context, matching the Claude Code workflow: inspect the change without the author's reasoning and independently find the way it is wrong.
 
 Parallel panel members inspect the same frozen fingerprint in independent sessions and cannot see one another's findings. The host unions exact distinct findings instead of majority-voting away findings reported by only one reviewer. Duplicate findings retain reviewer provenance.
 
@@ -256,7 +254,7 @@ If no command is configured, a clean result means **review-clean**, not test-ver
 
 ## Models and isolation
 
-- Every panel member gets a fresh in-memory session and specialized assignment.
+- Every panel member gets a fresh in-memory session and its review assignment.
 - Parallel reviewers inspect the same frozen fingerprint without seeing each other's output.
 - Reviewers do not receive `edit` or `write`, but they do receive unrestricted general Bash for inspection, tests, and Git history. Their prompt forbids mutations; the host rejects convergence if the target changes during review.
 - Reviewers inherit the outer session's active tools and normal user-level extensions, including FFF when installed. Project extensions remain disabled; `edit` and `write` are removed from the inherited active set.
@@ -310,7 +308,7 @@ Expand the final custom message in Pi to inspect per-pass verdicts, finding ledg
 ### Security-focused review of local changes
 
 ```text
-/loop-review uncommitted --mode security --extra "Trace trust boundaries, authz decisions, secret handling, and failure modes"
+/loop-review uncommitted --mode adversarial --extra "Trace trust boundaries, authz decisions, secret handling, and failure modes"
 ```
 
 ### Review a feature branch with stronger convergence

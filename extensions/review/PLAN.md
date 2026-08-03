@@ -28,7 +28,7 @@ The normal command must remain minimal. Configuration belongs in
 /settings-review
 ```
 
-Keep `/loop-review settings` and its `setting` alias for compatibility. Argument completion for `/loop-review` should continue to offer target subcommands and `settings`. A run may override the persisted mode with `--mode standard|adversarial|security|migration`.
+Keep `/loop-review settings` and its `setting` alias for compatibility. Argument completion for `/loop-review` should continue to offer target subcommands and `settings`. A run may override the persisted mode with `--mode standard|adversarial`.
 
 ### `/loop-review`
 
@@ -137,7 +137,7 @@ The mode selects reviewer assignments while `reviewerCount` selects the panel si
 configured fresh blind reviewer panel (parallel) -> persistent fixer -> verification -> fresh panel -> ...
 ```
 
-`adversarial`, `security`, and `migration` rotate specialized assignments across the configured panel. Adversarial assignments challenge root cause, responsibility boundaries, and whole-system design rather than recommending symptom-level patches. Exact findings are unioned and deduplicated; a finding is not discarded merely because only one panel member reported it.
+`adversarial` gives every reviewer the same falsification brief in a fresh context: assume the change is wrong, independently find a concrete way it fails, and recommend the root-cause correction. Exact findings are unioned and deduplicated; a finding is not discarded merely because only one panel member reported it.
 
 ### Reviewer
 

@@ -6,7 +6,7 @@ export type ReviewPriority = (typeof REVIEW_PRIORITIES)[number];
 export const TERMINAL_STATUSES = ["clean", "blocked", "exhausted", "aborted", "failed"] as const;
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
 
-export const REVIEW_MODES = ["standard", "adversarial", "security", "migration"] as const;
+export const REVIEW_MODES = ["standard", "adversarial"] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
 
 export interface ModelReference {

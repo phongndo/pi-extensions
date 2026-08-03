@@ -72,10 +72,10 @@ test("parses all direct targets and settings alias", () => {
     reviewMode: undefined,
     extraInstruction: undefined,
   });
-  assert.deepEqual(parseReviewLoopArgs("folder src docs --mode=security"), {
+  assert.deepEqual(parseReviewLoopArgs("folder src docs --mode=standard"), {
     action: "run",
     target: { type: "folder", paths: ["src", "docs"] },
-    reviewMode: "security",
+    reviewMode: "standard",
     extraInstruction: undefined,
   });
   assert.deepEqual(parseReviewLoopArgs("setting"), { action: "settings" });
@@ -93,7 +93,7 @@ test("rejects malformed arguments", () => {
   assert.throws(() => parseReviewLoopArgs("uncommitted --mode"), /Missing value/);
   assert.throws(() => parseReviewLoopArgs("uncommitted --mode hostile"), /Unknown review mode/);
   assert.throws(
-    () => parseReviewLoopArgs("uncommitted --mode standard --mode security"),
+    () => parseReviewLoopArgs("uncommitted --mode standard --mode adversarial"),
     /only once/,
   );
 });

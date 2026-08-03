@@ -6,6 +6,7 @@ import { reviewerCountForMode, reviewerProfilesForMode } from "../review-modes.t
 
 test("defines mode defaults and expands them to a configurable panel size", () => {
   assert.equal(reviewerCountForMode("standard"), 1);
+  assert.equal(reviewerCountForMode("adversarial"), 2);
   for (const mode of REVIEW_MODES.filter((value) => value !== "standard")) {
     const profiles = reviewerProfilesForMode(mode);
     assert.equal(profiles.length, 2);
@@ -18,13 +19,13 @@ test("defines mode defaults and expands them to a configurable panel size", () =
   assert.equal(new Set(expanded.map((profile) => profile.id)).size, 4);
   assert.deepEqual(
     expanded.map((profile) => profile.id),
-    ["root-cause", "system-design", "root-cause-2", "system-design-2"],
+    ["adversarial", "adversarial-2", "adversarial-3", "adversarial-4"],
   );
 
-  const combined = reviewerProfilesForMode("security", 1)[0]!;
-  assert.equal(combined.id, "security");
-  assert.match(combined.instructions, /authentication/);
-  assert.match(combined.instructions, /denial of service/);
+  const combined = reviewerProfilesForMode("adversarial", 1)[0]!;
+  assert.equal(combined.id, "adversarial");
+  assert.match(combined.instructions, /concrete way it fails/);
+  assert.match(combined.instructions, /none of the author's reasoning/);
   assert.throws(() => reviewerProfilesForMode("standard", 0), /positive integer/);
 });
 
@@ -52,6 +53,6 @@ test("puts mode and blind panel assignment into each reviewer prompt", () => {
   assert.match(prompt, /Review mode: adversarial/);
   assert.match(prompt, new RegExp(reviewer.label));
   assert.match(prompt, /cannot see other reviewers' findings/i);
-  assert.match(prompt, /root cause/i);
-  assert.match(prompt, /symptom/i);
+  assert.match(prompt, /concrete way it fails/i);
+  assert.match(prompt, /trust only the diff/i);
 });

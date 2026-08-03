@@ -255,10 +255,10 @@ test(
     assert.equal(fingerprints.size, 1);
     assert.equal(passCaches.size, 1);
     assert.deepEqual(reviewerIds.sort(), [
-      "root-cause",
-      "root-cause-2",
-      "system-design",
-      "system-design-2",
+      "adversarial",
+      "adversarial-2",
+      "adversarial-3",
+      "adversarial-4",
     ]);
     assert.equal(result.passes[0]?.reviewers.length, 4);
   },
@@ -283,7 +283,7 @@ test("aggregates duplicate panel findings and preserves reviewer provenance", ()
   ]);
 
   assert.equal(result.submission.findings.length, 1);
-  assert.deepEqual(result.submission.findings[0]?.reportedBy, ["root-cause", "system-design"]);
+  assert.deepEqual(result.submission.findings[0]?.reportedBy, ["adversarial", "adversarial-2"]);
   assert.equal(result.reviewers.length, 2);
 
   const callouts = aggregateReviewerPanel([
@@ -321,15 +321,15 @@ test("aggregates duplicate panel findings and preserves reviewer provenance", ()
     },
   ]);
   assert.equal(blocked.submission.verdict, "blocked");
-  assert.match(blocked.submission.blockedReason ?? "", /Adversarial system-design reviewer/);
+  assert.match(blocked.submission.blockedReason ?? "", /Adversarial reviewer 2/);
 });
 
 test("preserves the originating panel failure while aborting sibling reviewers", async () => {
   const { target } = await fixture();
   const reviewer: ReviewerRunner = {
     async review(input): Promise<ReviewerRunOutput> {
-      if (input.reviewer.id === "system-design") {
-        throw new ReviewerProtocolError("System-design reviewer protocol failed.");
+      if (input.reviewer.id === "adversarial-2") {
+        throw new ReviewerProtocolError("Adversarial reviewer protocol failed.");
       }
       await new Promise<never>((_resolve, reject) => {
         const abort = () => {
@@ -354,7 +354,7 @@ test("preserves the originating panel failure while aborting sibling reviewers",
   });
 
   assert.equal(result.status, "blocked");
-  assert.match(result.reason ?? "", /System-design reviewer protocol failed/);
+  assert.match(result.reason ?? "", /Adversarial reviewer protocol failed/);
 });
 
 test("retains reviewer usage when a terminal protocol failure is thrown", async () => {

@@ -17,44 +17,10 @@ const PROFILES: Record<ReviewMode, readonly ReviewerProfile[]> = {
   ],
   adversarial: [
     {
-      id: "root-cause",
-      label: "Adversarial root-cause reviewer",
+      id: "adversarial",
+      label: "Adversarial reviewer",
       instructions:
-        "Reconstruct the intended outcome and causal chain before judging the patch. Determine whether the change fixes the root cause or merely compensates for a symptom at the wrong layer. Challenge ownership, sources of truth, invariants, state transitions, and responsibility boundaries. Flag concrete cases where the change entrenches duplicated state, compensating checks, retries, fallbacks, or fragile coupling. Recommend the root-level correction rather than another local patch, and tie every finding to direct evidence in the change.",
-    },
-    {
-      id: "system-design",
-      label: "Adversarial system-design reviewer",
-      instructions:
-        "Question the premise and architecture of the change, not only whether its code works locally. Trace the complete end-to-end system through callers, callees, contracts, data and control flow, lifecycle, concurrency, configuration, rollout, and failure recovery. Seek concrete counterexamples and compare the approach with simpler designs that remove mechanisms, state, branches, or translation layers. Report a design finding only when evidence shows the current change reinforces a poor system design, and explain the better system-level direction instead of proposing a symptom-level fix.",
-    },
-  ],
-  security: [
-    {
-      id: "trust-boundaries",
-      label: "Security trust-boundary reviewer",
-      instructions:
-        "Trace untrusted data and identity across trust boundaries. Focus on authentication, authorization, injection, path and URL handling, secret exposure, unsafe deserialization, and privilege changes. Require a concrete exploit or violated invariant for each finding.",
-    },
-    {
-      id: "abuse-cases",
-      label: "Security abuse-case reviewer",
-      instructions:
-        "Approach the change as an attacker and an unreliable dependency. Look for bypasses, denial of service, race conditions, confused-deputy behavior, insecure defaults, supply-chain risk, and unsafe failure modes. Require concrete evidence rather than generic hardening advice.",
-    },
-  ],
-  migration: [
-    {
-      id: "behavioral-equivalence",
-      label: "Migration equivalence reviewer",
-      instructions:
-        "Compare old and new behavior side by side. Trace successful, failing, boundary, cleanup, and concurrency paths and report concrete semantic differences that are not explicitly intended.",
-    },
-    {
-      id: "compatibility",
-      label: "Migration compatibility reviewer",
-      instructions:
-        "Focus on API and data compatibility, ownership and lifetime changes, platform behavior, serialization, configuration defaults, rollout and rollback, performance-sensitive semantics, and missing migration coverage. Require direct evidence for each finding.",
+        "Assume the change is wrong and find a concrete way it fails. You are a fresh reviewer with none of the author's reasoning: trust only the diff, repository evidence, governing project guidance, and behavior you can verify yourself. Inspect the complete change and trace relevant callers, state, ownership, lifetimes, error paths, concurrency, and platform behavior. For ports, rewrites, and refactors, compare old and new semantics directly. Actively construct counterexamples, especially for boundaries, signs and units, rounding, eager versus lazy evaluation, cleanup, and failure paths. Report only provable bugs with a root-cause correction; do not substitute style advice, generic hardening, or speculative redesign for finding the way the change is wrong.",
     },
   ],
 };
@@ -93,7 +59,7 @@ export function reviewerProfilesForMode(
   });
 }
 
-/** Existing mode-specific panel size, used when migrating settings without reviewerCount. */
+/** Mode-specific panel size, used when settings do not specify reviewerCount. */
 export function reviewerCountForMode(mode: ReviewMode): number {
-  return PROFILES[mode].length;
+  return mode === "adversarial" ? 2 : 1;
 }

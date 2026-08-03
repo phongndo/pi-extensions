@@ -48,7 +48,7 @@ import {
 } from "./ui.ts";
 
 const USAGE =
-  "Usage: /loop-review [uncommitted | branch <name> | commit <sha> | pr <number-or-url> | folder <paths...> | settings] [--mode <standard|adversarial|security|migration>] [--extra <instruction>]";
+  "Usage: /loop-review [uncommitted | branch <name> | commit <sha> | pr <number-or-url> | folder <paths...> | settings] [--mode <standard|adversarial>] [--extra <instruction>]";
 
 function terminalErrorText(error: unknown): string {
   return sanitizeTerminalText(error instanceof Error ? error.message : String(error));
