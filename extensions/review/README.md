@@ -30,7 +30,7 @@ For an existing conversation, choose **Empty branch** to isolate the review or *
 
 The completion menu can return without a summary, return with a structured findings summary, or return and queue the findings for fixing. `/end-review` applies only to an Empty-branch review.
 
-The `/review` selector also lets you add or remove session-persisted custom review instructions. A `REVIEW_GUIDELINES.md` next to the nearest ancestor `.pi` directory is appended when present. PR review requires authenticated GitHub CLI access and refuses checkout when tracked changes or ignored files are present. Ordinary untracked files retain the original `pi-review` behavior and do not block checkout.
+The `/review` selector also lets you add or remove session-persisted custom review instructions. In the target selector, press `1`–`5` to choose the corresponding target immediately. A `REVIEW_GUIDELINES.md` next to the nearest ancestor `.pi` directory is appended when present. PR review requires authenticated GitHub CLI access and refuses checkout when tracked changes or ignored files are present. Ordinary untracked files retain the original `pi-review` behavior and do not block checkout.
 
 ## Bounded review/fix loop with `/loop-review`
 
@@ -119,7 +119,7 @@ The **Review agents** setting controls how many independent sessions run concurr
 
 Parallel panel members inspect the same frozen fingerprint in independent sessions and cannot see one another's findings. The host unions exact distinct findings instead of majority-voting away findings reported by only one reviewer. Duplicate findings retain reviewer provenance.
 
-With no target, the TUI opens a selector with a smart default:
+With no target, the TUI opens a selector with a smart default. Press `1`–`5` to choose the corresponding target immediately:
 
 - dirty worktree → uncommitted changes;
 - clean feature branch → default base branch;

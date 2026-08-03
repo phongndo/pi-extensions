@@ -56,6 +56,7 @@ import { lstatIfExists } from "./path-safety.ts";
 import { sanitizeTerminalText } from "./renderers.ts";
 import { formatDiffPage } from "./reviewer.ts";
 import { loadWorktreeReviewGuidelines } from "./targets.ts";
+import { NumberedSelectList, reviewTargetItems, type TargetChoice } from "./ui.ts";
 
 // State to track fresh session review (where we branched from).
 // Module-level state means only one review can be active at a time.
@@ -764,19 +765,8 @@ function getUserFacingHint(target: ReviewTarget): string {
   }
 }
 
-// Review preset options for the selector (keep this order stable)
-const REVIEW_PRESETS = [
-  { value: "uncommitted", label: "Review uncommitted changes", description: "" },
-  { value: "baseBranch", label: "Review against a base branch", description: "(local)" },
-  { value: "commit", label: "Review a commit", description: "" },
-  { value: "pullRequest", label: "Review a pull request", description: "(GitHub PR)" },
-  { value: "folder", label: "Review a folder (or more)", description: "(snapshot, not diff)" },
-] as const;
-
 const TOGGLE_CUSTOM_INSTRUCTIONS_VALUE = "toggleCustomInstructions" as const;
-type ReviewPresetValue =
-  | (typeof REVIEW_PRESETS)[number]["value"]
-  | typeof TOGGLE_CUSTOM_INSTRUCTIONS_VALUE;
+type ReviewPresetValue = TargetChoice | typeof TOGGLE_CUSTOM_INSTRUCTIONS_VALUE;
 
 export function registerReviewCommand(pi: ExtensionAPI): void {
   pi.registerTool(
@@ -1099,11 +1089,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
   async function showReviewSelector(ctx: ExtensionContext): Promise<ReviewTarget | null> {
     // Determine smart default (but keep the list order stable)
     const smartDefault = await getSmartDefault();
-    const presetItems: SelectItem[] = REVIEW_PRESETS.map((preset) => ({
-      value: preset.value,
-      label: preset.label,
-      description: preset.description,
-    }));
+    const presetItems = reviewTargetItems();
     const smartDefaultIndex = presetItems.findIndex((item) => item.value === smartDefault);
 
     while (true) {
@@ -1127,13 +1113,18 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
         container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
         container.addChild(new Text(theme.fg("accent", theme.bold("Select a review preset"))));
 
-        const selectList = new SelectList(items, Math.min(items.length, 10), {
-          selectedPrefix: (text) => theme.fg("accent", text),
-          selectedText: (text) => theme.fg("accent", text),
-          description: (text) => theme.fg("muted", text),
-          scrollInfo: (text) => theme.fg("dim", text),
-          noMatch: (text) => theme.fg("warning", text),
-        });
+        const selectList = new NumberedSelectList(
+          items,
+          Math.min(items.length, 10),
+          {
+            selectedPrefix: (text) => theme.fg("accent", text),
+            selectedText: (text) => theme.fg("accent", text),
+            description: (text) => theme.fg("muted", text),
+            scrollInfo: (text) => theme.fg("dim", text),
+            noMatch: (text) => theme.fg("warning", text),
+          },
+          presetItems.length,
+        );
 
         // Preselect the smart default without reordering the list
         if (smartDefaultIndex >= 0) {
@@ -1144,7 +1135,9 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
         selectList.onCancel = () => done(null);
 
         container.addChild(selectList);
-        container.addChild(new Text(theme.fg("dim", "Press enter to confirm or esc to go back")));
+        container.addChild(
+          new Text(theme.fg("dim", "Press 1-5 to select • enter to confirm • esc to go back")),
+        );
         container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 
         return {

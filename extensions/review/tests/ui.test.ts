@@ -6,7 +6,13 @@ import test from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { defaultSettings, ReviewLoopSettingsStore } from "../settings.ts";
-import { formatLoopProgressLine, sanitizeSelectItems, showReviewLoopSettings } from "../ui.ts";
+import {
+  formatLoopProgressLine,
+  NumberedSelectList,
+  reviewTargetItems,
+  sanitizeSelectItems,
+  showReviewLoopSettings,
+} from "../ui.ts";
 
 async function exerciseSettingsEditor(editorResult: string | undefined): Promise<{
   customCalls: number;
@@ -88,6 +94,37 @@ test("reopens settings after editor cancellation", async () => {
   assert.equal(result.customCalls, 2);
   assert.equal(result.editorCalls, 1);
   assert.equal(result.store.get().verificationCommand, undefined);
+});
+
+test("numbered target lists render and immediately activate shortcuts", () => {
+  const items = [
+    ...reviewTargetItems(),
+    { value: "custom", label: "Add custom review instructions" },
+  ];
+  const list = new NumberedSelectList(
+    items,
+    items.length,
+    {
+      selectedPrefix: (text) => text,
+      selectedText: (text) => text,
+      description: (text) => text,
+      scrollInfo: (text) => text,
+      noMatch: (text) => text,
+    },
+    5,
+  );
+  const selected: string[] = [];
+  list.onSelect = (item) => selected.push(item.value);
+
+  const rendered = list.render(120).join("\n");
+  assert.match(rendered, /1\. Review uncommitted changes/);
+  assert.match(rendered, /5\. Review a folder/);
+  assert.doesNotMatch(rendered, /6\. Add custom review instructions/);
+
+  list.handleInput("3");
+  list.handleInput("5");
+  list.handleInput("6");
+  assert.deepEqual(selected, ["commit", "folder"]);
 });
 
 test("sanitizes model selector labels and descriptions", () => {

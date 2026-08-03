@@ -8,8 +8,10 @@ import {
   Container,
   Input,
   type Focusable,
+  matchesKey,
   type SelectItem,
   SelectList,
+  type SelectListTheme,
   type SettingItem,
   SettingsList,
   type SettingsListTheme,
@@ -57,6 +59,37 @@ export function sanitizeSelectItems(items: readonly SelectItem[]): SelectItem[] 
     description:
       item.description === undefined ? undefined : sanitizeTerminalText(item.description),
   }));
+}
+
+const NUMBER_SHORTCUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+
+/** SelectList variant that displays and immediately activates numbered shortcuts. */
+export class NumberedSelectList extends SelectList {
+  private readonly shortcutItems: SelectItem[];
+
+  constructor(
+    items: SelectItem[],
+    maxVisible: number,
+    theme: SelectListTheme,
+    shortcutCount = items.length,
+  ) {
+    const count = Math.min(shortcutCount, items.length, NUMBER_SHORTCUTS.length);
+    const numberedItems = items.map((item, index) =>
+      index < count ? { ...item, label: `${index + 1}. ${item.label}` } : item,
+    );
+    super(numberedItems, maxVisible, theme);
+    this.shortcutItems = numberedItems.slice(0, count);
+  }
+
+  override handleInput(data: string): void {
+    const index = NUMBER_SHORTCUTS.findIndex((shortcut) => matchesKey(data, shortcut));
+    const item = this.shortcutItems[index];
+    if (item) {
+      this.onSelect?.(item);
+      return;
+    }
+    super.handleInput(data);
+  }
 }
 
 export class SearchablePicker extends Container implements Focusable {
@@ -152,13 +185,17 @@ export class SearchablePicker extends Container implements Focusable {
 
 export type TargetChoice = "uncommitted" | "baseBranch" | "commit" | "pullRequest" | "folder";
 
-const TARGET_ITEMS: SelectItem[] = [
+const REVIEW_TARGET_ITEMS = [
   { value: "uncommitted", label: "Review uncommitted changes" },
   { value: "baseBranch", label: "Review against a base branch", description: "(local)" },
   { value: "commit", label: "Review a commit" },
   { value: "pullRequest", label: "Review a pull request", description: "(GitHub PR)" },
   { value: "folder", label: "Review a folder (or more)", description: "(snapshot, not diff)" },
-];
+] as const satisfies readonly SelectItem[];
+
+export function reviewTargetItems(): SelectItem[] {
+  return REVIEW_TARGET_ITEMS.map((item) => ({ ...item }));
+}
 
 export async function showTargetSelector(
   ctx: ExtensionCommandContext,
@@ -168,12 +205,15 @@ export async function showTargetSelector(
     const container = new Container();
     container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
     container.addChild(new Text(theme.fg("accent", theme.bold("Select a review target"))));
-    const list = new SelectList(TARGET_ITEMS, TARGET_ITEMS.length, selectTheme(theme));
-    list.setSelectedIndex(TARGET_ITEMS.findIndex((item) => item.value === smartDefault));
+    const items = reviewTargetItems();
+    const list = new NumberedSelectList(items, items.length, selectTheme(theme));
+    list.setSelectedIndex(items.findIndex((item) => item.value === smartDefault));
     list.onSelect = (item) => done(item.value as TargetChoice);
     list.onCancel = () => done(undefined);
     container.addChild(list);
-    container.addChild(new Text(theme.fg("dim", "Press enter to confirm or esc to go back")));
+    container.addChild(
+      new Text(theme.fg("dim", "Press 1-5 to select • enter to confirm • esc to go back")),
+    );
     container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
     return {
       render: (width) => container.render(width),
