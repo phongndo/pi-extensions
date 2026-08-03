@@ -15,7 +15,13 @@ import {
   type ExecGit,
 } from "./git.ts";
 import { isInteractiveReviewActive } from "./interactive-review-state.ts";
-import type { ReviewLoopResult, ReviewLoopRunState, ReviewTargetRequest } from "./models.ts";
+import {
+  REVIEW_MODES,
+  type ReviewLoopResult,
+  type ReviewLoopRunState,
+  type ReviewMode,
+  type ReviewTargetRequest,
+} from "./models.ts";
 import { runReviewLoop } from "./orchestrator.ts";
 import {
   registerRenderers,
@@ -42,7 +48,7 @@ import {
 } from "./ui.ts";
 
 const USAGE =
-  "Usage: /loop-review [uncommitted | branch <name> | commit <sha> | pr <number-or-url> | folder <paths...> | settings] [--extra <instruction>]";
+  "Usage: /loop-review [uncommitted | branch <name> | commit <sha> | pr <number-or-url> | folder <paths...> | settings] [--mode <standard|adversarial|security|migration>] [--extra <instruction>]";
 
 function terminalErrorText(error: unknown): string {
   return sanitizeTerminalText(error instanceof Error ? error.message : String(error));
@@ -51,6 +57,7 @@ function terminalErrorText(error: unknown): string {
 export interface ParsedReviewLoopArgs {
   action: "run" | "settings";
   target?: ReviewTargetRequest;
+  reviewMode?: ReviewMode;
   extraInstruction?: string;
 }
 
@@ -92,10 +99,19 @@ export function tokenizeArgs(value: string): string[] {
   return tokens;
 }
 
+function reviewModeFromOption(value: string): ReviewMode {
+  const normalized = value.trim().toLowerCase();
+  if (!REVIEW_MODES.includes(normalized as ReviewMode)) {
+    throw new Error(`Unknown review mode: ${value}. Choose ${REVIEW_MODES.join(", ")}.`);
+  }
+  return normalized as ReviewMode;
+}
+
 export function parseReviewLoopArgs(value: string): ParsedReviewLoopArgs {
   const raw = tokenizeArgs(value.trim());
   const positional: string[] = [];
   let extraInstruction: string | undefined;
+  let reviewMode: ReviewMode | undefined;
   for (let index = 0; index < raw.length; index += 1) {
     const token = raw[index]!;
     if (token === "--extra") {
@@ -108,6 +124,17 @@ export function parseReviewLoopArgs(value: string): ParsedReviewLoopArgs {
       if (extraInstruction) throw new Error("--extra may be specified only once.");
       extraInstruction = token.slice("--extra=".length).trim() || undefined;
       if (!extraInstruction) throw new Error("Missing value for --extra.");
+    } else if (token === "--mode") {
+      const mode = raw[index + 1];
+      if (!mode) throw new Error("Missing value for --mode.");
+      if (reviewMode) throw new Error("--mode may be specified only once.");
+      reviewMode = reviewModeFromOption(mode);
+      index += 1;
+    } else if (token.startsWith("--mode=")) {
+      if (reviewMode) throw new Error("--mode may be specified only once.");
+      const mode = token.slice("--mode=".length);
+      if (!mode.trim()) throw new Error("Missing value for --mode.");
+      reviewMode = reviewModeFromOption(mode);
     } else if (token.startsWith("--")) {
       throw new Error(`Unknown option: ${token}`);
     } else {
@@ -115,10 +142,10 @@ export function parseReviewLoopArgs(value: string): ParsedReviewLoopArgs {
     }
   }
 
-  if (positional.length === 0) return { action: "run", extraInstruction };
+  if (positional.length === 0) return { action: "run", reviewMode, extraInstruction };
   const subcommand = positional[0]?.toLowerCase();
   if (subcommand === "settings" || subcommand === "setting") {
-    if (positional.length !== 1 || extraInstruction)
+    if (positional.length !== 1 || extraInstruction || reviewMode)
       throw new Error(`${subcommand} does not accept target options.`);
     return { action: "settings" };
   }
@@ -126,12 +153,18 @@ export function parseReviewLoopArgs(value: string): ParsedReviewLoopArgs {
     case "uncommitted":
       if (positional.length !== 1)
         throw new Error("uncommitted does not accept positional arguments.");
-      return { action: "run", target: { type: "uncommitted" }, extraInstruction };
+      return {
+        action: "run",
+        target: { type: "uncommitted" },
+        reviewMode,
+        extraInstruction,
+      };
     case "branch":
       if (positional.length !== 2) throw new Error("branch requires exactly one branch name.");
       return {
         action: "run",
         target: { type: "baseBranch", branch: positional[1] as string },
+        reviewMode,
         extraInstruction,
       };
     case "commit":
@@ -143,6 +176,7 @@ export function parseReviewLoopArgs(value: string): ParsedReviewLoopArgs {
           sha: positional[1] as string,
           title: positional.slice(2).join(" ") || undefined,
         },
+        reviewMode,
         extraInstruction,
       };
     case "pr":
@@ -150,6 +184,7 @@ export function parseReviewLoopArgs(value: string): ParsedReviewLoopArgs {
       return {
         action: "run",
         target: { type: "pullRequest", reference: positional[1] as string },
+        reviewMode,
         extraInstruction,
       };
     case "folder":
@@ -157,6 +192,7 @@ export function parseReviewLoopArgs(value: string): ParsedReviewLoopArgs {
       return {
         action: "run",
         target: { type: "folder", paths: positional.slice(1) },
+        reviewMode,
         extraInstruction,
       };
     default:
@@ -177,7 +213,7 @@ const COMPLETIONS: AutocompleteItem[] = [
   {
     value: "settings",
     label: "settings",
-    description: "configure reviewer, fixer, and convergence",
+    description: "configure review agents, models, and convergence",
   },
 ];
 
@@ -295,7 +331,7 @@ export async function openReviewSettings(ctx: ExtensionCommandContext): Promise<
 
 export function registerReviewSettingsCommand(pi: ExtensionAPI): void {
   pi.registerCommand("settings-review", {
-    description: "Configure Review Loop models, verification, and convergence",
+    description: "Configure Review Loop mode, agent count, models, and convergence",
     handler: async (args, ctx) => {
       if (args.trim()) {
         ctx.ui.notify("Usage: /settings-review", "error");
@@ -328,7 +364,7 @@ export function registerReviewLoopCommand(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("loop-review", {
-    description: "Review, fix actionable findings, and re-review until clean or bounded",
+    description: "Run standard or parallel specialized review/fix loops until clean or bounded",
     getArgumentCompletions: argumentCompletions,
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
@@ -364,11 +400,13 @@ export function registerReviewLoopCommand(pi: ExtensionAPI): void {
       let settings;
       try {
         settings = await loadSettings();
+        if (parsed.reviewMode) settings.reviewMode = parsed.reviewMode;
       } catch (error) {
         ctx.ui.notify(terminalErrorText(error), "error");
         return;
       }
 
+      const reviewerToolNames = pi.getActiveTools();
       const execute: ExecGit = (command, commandArgs, commandOptions) =>
         pi.exec(command, commandArgs, commandOptions);
       const initialGit = new GitClient(execute, ctx.cwd);
@@ -461,6 +499,7 @@ export function registerReviewLoopCommand(pi: ExtensionAPI): void {
               thinkingLevel: models.reviewer.thinkingLevel,
               contextFiles: trustedFiles,
               fixerContextWindow: models.fixerModel.contextWindow,
+              inheritedToolNames: reviewerToolNames,
             });
             return runReviewLoop({
               target,

@@ -8,6 +8,7 @@ function result(reason: string): ReviewLoopResult {
     version: 1,
     runId: "run",
     status: "blocked",
+    reviewMode: "adversarial",
     reason,
     passes: [],
     ledger: [],
@@ -66,4 +67,10 @@ test("sanitizes all dynamic result context fields", () => {
   assert.equal(/[\u001b\u0001\u0007\u0008]/.test(content), false);
   assert.match(content, /failure/);
   assert.match(content, /next/);
+});
+
+test("renders persisted pre-mode results as standard review", () => {
+  const legacy: Partial<ReviewLoopResult> = result("legacy");
+  delete legacy.reviewMode;
+  assert.match(resultContextContent(legacy as ReviewLoopResult), /Review mode: standard/);
 });

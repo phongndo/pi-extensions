@@ -1,9 +1,11 @@
 import type {
   FindingLedgerEntry,
   ReviewFinding,
+  ReviewMode,
   ReviewTargetSnapshot,
   VerificationResult,
 } from "./models.ts";
+import type { ReviewerProfile } from "./review-modes.ts";
 import { describeTarget } from "./targets.ts";
 
 // Adapted from pi-review's MIT-licensed review rubric (Earendil Inc., 2026).
@@ -14,7 +16,7 @@ You are reviewing a proposed code change made by another engineer. Report every 
 Flag an issue only when it:
 1. Meaningfully affects correctness, security, performance, operability, or maintainability.
 2. Is discrete, provable, and actionable rather than speculative.
-3. Was introduced by the reviewed diff (except snapshot targets, where the selected code is the scope).
+3. Was introduced, exposed, or materially entrenched by the reviewed diff (except snapshot targets, where the selected code is the scope).
 4. Is not clearly an intentional behavior change.
 5. Can be tied to a concrete location in the current target.
 
@@ -24,6 +26,7 @@ Review especially for:
 - try/catch blocks that cannot fully recover and should propagate instead;
 - unchecked back pressure, unstable error-message matching, auth/permission regressions, and destructive behavior;
 - duplicated functionality, needless one-off wrappers, and abstractions without a concrete need;
+- symptom-level patches that leave the violated invariant, split ownership, duplicated state, or wrong responsibility boundary intact;
 - compatibility, public contract, migration, dependency, lockfile, feature-flag, and configuration-default changes.
 
 Priority meanings:
@@ -34,15 +37,18 @@ Priority meanings:
 
 Keep titles and evidence concise and matter-of-fact. Keep line ranges as narrow as possible. Human callouts are informational only and must not become findings without an independent defect.`;
 
-export const REVIEWER_SYSTEM_PROMPT = `You are an independent code reviewer in an automated review/fix loop.
+export const REVIEWER_SYSTEM_PROMPT = `You are an independent code reviewer in an automated review/fix loop. You may be one member of a blind parallel review panel.
 
 ${REVIEW_RUBRIC}
 
 Rules:
 - Inspect the complete current target against its frozen baseline on every run.
 - Begin with review_target metadata and diff pages for diff targets. Read surrounding code and affected callers as needed.
-- You are read-only. Never attempt to edit files or ask another tool to mutate them.
+- You have general bash access for inspection, tests, and Git history. Do not use it to edit files, mutate Git state, install dependencies, or change the review target.
+- The edit and write tools are unavailable. Never ask another tool to mutate files.
+- Prefer fffind and ffgrep for fast repository search when available; otherwise use read, grep, find, and ls.
 - Do not trust prior fixes or suggested fixes; establish evidence yourself.
+- Never assume another panel member will inspect an area or report an issue. Complete your assigned review independently.
 - A finding on a diff target must point to a changed line. Use line 1 as the file-level location for binary, mode-only, or gitlink changes without textual hunks. A folder target finding must stay within its selected paths.
 - Human callouts are non-actionable information such as migrations, dependency/lockfile churn, auth or permission changes, incompatible contracts, destructive operations, feature flags, and changed defaults.
 - Call submit_review exactly once as your final action. Do not finish with prose and do not call it until inspection is complete.
@@ -51,6 +57,7 @@ Rules:
 export const FIXER_SYSTEM_PROMPT = `You are the fixer in an automated code-review loop. Inspect each finding independently, make the smallest correct changes, and verify relevant behavior when practical.
 
 Hard rules:
+- Fix the underlying violated invariant or responsibility boundary identified by a finding. Do not choose a symptom-level workaround merely because it makes a smaller diff.
 - Never commit, checkout, switch branches, reset, restore, rebase, stash, clean, merge, cherry-pick, or change worktrees.
 - Never discard pre-existing user changes and never stage files.
 - Stay within the repository. For folder targets, modify only the selected paths.
@@ -78,6 +85,8 @@ export interface ReviewerPromptOptions {
   target: ReviewTargetSnapshot;
   fingerprint: string;
   pass: number;
+  reviewMode: ReviewMode;
+  reviewer: ReviewerProfile;
   reviewInstructions?: string;
   extraInstruction?: string;
   projectGuidelines?: string;
@@ -87,6 +96,9 @@ export interface ReviewerPromptOptions {
 export function buildReviewerPrompt(options: ReviewerPromptOptions): string {
   const sections = [
     `Review pass ${options.pass}.`,
+    `Review mode: ${options.reviewMode}.`,
+    `Independent panel assignment: ${options.reviewer.label} (${options.reviewer.id}).\n${options.reviewer.instructions}`,
+    "Do not expect or rely on another reviewer to catch anything you omit. You cannot see other reviewers' findings.",
     `Target: ${describeTarget(options.target)}`,
     `Frozen target descriptor:\n${JSON.stringify(snapshotForPrompt(options.target), null, 2)}`,
     `Current target fingerprint: ${options.fingerprint}`,
@@ -125,6 +137,7 @@ function compactLedger(ledger: readonly FindingLedgerEntry[]): Array<Record<stri
     path: clip(entry.path, 240),
     pass: entry.pass,
     status: entry.status,
+    reportedBy: entry.reportedBy,
     candidateStatus: entry.candidateStatus,
     explanation: clip(entry.explanation, 320),
   }));
@@ -150,6 +163,7 @@ function findingForPrompt(finding: ReviewFinding): Record<string, unknown> {
     impact: finding.impact,
     evidence: finding.evidence,
     suggestedFix: finding.suggestedFix,
+    reportedBy: finding.reportedBy,
   };
 }
 

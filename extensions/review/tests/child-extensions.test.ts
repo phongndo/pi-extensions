@@ -136,6 +136,30 @@ test("child sessions load additional outer extension entry points", async () => 
   );
 });
 
+test("child sessions can enable general bash without edit or write", async () => {
+  const root = await mkdtemp(join(tmpdir(), "review-loop-child-bash-"));
+  const agentDir = join(root, "agent");
+  const { runtime, model } = await seedRuntime(agentDir);
+  const session = await createChildSession({
+    cwd: root,
+    agentDir,
+    modelRuntime: runtime,
+    model,
+    thinkingLevel: "off",
+    systemPrompt: "Test role",
+    tools: ["read", "bash"],
+    customTools: [createReadToolDefinition(root)],
+    contextFiles: [],
+    projectTrusted: false,
+    extensionsEnabled: false,
+  });
+  try {
+    assert.deepEqual(session.getActiveToolNames(), ["read", "bash"]);
+  } finally {
+    await disposeChildSession(session);
+  }
+});
+
 test("child sessions honor disabled discovery while retaining explicit extensions", async () => {
   const root = await mkdtemp(join(tmpdir(), "review-loop-child-no-discovery-"));
   const agentDir = join(root, "agent");

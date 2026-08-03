@@ -13,26 +13,31 @@ import {
 import type {
   FindingLedgerEntry,
   FixSubmission,
+  NormalizedReviewSubmission,
   ProgressUpdate,
   ReviewFinding,
   ReviewLoopResult,
   ReviewLoopRunState,
   ReviewLoopSettings,
   ReviewPassRecord,
+  ReviewPassReviewerRecord,
   ReviewTargetSnapshot,
   TerminalStatus,
   UsageSummary,
   VerificationResult,
 } from "./models.ts";
 import { addUsage, emptyUsage } from "./models.ts";
-import type { ReviewerRunner } from "./reviewer.ts";
-import { ReviewerProtocolError } from "./reviewer.ts";
+import { assertFindingsByteBudget, fixerFindingsByteBudget } from "./protocol.ts";
+import { reviewerProfilesForMode, type ReviewerProfile } from "./review-modes.ts";
+import { createReviewerPassCache, ReviewerProtocolError, type ReviewerRunner } from "./reviewer.ts";
 import { assertTargetInvariants } from "./targets.ts";
 
 const VERIFICATION_OUTPUT_LIMIT = 32 * 1024;
 const STATUS_OUTPUT_LIMIT = 16 * 1024;
 const VERIFICATION_REPAIR_LIMIT = 2;
 const FINDING_FIXER_ATTEMPT_LIMIT = 2;
+const PANEL_CALLOUT_LIMIT = 30;
+const PANEL_BLOCKED_REASON_LIMIT = 4_000;
 
 function passLimitReached(
   pass: number,
@@ -238,6 +243,77 @@ function uniquePush(target: string[], values: readonly string[]): void {
   }
 }
 
+interface ReviewerPanelMember {
+  profile: ReviewerProfile;
+  submission: NormalizedReviewSubmission;
+}
+
+interface AggregatedReviewerPanel {
+  submission: NormalizedReviewSubmission;
+  reviewers: ReviewPassReviewerRecord[];
+}
+
+export function aggregateReviewerPanel(
+  members: readonly ReviewerPanelMember[],
+): AggregatedReviewerPanel {
+  const findings = new Map<string, ReviewFinding>();
+  const humanCallouts: string[] = [];
+  const knownCallouts = new Set<string>();
+  const blockedReasons: string[] = [];
+  const reviewers: ReviewPassReviewerRecord[] = [];
+
+  for (const member of members) {
+    for (const finding of member.submission.findings) {
+      const existing = findings.get(finding.fingerprint);
+      if (existing) {
+        existing.reportedBy ??= [];
+        uniquePush(existing.reportedBy, [member.profile.id]);
+      } else {
+        findings.set(finding.fingerprint, {
+          ...finding,
+          reportedBy: [member.profile.id],
+        });
+      }
+    }
+    const retainedReviewerCallouts: string[] = [];
+    for (const callout of member.submission.humanCallouts) {
+      if (humanCallouts.length >= PANEL_CALLOUT_LIMIT) break;
+      const normalized = callout.trim();
+      if (!normalized || knownCallouts.has(normalized)) continue;
+      knownCallouts.add(normalized);
+      humanCallouts.push(normalized);
+      retainedReviewerCallouts.push(normalized);
+    }
+    if (member.submission.verdict === "blocked") {
+      blockedReasons.push(
+        `${member.profile.label}: ${member.submission.blockedReason ?? "review blocked"}`,
+      );
+    }
+    reviewers.push({
+      reviewerId: member.profile.id,
+      reviewerLabel: member.profile.label,
+      verdict: member.submission.verdict,
+      findingIds: member.submission.findings.map((finding) => finding.id),
+      // Keep reviewer records within the same panel-wide count budget as the aggregate.
+      humanCallouts: retainedReviewerCallouts,
+      blockedReason: member.submission.blockedReason,
+    });
+  }
+
+  const mergedFindings = [...findings.values()];
+  const verdict =
+    blockedReasons.length > 0 ? "blocked" : mergedFindings.length > 0 ? "findings" : "clean";
+  const submission: NormalizedReviewSubmission = {
+    verdict,
+    findings: mergedFindings,
+    humanCallouts: humanCallouts.slice(0, PANEL_CALLOUT_LIMIT),
+  };
+  if (blockedReasons.length > 0) {
+    submission.blockedReason = blockedReasons.join(" | ").slice(0, PANEL_BLOCKED_REASON_LIMIT);
+  }
+  return { submission, reviewers };
+}
+
 function copyVerification(value: VerificationResult): VerificationResult {
   return { ...value };
 }
@@ -280,6 +356,10 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
   const startedAt = now().toISOString();
   const usage = emptyUsage();
   const passes: ReviewPassRecord[] = [];
+  const reviewerProfiles = reviewerProfilesForMode(
+    options.settings.reviewMode,
+    options.settings.reviewerCount,
+  );
   const ledger: FindingLedgerEntry[] = [];
   const ledgerByFingerprint = new Map<string, FindingLedgerEntry>();
   const excludedByFingerprint = new Map<string, ReviewFinding>();
@@ -310,6 +390,7 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
     runId,
     startedAt,
     updatedAt: now().toISOString(),
+    reviewMode: options.settings.reviewMode,
     target: options.target,
     phase,
     completedPasses,
@@ -343,6 +424,8 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
       existing.priority = finding.priority;
       existing.title = finding.title;
       existing.path = finding.path;
+      existing.reportedBy ??= [];
+      uniquePush(existing.reportedBy, finding.reportedBy ?? []);
       return existing;
     }
     const entry: FindingLedgerEntry = {
@@ -353,6 +436,7 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
       path: finding.path,
       pass: finding.pass,
       status: "queued",
+      reportedBy: finding.reportedBy ? [...finding.reportedBy] : undefined,
     };
     ledger.push(entry);
     ledgerByFingerprint.set(finding.fingerprint, entry);
@@ -502,30 +586,71 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
     ) {
       await assertTargetInvariants(git, options.target);
       const reviewFingerprint = await targetFingerprint(git, options.target);
-      phase("reviewing", pass, "running a fresh independent review", reviewFingerprint);
-      const reportedUsage = emptyUsage();
-      const reviewed = await options.reviewer.review({
-        target: options.target,
-        fingerprint: reviewFingerprint,
+      phase(
+        "reviewing",
         pass,
-        reviewInstructions: options.reviewInstructions,
-        extraInstruction: options.extraInstruction,
-        projectGuidelines: options.projectGuidelines,
-        signal: options.signal,
-        onUsage: (addition) => {
-          addUsage(reportedUsage, addition);
-          addUsage(usage, addition);
-        },
+        reviewerProfiles.length === 1
+          ? `running a fresh ${options.settings.reviewMode} reviewer`
+          : `running ${reviewerProfiles.length} parallel ${options.settings.reviewMode} reviewers`,
+        reviewFingerprint,
+      );
+      const panelController = new AbortController();
+      const panelSignal = options.signal
+        ? AbortSignal.any([options.signal, panelController.signal])
+        : panelController.signal;
+      // Share only host-owned immutable target data and safety results within this frozen pass.
+      const reviewerPassCache = createReviewerPassCache();
+      let panelFailure: unknown;
+      let hasPanelFailure = false;
+      const panelRuns = reviewerProfiles.map(async (profile): Promise<ReviewerPanelMember> => {
+        const reportedUsage = emptyUsage();
+        try {
+          const reviewed = await options.reviewer.review({
+            target: options.target,
+            fingerprint: reviewFingerprint,
+            pass,
+            reviewMode: options.settings.reviewMode,
+            reviewer: profile,
+            reviewerCount: reviewerProfiles.length,
+            passCache: reviewerPassCache,
+            reviewInstructions: options.reviewInstructions,
+            extraInstruction: options.extraInstruction,
+            projectGuidelines: options.projectGuidelines,
+            signal: panelSignal,
+            onUsage: (addition) => {
+              addUsage(reportedUsage, addition);
+              addUsage(usage, addition);
+            },
+          });
+          addUnreportedUsage(usage, reviewed.usage, reportedUsage);
+          return { profile, submission: reviewed.submission };
+        } catch (error) {
+          if (!panelController.signal.aborted) {
+            panelFailure = error;
+            hasPanelFailure = true;
+            panelController.abort();
+          }
+          throw error;
+        }
       });
-      addUnreportedUsage(usage, reviewed.usage, reportedUsage);
+      let settled: PromiseSettledResult<ReviewerPanelMember>[];
+      try {
+        settled = await Promise.allSettled(panelRuns);
+      } finally {
+        panelController.abort();
+      }
+      if (hasPanelFailure) throw panelFailure;
+      const panelMembers: ReviewerPanelMember[] = [];
+      for (const member of settled) {
+        if (member.status === "rejected") throw member.reason;
+        panelMembers.push(member.value);
+      }
+      const reviewed = aggregateReviewerPanel(panelMembers);
       completedPasses = pass;
       await assertTargetInvariants(git, options.target);
       const afterReviewFingerprint = await targetFingerprint(git, options.target);
       if (reviewFingerprint !== afterReviewFingerprint) {
-        setTerminal(
-          "blocked",
-          "The review target changed while the read-only reviewer was running.",
-        );
+        setTerminal("blocked", "The review target changed while a reviewer was running.");
         break;
       }
 
@@ -537,6 +662,18 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
       const actionable = reviewed.submission.findings
         .filter((finding) => options.settings.fixP3Findings || finding.priority !== "P3")
         .sort((left, right) => priorityRank(left) - priorityRank(right));
+      if (reviewed.submission.verdict === "findings") {
+        try {
+          assertFindingsByteBudget(
+            actionable,
+            fixerFindingsByteBudget(options.models.fixerModel.contextWindow),
+          );
+        } catch (error) {
+          throw new ReviewerProtocolError(error instanceof Error ? error.message : String(error), {
+            cause: error,
+          });
+        }
+      }
       const excluded = reviewed.submission.findings.filter(
         (finding) => !options.settings.fixP3Findings && finding.priority === "P3",
       );
@@ -544,8 +681,10 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
       const actionableFingerprints = actionable.map((finding) => finding.fingerprint).sort();
       const passRecord: ReviewPassRecord = {
         pass,
+        mode: options.settings.reviewMode,
         targetFingerprint: reviewFingerprint,
         verdict: reviewed.submission.verdict,
+        reviewers: reviewed.reviewers,
         findingIds: reviewed.submission.findings.map((finding) => finding.id),
         actionableFindingIds: actionable.map((finding) => finding.id),
         excludedFindingIds: excluded.map((finding) => finding.id),
@@ -564,7 +703,7 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
         setTerminal(
           "blocked",
           reviewed.submission.blockedReason ||
-            "The reviewer could not inspect the target reliably.",
+            "One or more reviewers could not inspect the target reliably.",
         );
         break;
       }
@@ -831,6 +970,7 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
     version: 1,
     runId,
     status: decision.status,
+    reviewMode: options.settings.reviewMode,
     reason: decision.reason,
     target: options.target,
     passes,

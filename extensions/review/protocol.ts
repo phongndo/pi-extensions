@@ -27,7 +27,7 @@ import type {
   ReviewTargetSnapshot,
 } from "./models.ts";
 
-const MAX_FINDINGS = 50;
+export const MAX_REVIEW_FINDINGS = 50;
 const MAX_CALLOUTS = 30;
 const MAX_TITLE = 240;
 const MAX_PATH = 1_024;
@@ -49,29 +49,46 @@ export function fixerFindingsByteBudget(contextWindow: number): number {
   return Math.max(MIN_FIXER_FINDINGS_BYTES, Math.floor(fixerInputByteBudget(contextWindow) * 0.4));
 }
 
-export const reviewSubmissionSchema = Type.Object(
-  {
-    verdict: StringEnum(["clean", "findings", "blocked"] as const),
-    findings: Type.Array(
-      Type.Object({
-        priority: StringEnum(["P0", "P1", "P2", "P3"] as const),
-        title: Type.String({ minLength: 1, maxLength: MAX_TITLE }),
-        path: Type.String({ minLength: 1, maxLength: MAX_PATH }),
-        startLine: Type.Integer({ minimum: 1, maximum: 10_000_000 }),
-        endLine: Type.Integer({ minimum: 1, maximum: 10_000_000 }),
-        impact: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
-        evidence: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
-        suggestedFix: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
+export function assertFindingsByteBudget(
+  findings: readonly ReviewFinding[],
+  maximumBytes: number,
+): void {
+  const serializedBytes = Buffer.byteLength(JSON.stringify(findings), "utf8");
+  if (serializedBytes > maximumBytes) {
+    throw new Error(
+      `findings exceed the aggregate fixer-input budget (${serializedBytes} > ${maximumBytes} bytes); resubmit concise findings while preserving each distinct issue.`,
+    );
+  }
+}
+
+export function reviewSubmissionSchemaForMaxFindings(maxFindings: number) {
+  const boundedMaximum = Math.min(MAX_REVIEW_FINDINGS, Math.max(1, Math.floor(maxFindings)));
+  return Type.Object(
+    {
+      verdict: StringEnum(["clean", "findings", "blocked"] as const),
+      findings: Type.Array(
+        Type.Object({
+          priority: StringEnum(["P0", "P1", "P2", "P3"] as const),
+          title: Type.String({ minLength: 1, maxLength: MAX_TITLE }),
+          path: Type.String({ minLength: 1, maxLength: MAX_PATH }),
+          startLine: Type.Integer({ minimum: 1, maximum: 10_000_000 }),
+          endLine: Type.Integer({ minimum: 1, maximum: 10_000_000 }),
+          impact: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
+          evidence: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
+          suggestedFix: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
+        }),
+        { maxItems: boundedMaximum },
+      ),
+      humanCallouts: Type.Array(Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }), {
+        maxItems: MAX_CALLOUTS,
       }),
-      { maxItems: MAX_FINDINGS },
-    ),
-    humanCallouts: Type.Array(Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }), {
-      maxItems: MAX_CALLOUTS,
-    }),
-    blockedReason: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_EXPLANATION })),
-  },
-  { additionalProperties: false },
-);
+      blockedReason: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_EXPLANATION })),
+    },
+    { additionalProperties: false },
+  );
+}
+
+export const reviewSubmissionSchema = reviewSubmissionSchemaForMaxFindings(MAX_REVIEW_FINDINGS);
 export type ReviewSubmissionInput = Static<typeof reviewSubmissionSchema>;
 
 export const fixSubmissionSchema = Type.Object(
@@ -83,7 +100,7 @@ export const fixSubmissionSchema = Type.Object(
         status: StringEnum(["fixed", "invalid", "deferred"] as const),
         explanation: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
       }),
-      { maxItems: MAX_FINDINGS },
+      { maxItems: MAX_REVIEW_FINDINGS },
     ),
     checksRun: Type.Array(
       Type.Object({
@@ -324,7 +341,9 @@ export interface ValidateReviewOptions {
   target: ReviewTargetSnapshot;
   pass: number;
   changedLines?: ChangedLineMap;
+  maxFindings?: number;
   maxFindingsBytes?: number;
+  metadataCache?: GitMetadataPathCache;
   signal?: AbortSignal;
 }
 
@@ -338,7 +357,11 @@ export async function validateReviewSubmission(
     throw new Error("Review verdict must be clean, findings, or blocked.");
   }
 
-  const rawFindings = requireArray(input.findings, "findings", MAX_FINDINGS);
+  const maxFindings = Math.min(
+    MAX_REVIEW_FINDINGS,
+    Math.max(1, options.maxFindings ?? MAX_REVIEW_FINDINGS),
+  );
+  const rawFindings = requireArray(input.findings, "findings", maxFindings);
   const callouts = requireArray(input.humanCallouts, "humanCallouts", MAX_CALLOUTS).map(
     (callout, index) => requireString(callout, `humanCallouts[${index}]`, MAX_EXPLANATION),
   );
@@ -359,7 +382,7 @@ export async function validateReviewSubmission(
 
   const findings: ReviewFinding[] = [];
   const fingerprints = new Set<string>();
-  const metadataCache: GitMetadataPathCache = new Map();
+  const metadataCache: GitMetadataPathCache = options.metadataCache ?? new Map();
   for (let index = 0; index < rawFindings.length; index += 1) {
     const raw = requireRecord(rawFindings[index], `findings[${index}]`);
     const priority = raw.priority;
@@ -431,12 +454,7 @@ export async function validateReviewSubmission(
     throw new Error("All submitted findings were duplicates; no distinct finding remains.");
   }
   if (options.maxFindingsBytes !== undefined) {
-    const serializedBytes = Buffer.byteLength(JSON.stringify(findings), "utf8");
-    if (serializedBytes > options.maxFindingsBytes) {
-      throw new Error(
-        `findings exceed the aggregate fixer-input budget (${serializedBytes} > ${options.maxFindingsBytes} bytes); resubmit concise findings while preserving each distinct issue.`,
-      );
-    }
+    assertFindingsByteBudget(findings, options.maxFindingsBytes);
   }
 
   const result: NormalizedReviewSubmission = { verdict, findings, humanCallouts: callouts };
@@ -454,27 +472,29 @@ export function validateFixSubmission(
   }
   const expected = new Set(expectedFindingIds);
   const seen = new Set<string>();
-  const outcomes = requireArray(input.outcomes, "outcomes", MAX_FINDINGS).map((entry, index) => {
-    const outcome = requireRecord(entry, `outcomes[${index}]`);
-    const findingId = requireString(outcome.findingId, `outcomes[${index}].findingId`, 128);
-    if (!expected.has(findingId))
-      throw new Error(`Unknown finding ID in fixer outcome: ${findingId}`);
-    if (seen.has(findingId)) throw new Error(`Duplicate fixer outcome for ${findingId}.`);
-    seen.add(findingId);
-    const status = outcome.status;
-    if (status !== "fixed" && status !== "invalid" && status !== "deferred") {
-      throw new Error(`outcomes[${index}].status is invalid.`);
-    }
-    return {
-      findingId,
-      status,
-      explanation: requireString(
-        outcome.explanation,
-        `outcomes[${index}].explanation`,
-        MAX_EXPLANATION,
-      ),
-    } satisfies FixOutcome;
-  });
+  const outcomes = requireArray(input.outcomes, "outcomes", MAX_REVIEW_FINDINGS).map(
+    (entry, index) => {
+      const outcome = requireRecord(entry, `outcomes[${index}]`);
+      const findingId = requireString(outcome.findingId, `outcomes[${index}].findingId`, 128);
+      if (!expected.has(findingId))
+        throw new Error(`Unknown finding ID in fixer outcome: ${findingId}`);
+      if (seen.has(findingId)) throw new Error(`Duplicate fixer outcome for ${findingId}.`);
+      seen.add(findingId);
+      const status = outcome.status;
+      if (status !== "fixed" && status !== "invalid" && status !== "deferred") {
+        throw new Error(`outcomes[${index}].status is invalid.`);
+      }
+      return {
+        findingId,
+        status,
+        explanation: requireString(
+          outcome.explanation,
+          `outcomes[${index}].explanation`,
+          MAX_EXPLANATION,
+        ),
+      } satisfies FixOutcome;
+    },
+  );
   for (const id of expected) {
     if (!seen.has(id)) throw new Error(`Fixer omitted an outcome for ${id}.`);
   }

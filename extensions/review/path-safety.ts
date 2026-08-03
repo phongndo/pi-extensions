@@ -96,25 +96,12 @@ export async function repositoryRootGitMetadataRealPaths(
   return [...new Set(await metadataPathsForDotGit(dotGit))];
 }
 
-export type GitMetadataPathCache = Map<string, readonly string[]>;
+export type GitMetadataPathCache = Map<string, readonly string[] | Promise<readonly string[]>>;
 
-/**
- * Discover every bounded Git metadata entry under the repository. A nested worktree may alias a
- * metadata directory outside its own ancestors, so safety decisions must share this global map.
- */
-export async function nearbyGitMetadataRealPaths(
-  repositoryRoot: string,
-  targetReal: string,
+async function scanGitMetadataRealPaths(
+  rootReal: string,
   signal?: AbortSignal,
-  pathCache?: GitMetadataPathCache,
-): Promise<string[]> {
-  assertMetadataScanActive(signal);
-  const rootReal = await realpath(repositoryRoot);
-  const cached = pathCache?.get(rootReal);
-  if (cached) return [...cached];
-
-  // Keep the parameter as part of the public validation API even though the safe map is global.
-  void targetReal;
+): Promise<readonly string[]> {
   const paths: string[] = [];
   const checked = new Set<string>();
   let directoriesSeen = 0;
@@ -174,9 +161,36 @@ export async function nearbyGitMetadataRealPaths(
     }
   }
 
-  const result = [...new Set(paths)];
-  pathCache?.set(rootReal, result);
-  return [...result];
+  return [...new Set(paths)];
+}
+
+/**
+ * Discover every bounded Git metadata entry under the repository. A nested worktree may alias a
+ * metadata directory outside its own ancestors, so safety decisions must share this global map.
+ */
+export async function nearbyGitMetadataRealPaths(
+  repositoryRoot: string,
+  targetReal: string,
+  signal?: AbortSignal,
+  pathCache?: GitMetadataPathCache,
+): Promise<string[]> {
+  assertMetadataScanActive(signal);
+  const rootReal = await realpath(repositoryRoot);
+  const cached = pathCache?.get(rootReal);
+  if (cached) return [...(await cached)];
+
+  // Keep the parameter as part of the public validation API even though the safe map is global.
+  void targetReal;
+  const pending = scanGitMetadataRealPaths(rootReal, signal);
+  pathCache?.set(rootReal, pending);
+  try {
+    const result = await pending;
+    if (pathCache?.get(rootReal) === pending) pathCache.set(rootReal, result);
+    return [...result];
+  } catch (error) {
+    if (pathCache?.get(rootReal) === pending) pathCache.delete(rootReal);
+    throw error;
+  }
 }
 
 export function resolvedPathHasGitMetadataComponent(

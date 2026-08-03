@@ -3,9 +3,12 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { ModelReference, ReviewLoopSettings } from "./models.ts";
+import { REVIEW_MODES, type ModelReference, type ReviewLoopSettings } from "./models.ts";
+import { reviewerCountForMode } from "./review-modes.ts";
 
 export const REVIEW_LOOP_SETTINGS_PATH = join(getAgentDir(), "review-loop.json");
+export const REVIEW_LOOP_SETTINGS_VERSION = 2;
+export const MAX_REVIEWER_COUNT = 8;
 export const THINKING_LEVELS = [
   "off",
   "minimal",
@@ -19,6 +22,8 @@ export const THINKING_LEVELS = [
 const MAXIMUM_PASS_LIMIT = 20;
 const SETTINGS_KEYS = new Set([
   "version",
+  "reviewMode",
+  "reviewerCount",
   "reviewerModel",
   "reviewerThinking",
   "fixerModel",
@@ -37,7 +42,9 @@ const MODEL_REFERENCE_KEYS = new Set(["provider", "modelId", "id"]);
 
 export function defaultSettings(): ReviewLoopSettings {
   return {
-    version: 1,
+    version: REVIEW_LOOP_SETTINGS_VERSION,
+    reviewMode: "standard",
+    reviewerCount: reviewerCountForMode("standard"),
     maximumPasses: 4,
     requiredCleanRuns: 1,
     fixP3Findings: true,
@@ -116,15 +123,38 @@ function parseThinkingLevel(value: unknown, field: string): ModelThinkingLevel |
   return value as ModelThinkingLevel;
 }
 
-/** Normalize version 1 settings and the pre-versioned design-draft shape. */
+function parseReviewMode(value: unknown): ReviewLoopSettings["reviewMode"] {
+  if (value === undefined) return "standard";
+  if (
+    typeof value !== "string" ||
+    !REVIEW_MODES.includes(value as ReviewLoopSettings["reviewMode"])
+  ) {
+    throw new Error(`reviewMode must be one of: ${REVIEW_MODES.join(", ")}.`);
+  }
+  return value as ReviewLoopSettings["reviewMode"];
+}
+
+/** Migrate version 1 and pre-versioned settings into the current panel-aware schema. */
 export function normalizeSettings(value: unknown): ReviewLoopSettings {
   if (!isRecord(value)) throw new Error("Review-loop settings must contain a JSON object.");
   assertKnownKeys(value, SETTINGS_KEYS, "Review-loop settings");
-  if (value.version !== undefined && value.version !== 1) {
+  if (
+    value.version !== undefined &&
+    value.version !== 1 &&
+    value.version !== REVIEW_LOOP_SETTINGS_VERSION
+  ) {
     throw new Error(`Unsupported review-loop settings version: ${String(value.version)}.`);
   }
 
   const defaults = defaultSettings();
+  const reviewMode = parseReviewMode(value.reviewMode);
+  const reviewerCount = boundedInteger(
+    value.reviewerCount,
+    "reviewerCount",
+    1,
+    MAX_REVIEWER_COUNT,
+    reviewerCountForMode(reviewMode),
+  );
   const maximumValue = value.maximumPasses ?? value.maxPasses;
   const maximumPasses =
     maximumValue === "unlimited"
@@ -149,7 +179,9 @@ export function normalizeSettings(value: unknown): ReviewLoopSettings {
   }
 
   const settings: ReviewLoopSettings = {
-    version: 1,
+    version: REVIEW_LOOP_SETTINGS_VERSION,
+    reviewMode,
+    reviewerCount,
     maximumPasses,
     requiredCleanRuns,
     fixP3Findings: fixP3 ?? defaults.fixP3Findings,
@@ -198,14 +230,27 @@ export async function loadSettings(
     throw new Error(`Malformed JSON in review-loop settings at ${path}.`, { cause: error });
   }
 
+  let normalized: ReviewLoopSettings;
   try {
-    return normalizeSettings(parsed);
+    normalized = normalizeSettings(parsed);
   } catch (error) {
     throw new Error(
       `Invalid review-loop settings at ${path}: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }
+
+  const sourceVersion = isRecord(parsed) ? parsed.version : undefined;
+  if (sourceVersion !== REVIEW_LOOP_SETTINGS_VERSION) {
+    try {
+      await saveSettings(normalized, path);
+    } catch (error) {
+      throw new Error(`Could not persist migrated review-loop settings at ${path}.`, {
+        cause: error,
+      });
+    }
+  }
+  return normalized;
 }
 
 export async function saveSettings(

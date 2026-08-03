@@ -27,8 +27,14 @@ function shortReason(reason: string | undefined): string {
   return oneLine.length <= 120 ? oneLine : `${oneLine.slice(0, 117)}…`;
 }
 
+function reviewModeLabel(result: ReviewLoopResult): string {
+  // Older persisted result messages predate review modes.
+  return result.reviewMode ?? "standard";
+}
+
 function statusLabel(result: ReviewLoopResult): string {
   const passCount = result.passes.length;
+  const reviewMode = reviewModeLabel(result);
   const reason = shortReason(result.reason);
   const check = result.verification.configured
     ? result.verification.skipped
@@ -41,13 +47,13 @@ function statusLabel(result: ReviewLoopResult): string {
       : "review-clean; no verification configured";
   switch (result.status) {
     case "clean":
-      return `Review loop clean · ${passCount} pass${passCount === 1 ? "" : "es"} · ${result.findingsFixed} findings fixed · ${check}`;
+      return `Review loop clean · ${reviewMode} · ${passCount} pass${passCount === 1 ? "" : "es"} · ${result.findingsFixed} findings fixed · ${check}`;
     case "blocked":
-      return `Review loop blocked · ${passCount} pass${passCount === 1 ? "" : "es"}${reason ? ` · ${reason}` : ""}`;
+      return `Review loop blocked · ${reviewMode} · ${passCount} pass${passCount === 1 ? "" : "es"}${reason ? ` · ${reason}` : ""}`;
     case "exhausted":
-      return `Review loop exhausted · ${passCount} pass${passCount === 1 ? "" : "es"}${reason ? ` · ${reason}` : ""}`;
+      return `Review loop exhausted · ${reviewMode} · ${passCount} pass${passCount === 1 ? "" : "es"}${reason ? ` · ${reason}` : ""}`;
     case "aborted":
-      return `Review loop aborted · ${passCount} pass${passCount === 1 ? "" : "es"} · completed edits were preserved`;
+      return `Review loop aborted · ${reviewMode} · ${passCount} pass${passCount === 1 ? "" : "es"} · completed edits were preserved`;
     case "failed":
       return `Review loop failed${reason ? ` · ${reason}` : ""}`;
   }
@@ -63,7 +69,8 @@ function icon(result: ReviewLoopResult): string {
 function expandedDetails(result: ReviewLoopResult): string {
   const lines = [
     `Target: ${result.target ? describeTarget(result.target) : "unresolved"}`,
-    `Reviewer: ${result.reviewer.reference.provider}/${result.reviewer.reference.modelId} (${result.reviewer.thinkingLevel})`,
+    `Mode: ${reviewModeLabel(result)}`,
+    `Reviewer model: ${result.reviewer.reference.provider}/${result.reviewer.reference.modelId} (${result.reviewer.thinkingLevel})`,
     `Fixer: ${result.fixer.reference.provider}/${result.fixer.reference.modelId} (${result.fixer.thinkingLevel})`,
     `Started: ${result.startedAt}`,
     `Finished: ${result.finishedAt}`,
@@ -71,6 +78,7 @@ function expandedDetails(result: ReviewLoopResult): string {
   if (result.reason) lines.push(`Reason: ${result.reason}`);
   lines.push("", "Passes:");
   for (const pass of result.passes) {
+    const reviewers = pass.reviewers ?? [];
     const verification = pass.verification
       ? pass.verification.skipped
         ? "verification skipped"
@@ -81,8 +89,13 @@ function expandedDetails(result: ReviewLoopResult): string {
           : "no verification command"
       : "verification not run";
     lines.push(
-      `  ${pass.pass}. ${pass.verdict}; ${pass.actionableFindingIds.length} actionable, ${pass.excludedFindingIds.length} excluded; ${verification}`,
+      `  ${pass.pass}. ${pass.verdict}; ${reviewers.length || 1} reviewer${reviewers.length === 1 || reviewers.length === 0 ? "" : "s"}; ${pass.actionableFindingIds.length} actionable, ${pass.excludedFindingIds.length} excluded; ${verification}`,
     );
+    for (const reviewer of reviewers) {
+      lines.push(
+        `     ${reviewer.reviewerLabel}: ${reviewer.verdict}; ${reviewer.findingIds.length} finding${reviewer.findingIds.length === 1 ? "" : "s"}`,
+      );
+    }
     if (pass.fixerSummary) lines.push(`     Fixer: ${pass.fixerSummary}`);
   }
   if (result.ledger.length > 0) {
@@ -92,8 +105,11 @@ function expandedDetails(result: ReviewLoopResult): string {
         entry.status === "pending"
           ? `unconfirmed ${entry.candidateStatus ?? "fixer outcome"}`
           : entry.status;
+      const provenance = entry.reportedBy?.length
+        ? ` · reported by ${entry.reportedBy.join(", ")}`
+        : "";
       lines.push(
-        `  [${entry.priority}] ${entry.findingId} ${entry.path} · ${status} · ${entry.title}${entry.explanation ? ` — ${entry.explanation}` : ""}`,
+        `  [${entry.priority}] ${entry.findingId} ${entry.path} · ${status}${provenance} · ${entry.title}${entry.explanation ? ` — ${entry.explanation}` : ""}`,
       );
     }
   }
@@ -140,6 +156,7 @@ function expandedDetails(result: ReviewLoopResult): string {
 export function resultContextContent(result: ReviewLoopResult): string {
   const lines = [
     statusLabel(result),
+    `Review mode: ${reviewModeLabel(result)}`,
     result.target ? `Target: ${describeTarget(result.target)}` : "Target was not resolved.",
   ];
   if (result.reason) lines.push(`Reason: ${result.reason}`);

@@ -76,10 +76,11 @@ Start a one-pass review in an empty branch of the current Pi session, then retur
 /end-review
 ```
 
-For automatic repair and independent convergence checking, use the bounded loop:
+For automatic repair and independent convergence checking, use the bounded loop. Configure 1–8 blind review agents in `/settings-review`; they run concurrently on each pass:
 
 ```text
-/loop-review uncommitted --extra "Prioritize auth boundaries and regression coverage"
+/loop-review uncommitted --mode adversarial
+/loop-review uncommitted --mode security --extra "Prioritize auth boundaries and regression coverage"
 ```
 
 The loop uses a fresh reviewer each pass, a guarded fixer, and optional deterministic verification.
@@ -135,9 +136,9 @@ Each stage has a different trust boundary: external evidence, controlled impleme
 | `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
 | `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
 | `/review [target]`           | Start an interactive review in an empty branch or current session |
-| `/settings-review`           | Configure Review Loop models and convergence                      |
+| `/settings-review`           | Configure Review Loop mode, models, and convergence               |
 | `/end-review`                | Return from an isolated review, optionally summarize or fix       |
-| `/loop-review [target]`      | Review, fix, verify, and re-review a Git target                   |
+| `/loop-review [target]`      | Run standard or parallel specialized review/fix loops             |
 | `/proc <goal>`               | Generate, review, and launch an ephemeral procedure               |
 | `/proc run <name> [goal]`    | Run a saved procedure                                             |
 | `/proc save <run-id> [name]` | Promote an ephemeral run to `.pi/procedures/`                     |
@@ -174,7 +175,7 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Pi extensions run with the user's process permissions.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
-- `/review pr` checks out a GitHub PR locally; `/loop-review` confines fixer tools and forbids generic shell/Git-history mutation, though optional host verification still executes locally.
+- `/review pr` checks out a GitHub PR locally; `/loop-review` gives trusted reviewer models the user's active tools and general Bash while keeping fixer mutations guarded.
 - Procedures isolate orchestration code in a bounded worker/VM, but source-declared child agents can edit files or run shell commands. Source review is the launch safety boundary.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 

@@ -26,9 +26,9 @@ import type {
   ReviewLoopResult,
   ReviewLoopSettings,
 } from "./models.ts";
-import { formatModelReference } from "./models.ts";
+import { formatModelReference, REVIEW_MODES } from "./models.ts";
 import { sanitizeTerminalText } from "./renderers.ts";
-import { ReviewLoopSettingsStore } from "./settings.ts";
+import { MAX_REVIEWER_COUNT, ReviewLoopSettingsStore } from "./settings.ts";
 
 function selectTheme(theme: ExtensionCommandContext["ui"]["theme"]) {
   return {
@@ -328,6 +328,20 @@ export async function showReviewLoopSettings(
 
     const items: SettingItem[] = [
       {
+        id: "reviewMode",
+        label: "Review mode",
+        description: "select the reviewers' specialization and review strategy",
+        currentValue: settings.reviewMode,
+        values: [...REVIEW_MODES],
+      },
+      {
+        id: "reviewerCount",
+        label: "Review agents",
+        description: "independent agents launched concurrently per pass",
+        currentValue: String(settings.reviewerCount),
+        values: Array.from({ length: MAX_REVIEWER_COUNT }, (_value, index) => String(index + 1)),
+      },
+      {
         id: "reviewerModel",
         label: "Reviewer model",
         currentValue: currentModelValue(settings.reviewerModel),
@@ -507,10 +521,20 @@ export async function showReviewLoopSettings(
 
     settingsList = new SettingsList(
       items,
-      14,
+      15,
       settingsListTheme(theme),
       (id, newValue) => {
         switch (id) {
+          case "reviewMode":
+            save(id, newValue, (value) => {
+              value.reviewMode = newValue as ReviewLoopSettings["reviewMode"];
+            });
+            break;
+          case "reviewerCount":
+            save(id, newValue, (value) => {
+              value.reviewerCount = Number(newValue);
+            });
+            break;
           case "fixP3Findings":
             save(id, newValue, (value) => {
               value.fixP3Findings = newValue === "yes";

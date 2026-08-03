@@ -22,7 +22,8 @@ import type {
   VerificationResult,
 } from "../models.ts";
 import { emptyUsage } from "../models.ts";
-import { runReviewLoop } from "../orchestrator.ts";
+import { aggregateReviewerPanel, runReviewLoop } from "../orchestrator.ts";
+import { reviewerProfilesForMode } from "../review-modes.ts";
 import { resultContextContent } from "../renderers.ts";
 import {
   ReviewerProtocolError,
@@ -77,6 +78,7 @@ async function fixture(): Promise<{ root: string; target: ReviewTargetSnapshot }
 }
 
 const models = {
+  fixerModel: { contextWindow: 128_000 },
   reviewer: {
     reference: { provider: "test", modelId: "reviewer" },
     thinkingLevel: "off",
@@ -91,7 +93,9 @@ const models = {
 
 function settings(overrides: Partial<ReviewLoopSettings> = {}): ReviewLoopSettings {
   return {
-    version: 1,
+    version: 2,
+    reviewMode: "standard",
+    reviewerCount: 1,
     maximumPasses: 4,
     requiredCleanRuns: 1,
     fixP3Findings: true,
@@ -192,7 +196,165 @@ test("finishes after a fresh clean review", async () => {
     host: { execute: executor(), verify: noVerification },
   });
   assert.equal(result.status, "clean");
+  assert.equal(result.reviewMode, "standard");
   assert.equal(result.passes.length, 1);
+  assert.equal(result.passes[0]?.reviewers.length, 1);
+});
+
+test(
+  "runs the configured number of adversarial reviewers concurrently on one fingerprint",
+  { timeout: 5_000 },
+  async () => {
+    const { target } = await fixture();
+    let active = 0;
+    let maximumActive = 0;
+    let started = 0;
+    let releasePanel!: () => void;
+    const panelStarted = new Promise<void>((resolvePromise) => {
+      releasePanel = resolvePromise;
+    });
+    const reviewerIds: string[] = [];
+    const fingerprints = new Set<string>();
+    const passCaches = new Set<NonNullable<ReviewerRunInput["passCache"]>>();
+    const reviewer: ReviewerRunner = {
+      async review(input): Promise<ReviewerRunOutput> {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        started += 1;
+        reviewerIds.push(input.reviewer.id);
+        fingerprints.add(input.fingerprint);
+        assert.ok(input.passCache);
+        passCaches.add(input.passCache);
+        if (started === 4) releasePanel();
+        await new Promise<void>((resolvePromise, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`Only ${started} panel reviewer(s) started.`)),
+            1_000,
+          );
+          void panelStarted.then(() => {
+            clearTimeout(timer);
+            resolvePromise();
+          }, reject);
+        });
+        active -= 1;
+        return { submission: clean(), usage: emptyUsage(), protocolRetries: 0 };
+      },
+    };
+
+    const result = await runReviewLoop({
+      target,
+      settings: settings({ reviewMode: "adversarial", reviewerCount: 4 }),
+      models,
+      reviewer,
+      createFixer: () => new FakeFixer(() => undefined),
+      host: { execute: executor(), verify: noVerification },
+    });
+
+    assert.equal(result.status, "clean");
+    assert.equal(maximumActive, 4);
+    assert.equal(fingerprints.size, 1);
+    assert.equal(passCaches.size, 1);
+    assert.deepEqual(reviewerIds.sort(), [
+      "root-cause",
+      "root-cause-2",
+      "system-design",
+      "system-design-2",
+    ]);
+    assert.equal(result.passes[0]?.reviewers.length, 4);
+  },
+);
+
+test("aggregates duplicate panel findings and preserves reviewer provenance", () => {
+  const profiles = reviewerProfilesForMode("adversarial");
+  const shared = finding(1);
+  const result = aggregateReviewerPanel([
+    {
+      profile: profiles[0]!,
+      submission: { verdict: "findings", findings: [shared], humanCallouts: [] },
+    },
+    {
+      profile: profiles[1]!,
+      submission: {
+        verdict: "findings",
+        findings: [{ ...shared, evidence: "Independent evidence." }],
+        humanCallouts: [],
+      },
+    },
+  ]);
+
+  assert.equal(result.submission.findings.length, 1);
+  assert.deepEqual(result.submission.findings[0]?.reportedBy, ["root-cause", "system-design"]);
+  assert.equal(result.reviewers.length, 2);
+
+  const callouts = aggregateReviewerPanel([
+    {
+      profile: profiles[0]!,
+      submission: {
+        ...clean(),
+        humanCallouts: Array.from({ length: 30 }, (_value, index) => `first-${index}`),
+      },
+    },
+    {
+      profile: profiles[1]!,
+      submission: {
+        ...clean(),
+        humanCallouts: Array.from({ length: 30 }, (_value, index) => `second-${index}`),
+      },
+    },
+  ]);
+  assert.equal(callouts.submission.humanCallouts.length, 30);
+  assert.equal(
+    callouts.reviewers.reduce((total, reviewer) => total + reviewer.humanCallouts.length, 0),
+    30,
+  );
+
+  const blocked = aggregateReviewerPanel([
+    { profile: profiles[0]!, submission: clean() },
+    {
+      profile: profiles[1]!,
+      submission: {
+        verdict: "blocked",
+        findings: [],
+        humanCallouts: [],
+        blockedReason: "Could not inspect generated code.",
+      },
+    },
+  ]);
+  assert.equal(blocked.submission.verdict, "blocked");
+  assert.match(blocked.submission.blockedReason ?? "", /Adversarial system-design reviewer/);
+});
+
+test("preserves the originating panel failure while aborting sibling reviewers", async () => {
+  const { target } = await fixture();
+  const reviewer: ReviewerRunner = {
+    async review(input): Promise<ReviewerRunOutput> {
+      if (input.reviewer.id === "system-design") {
+        throw new ReviewerProtocolError("System-design reviewer protocol failed.");
+      }
+      await new Promise<never>((_resolve, reject) => {
+        const abort = () => {
+          const error = new Error("Sibling reviewer aborted.");
+          error.name = "AbortError";
+          reject(error);
+        };
+        if (input.signal?.aborted) abort();
+        else input.signal?.addEventListener("abort", abort, { once: true });
+      });
+      throw new Error("unreachable");
+    },
+  };
+
+  const result = await runReviewLoop({
+    target,
+    settings: settings({ reviewMode: "adversarial", reviewerCount: 2 }),
+    models,
+    reviewer,
+    createFixer: () => new FakeFixer(() => undefined),
+    host: { execute: executor(), verify: noVerification },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /System-design reviewer protocol failed/);
 });
 
 test("retains reviewer usage when a terminal protocol failure is thrown", async () => {

@@ -8,8 +8,7 @@ Implemented. The extension, package integration, safety guards, persistence, nes
 
 Add a `/loop-review` command that feels like a direct extension of
 [`pi-review`](https://github.com/earendil-works/pi-review): select a review
-target, review it, fix actionable findings, and repeat until a fresh review is
-clean or a bounded safety condition stops the loop.
+target, review it with a standard reviewer or blind parallel specialized panel, fix actionable findings, and repeat until a fresh panel is clean or a bounded safety condition stops the loop.
 
 The normal command must remain minimal. Configuration belongs in
 `/settings-review`, not in the target-selection flow.
@@ -25,10 +24,11 @@ The normal command must remain minimal. Configuration belongs in
 /loop-review commit abc123
 /loop-review pr 123
 /loop-review folder src docs
+/loop-review branch main --mode adversarial
 /settings-review
 ```
 
-Keep `/loop-review settings` and its `setting` alias for compatibility. Argument completion for `/loop-review` should continue to offer target subcommands and `settings`.
+Keep `/loop-review settings` and its `setting` alias for compatibility. Argument completion for `/loop-review` should continue to offer target subcommands and `settings`. A run may override the persisted mode with `--mode standard|adversarial|security|migration`.
 
 ### `/loop-review`
 
@@ -58,6 +58,7 @@ second confirmation screen.
 Open a separate `SettingsList` containing:
 
 ```text
+Review mode          standard
 Reviewer model       current model
 Reviewer thinking    current level
 Fixer model          current model
@@ -130,26 +131,26 @@ Reasons:
 - In-memory sessions provide isolated context without creating resumable session
   files for every pass.
 
-The default topology is:
+The mode selects reviewer assignments while `reviewerCount` selects the panel size (1–8):
 
 ```text
-fresh reviewer -> persistent fixer -> verification -> fresh reviewer -> ...
+configured fresh blind reviewer panel (parallel) -> persistent fixer -> verification -> fresh panel -> ...
 ```
+
+`adversarial`, `security`, and `migration` rotate specialized assignments across the configured panel. Adversarial assignments challenge root cause, responsibility boundaries, and whole-system design rather than recommending symptom-level patches. Exact findings are unioned and deduplicated; a finding is not discarded merely because only one panel member reported it.
 
 ### Reviewer
 
-Create a new in-memory reviewer session for every pass. Give it:
+Create a new in-memory reviewer session for every panel member on every pass. Give it:
 
 - The frozen target descriptor and current target fingerprint.
 - The review rubric adapted from `pi-review`.
 - Trusted project context files and `REVIEW_GUIDELINES.md`.
 - Shared review instructions and per-command `--extra` instructions.
-- Read-only tools.
+- The outer session's active user tools/extensions, plus general Bash and structured review tools.
 - A terminating structured review-result tool.
 
-Do not give it prior review prose, prior finding outcomes, or fixer reasoning.
-Every pass must independently inspect the complete current target against the
-same frozen baseline.
+Do not give panel members prior review prose, prior finding outcomes, fixer reasoning, or one another's output. Every panel member must independently inspect the complete current target against the same frozen baseline and fingerprint.
 
 Reviewer tools:
 
@@ -158,11 +159,12 @@ read
 grep
 find
 ls
+bash
 review_target
 submit_review
 ```
 
-Do not expose `edit`, `write`, or unrestricted `bash` to the reviewer.
+Remove `edit` and `write` from the inherited active set. General Bash is intentionally available, while the reviewer prompt forbids target and Git-state mutations. Load normal user-level extensions, including FFF when configured, but never trust project extensions.
 `review_target` should provide bounded, paginated access to status, changed
 files, diff stats, and diffs using host-controlled Git commands.
 
@@ -197,7 +199,7 @@ Each fixer prompt contains:
 When `Fixer context` is `fresh`, dispose and recreate the fixer for every fix
 pass while supplying the same compact ledger.
 
-The fresh reviewer, not the fixer's self-report, decides whether a fix worked.
+The fresh reviewer panel, not the fixer's self-report, decides whether a fix worked.
 
 ### Child resources and models
 
@@ -336,7 +338,7 @@ interface FixSubmission {
 ```
 
 Treat this as a progress report only. The host checks repository state and a
-fresh reviewer validates the result.
+fresh reviewer panel validates the result.
 
 Human reviewer callouts remain non-actionable and never enter the fix queue by
 themselves.
@@ -365,23 +367,22 @@ Detailed flow:
 
 1. Resolve settings, models, target, review guidelines, and Git invariants.
 2. Run the configured verification command, if any, and record its output.
-3. Start a fresh reviewer pass.
-4. Validate and normalize its structured result.
+3. Start a fresh reviewer panel. Specialized panel members run concurrently against the same fingerprint.
+4. Validate every structured result, union exact distinct findings, retain reviewer provenance, and block if any required member is blocked.
 5. If there are qualifying findings, send all of them to the fixer in priority
    order, including P3 by default.
 6. Verify Git invariants and compute the new target fingerprint.
 7. Run the configured verification command.
 8. If verification fails, give the failure to the fixer before spending another
    reviewer pass. Bound these repair attempts.
-9. Start another fresh reviewer over the complete current target.
-10. Complete only when the configured number of clean fresh reviews and the
-    verification gate apply to the same unchanged target fingerprint.
+9. Start another fresh reviewer panel over the complete current target.
+10. Complete only when the aggregated panel has no qualifying actionable findings for the configured number of fresh panel runs and the verification gate applies to the same unchanged target fingerprint.
 
 ## Convergence and stop rules
 
 A run is `clean` only when all of the following hold:
 
-1. A fresh reviewer reports zero qualifying actionable findings.
+1. A fresh reviewer panel reports zero qualifying actionable findings after the configured P3 policy is applied.
 2. No finding is deferred or blocked.
 3. The configured verification command passes, when configured.
 4. The target fingerprint has not changed since the clean review.
@@ -512,7 +513,7 @@ Exit criteria:
 ### Phase 4: child agents and protocols
 
 - Implement controlled child resource/model runtime creation.
-- Implement fresh reviewer sessions and read-only tools.
+- Implement fresh standard and parallel specialized reviewer sessions with inspection tools and general Bash.
 - Implement persistent/fresh fixer modes.
 - Implement terminating structured output tools and host validation.
 - Aggregate child usage without exposing raw transcripts.
@@ -548,7 +549,7 @@ Exit criteria:
 
 ### Unit tests
 
-- Argument tokenization, aliases, quoted `--extra`, and invalid arguments.
+- Argument tokenization, aliases, `--mode`, quoted `--extra`, and invalid arguments.
 - Settings defaults, migrations, atomic writes, and corrupt-file errors.
 - Model reference resolution and thinking-level clamping.
 - Merge-base and default-branch resolution.
@@ -587,16 +588,17 @@ Use fake sessions first, then opt-in live-model smoke tests:
 2. Selecting a target starts the loop immediately.
 3. `/settings-review` owns all persistent configuration.
 4. Reviewer and fixer models can differ without changing the outer Pi model.
-5. Every reviewer pass uses a fresh, read-only in-memory session.
-6. The fixer uses the configured context policy and mutation tools.
-7. Structured output, not Markdown parsing, controls the loop.
-8. Clean means a fresh clean review plus the configured verification policy on
+5. Every reviewer pass uses the configured number of fresh in-memory sessions in parallel.
+6. Reviewer sessions expose only host-owned repository inspection tools and never load third-party extension code.
+7. The fixer uses the configured context policy and mutation tools.
+8. Structured output, not Markdown parsing, controls the loop.
+9. Clean means a fresh clean review plus the configured verification policy on
    the same code state.
-9. Finite runs are protected by pass, retry, and stagnation limits; an explicit
-   `unlimited` pass setting still retains retry, stagnation, and cancellation guards.
-10. Abort and failures never silently discard user work.
-11. The final main-session output is compact but expandable.
-12. Existing `/review` and `/end-review` continue to work unchanged.
+10. Finite runs are protected by pass, retry, and stagnation limits; an explicit
+    `unlimited` pass setting still retains retry, stagnation, and cancellation guards.
+11. Abort and failures never silently discard user work.
+12. The final main-session output is compact but expandable.
+13. Existing `/review` and `/end-review` continue to work unchanged.
 
 ## Deferred work
 

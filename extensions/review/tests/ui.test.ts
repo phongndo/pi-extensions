@@ -53,8 +53,9 @@ async function exerciseSettingsEditor(editorResult: string | undefined): Promise
             { matches: () => false },
             done,
           );
+          assert.match(component.render(160).join("\n"), /Review agents/);
           if (customCalls === 1) {
-            for (let index = 0; index < 8; index += 1) component.handleInput?.("\u001b[B");
+            for (let index = 0; index < 10; index += 1) component.handleInput?.("\u001b[B");
             component.handleInput?.("\r");
             component.handleInput?.("\r");
           } else {

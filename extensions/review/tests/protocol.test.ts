@@ -256,6 +256,29 @@ test("classifies every reviewer submission validation failure as a protocol erro
   );
 });
 
+test("bounds findings per parallel panel member", async () => {
+  const { target } = await fixture();
+  await assert.rejects(
+    validateReviewSubmission(
+      {
+        verdict: "findings",
+        findings: [
+          { ...finding(), title: "First" },
+          { ...finding(), title: "Second" },
+        ],
+        humanCallouts: [],
+      },
+      {
+        target,
+        pass: 1,
+        changedLines: { "src/a.ts": new Set([2]) },
+        maxFindings: 1,
+      },
+    ),
+    /exceeds 1 items/,
+  );
+});
+
 test("rejects reviewer findings that exceed the aggregate fixer budget", async () => {
   const { target } = await fixture();
   await assert.rejects(

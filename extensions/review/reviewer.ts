@@ -23,7 +23,6 @@ import {
   parseChangedLines,
   type ExecGit,
 } from "./git.ts";
-import { createRepositoryInspectionTools } from "./inspection-tools.ts";
 import type {
   NormalizedReviewSubmission,
   ReviewSubmission,
@@ -31,6 +30,7 @@ import type {
   UsageSummary,
 } from "./models.ts";
 import { emptyUsage, addUsage } from "./models.ts";
+import type { GitMetadataPathCache } from "./path-safety.ts";
 import {
   buildReviewerPrompt,
   REVIEWER_SYSTEM_PROMPT,
@@ -39,12 +39,32 @@ import {
 import {
   asReviewSubmission,
   fixerFindingsByteBudget,
-  reviewSubmissionSchema,
+  MAX_REVIEW_FINDINGS,
+  reviewSubmissionSchemaForMaxFindings,
   validateReviewSubmission,
   type ReviewSubmissionInput,
   type ValidateReviewOptions,
 } from "./protocol.ts";
 import { describeTarget } from "./targets.ts";
+
+const REQUIRED_REVIEWER_TOOLS = [
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "bash",
+  "review_target",
+  "submit_review",
+] as const;
+
+export function reviewerActiveTools(inherited: readonly string[]): string[] {
+  return [
+    ...new Set([
+      ...inherited.filter((name) => name !== "edit" && name !== "write"),
+      ...REQUIRED_REVIEWER_TOOLS,
+    ]),
+  ];
+}
 
 function boundedToolText(text: string): string {
   const result = truncateHead(text, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
@@ -131,21 +151,59 @@ export function formatDiffPage(
   ].join("\n\n");
 }
 
+interface ReviewerPassValues {
+  status: string;
+  changedFiles: string[];
+  diffStat: string;
+  diffLines: string[];
+  validationDiff: string;
+}
+
+export class ReviewerPassCache {
+  readonly metadataPaths: GitMetadataPathCache = new Map();
+  private readonly operations = new Map<keyof ReviewerPassValues, Promise<unknown>>();
+
+  get<K extends keyof ReviewerPassValues>(
+    key: K,
+    start: () => Promise<ReviewerPassValues[K]>,
+  ): Promise<ReviewerPassValues[K]> {
+    const cached = this.operations.get(key) as Promise<ReviewerPassValues[K]> | undefined;
+    if (cached) return cached;
+
+    const pending = start();
+    this.operations.set(key, pending);
+    // Observe only to evict the failed entry. The original promise remains rejected for every
+    // current waiter, while a later retry can start a fresh host operation.
+    void pending.catch(() => {
+      if (this.operations.get(key) === pending) this.operations.delete(key);
+    });
+    return pending;
+  }
+}
+
+export function createReviewerPassCache(): ReviewerPassCache {
+  return new ReviewerPassCache();
+}
+
 export class ReviewTargetAccess {
   private readonly git: GitClient;
   private readonly target: ReviewTargetSnapshot;
-  private diffLines: Promise<string[]> | undefined;
+  private readonly passCache: ReviewerPassCache;
 
-  constructor(git: GitClient, target: ReviewTargetSnapshot) {
+  constructor(
+    git: GitClient,
+    target: ReviewTargetSnapshot,
+    passCache: ReviewerPassCache = createReviewerPassCache(),
+  ) {
     this.git = git;
     this.target = target;
+    this.passCache = passCache;
   }
 
   private targetDiffLines(): Promise<string[]> {
-    if (!this.diffLines) {
-      this.diffLines = getTargetDiff(this.git, this.target, 3).then((diff) => diff.split("\n"));
-    }
-    return this.diffLines;
+    return this.passCache.get("diffLines", () =>
+      getTargetDiff(this.git, this.target, 3).then((diff) => diff.split("\n")),
+    );
   }
 
   async execute(
@@ -170,11 +228,18 @@ export class ReviewTargetAccess {
           2,
         );
       case "status":
-        return (await this.git.status()) || "(clean worktree)";
+        return (await this.passCache.get("status", () => this.git.status())) || "(clean worktree)";
       case "files":
-        return (await getChangedFiles(this.git, this.target)).join("\n") || "(no changed files)";
+        return (
+          (
+            await this.passCache.get("changedFiles", () => getChangedFiles(this.git, this.target))
+          ).join("\n") || "(no changed files)"
+        );
       case "stat":
-        return (await getDiffStat(this.git, this.target)) || "(empty diff)";
+        return (
+          (await this.passCache.get("diffStat", () => getDiffStat(this.git, this.target))) ||
+          "(empty diff)"
+        );
       case "diff": {
         if (this.target.type === "folder") {
           return "Folder targets are snapshots. Read files under the selected paths directly.";
@@ -186,9 +251,9 @@ export class ReviewTargetAccess {
 }
 
 function reviewerTools(
-  root: string,
   access: ReviewTargetAccess,
   capture: (submission: ReviewSubmission) => void,
+  maxFindings: number,
 ): ToolDefinition<any, any, any>[] {
   const reviewTarget = defineTool({
     name: "review_target",
@@ -216,7 +281,7 @@ function reviewerTools(
     name: "submit_review",
     label: "Submit Review",
     description: "Submit the final structured review and terminate this reviewer run.",
-    parameters: reviewSubmissionSchema,
+    parameters: reviewSubmissionSchemaForMaxFindings(maxFindings),
     async execute(_toolCallId, params: ReviewSubmissionInput) {
       capture(asReviewSubmission(params));
       return {
@@ -232,8 +297,7 @@ function reviewerTools(
     },
   });
 
-  // Keep the SDK definitions authoritative if this helper is reused with extensions enabled.
-  return [...createRepositoryInspectionTools(root), reviewTarget, submitReview];
+  return [reviewTarget, submitReview];
 }
 
 export class ReviewerProtocolError extends Error {
@@ -254,6 +318,8 @@ export async function validateReviewerResult(
 }
 
 export interface ReviewerRunInput extends ReviewerPromptOptions {
+  reviewerCount: number;
+  passCache?: ReviewerPassCache;
   signal?: AbortSignal;
   onUsage?: (usage: UsageSummary) => void;
 }
@@ -275,6 +341,7 @@ export interface SdkReviewerOptions {
   thinkingLevel: ModelThinkingLevel;
   contextFiles: TrustedContextFile[];
   fixerContextWindow: number;
+  inheritedToolNames?: string[];
 }
 
 export class SdkReviewer implements ReviewerRunner {
@@ -286,27 +353,33 @@ export class SdkReviewer implements ReviewerRunner {
 
   async review(input: ReviewerRunInput): Promise<ReviewerRunOutput> {
     const usage = emptyUsage();
+    const passCache = input.passCache ?? createReviewerPassCache();
     let protocolReason: string | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let submissions: ReviewSubmission[] = [];
       const git = new GitClient(this.options.execute, input.target.repositoryRoot, input.signal);
-      const access = new ReviewTargetAccess(git, input.target);
-      const tools = reviewerTools(input.target.repositoryRoot, access, (submission) => {
-        submissions = [...submissions, structuredClone(submission)];
-      });
+      const access = new ReviewTargetAccess(git, input.target, passCache);
+      const maxFindings = Math.max(1, Math.floor(MAX_REVIEW_FINDINGS / input.reviewerCount));
+      const tools = reviewerTools(
+        access,
+        (submission) => {
+          submissions = [...submissions, structuredClone(submission)];
+        },
+        maxFindings,
+      );
+      const activeTools = reviewerActiveTools(this.options.inheritedToolNames ?? []);
       const session = await createChildSession({
         cwd: input.target.repositoryRoot,
         modelRuntime: this.options.modelRuntime,
         model: this.options.model,
         thinkingLevel: this.options.thinkingLevel,
         systemPrompt: REVIEWER_SYSTEM_PROMPT,
-        tools: ["read", "grep", "find", "ls", "review_target", "submit_review"],
+        tools: activeTools,
         customTools: tools,
         contextFiles: this.options.contextFiles,
-        // Never execute extension code from the mutable target. Role-model providers and
-        // authentication were transferred from the outer runtime before the target was frozen.
+        // Trust the user's normal global extensions, but never load project-owned extension code.
         projectTrusted: false,
-        extensionsEnabled: false,
+        extensionsEnabled: true,
       });
       try {
         const prompt = buildReviewerPrompt({ ...input, protocolRetryReason: protocolReason });
@@ -325,14 +398,18 @@ export class SdkReviewer implements ReviewerRunner {
           input.target.type === "folder"
             ? undefined
             : await Promise.all([
-                getTargetDiff(git, input.target, 0),
-                getChangedFiles(git, input.target),
+                passCache.get("validationDiff", () => getTargetDiff(git, input.target, 0)),
+                passCache.get("changedFiles", () => getChangedFiles(git, input.target)),
               ]);
         const submission = await validateReviewerResult(submissions[0], {
           target: input.target,
           pass: input.pass,
           changedLines: changed ? parseChangedLines(changed[0], changed[1]) : undefined,
+          maxFindings,
+          // Each independent member may use the full eventual panel budget. The orchestrator
+          // enforces that budget once duplicate panel findings have been merged.
           maxFindingsBytes: fixerFindingsByteBudget(this.options.fixerContextWindow),
+          metadataCache: passCache.metadataPaths,
           signal: input.signal,
         });
         return { submission, usage, protocolRetries: attempt };

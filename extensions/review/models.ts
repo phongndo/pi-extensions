@@ -6,6 +6,9 @@ export type ReviewPriority = (typeof REVIEW_PRIORITIES)[number];
 export const TERMINAL_STATUSES = ["clean", "blocked", "exhausted", "aborted", "failed"] as const;
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
 
+export const REVIEW_MODES = ["standard", "adversarial", "security", "migration"] as const;
+export type ReviewMode = (typeof REVIEW_MODES)[number];
+
 export interface ModelReference {
   provider: string;
   modelId: string;
@@ -14,7 +17,10 @@ export interface ModelReference {
 export type MaximumPasses = number | "unlimited";
 
 export interface ReviewLoopSettings {
-  version: 1;
+  version: 2;
+  reviewMode: ReviewMode;
+  /** Independent reviewer sessions launched concurrently on each pass. */
+  reviewerCount: number;
   reviewerModel?: ModelReference;
   reviewerThinking?: ThinkingLevel;
   fixerModel?: ModelReference;
@@ -73,6 +79,8 @@ export interface ReviewFinding extends RawReviewFinding {
   id: string;
   fingerprint: string;
   pass: number;
+  /** Independent panel members that reported this finding. */
+  reportedBy?: string[];
 }
 
 export interface ReviewSubmission {
@@ -140,14 +148,26 @@ export interface FindingLedgerEntry {
   path: string;
   pass: number;
   status: "queued" | "pending" | "fixed" | "invalid" | "deferred" | "recurring";
+  reportedBy?: string[];
   candidateStatus?: "fixed" | "invalid";
   explanation?: string;
 }
 
+export interface ReviewPassReviewerRecord {
+  reviewerId: string;
+  reviewerLabel: string;
+  verdict: "clean" | "findings" | "blocked";
+  findingIds: string[];
+  humanCallouts: string[];
+  blockedReason?: string;
+}
+
 export interface ReviewPassRecord {
   pass: number;
+  mode: ReviewMode;
   targetFingerprint: string;
   verdict: "clean" | "findings" | "blocked" | "protocol-failure";
+  reviewers: ReviewPassReviewerRecord[];
   findingIds: string[];
   actionableFindingIds: string[];
   excludedFindingIds: string[];
@@ -170,6 +190,7 @@ export interface ReviewLoopRunState {
   runId: string;
   startedAt: string;
   updatedAt: string;
+  reviewMode?: ReviewMode;
   target?: ReviewTargetSnapshot;
   phase: RunPhase;
   completedPasses: number;
@@ -182,6 +203,7 @@ export interface ReviewLoopResult {
   version: 1;
   runId: string;
   status: TerminalStatus;
+  reviewMode: ReviewMode;
   reason?: string;
   target?: ReviewTargetSnapshot;
   passes: ReviewPassRecord[];

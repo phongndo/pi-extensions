@@ -2,10 +2,10 @@
 
 One extension provides two complementary review workflows while preserving their existing commands and behavior:
 
-| Workflow                     | Commands                 | Use it for                                                                            |
-| ---------------------------- | ------------------------ | ------------------------------------------------------------------------------------- |
-| Interactive review branch    | `/review`, `/end-review` | One review pass with an optional structured handoff or queued fix turn                |
-| Bounded independent fix loop | `/loop-review`           | Fresh review, guarded repair, verification, and re-review until clean or safely bound |
+| Workflow                     | Commands                 | Use it for                                                                |
+| ---------------------------- | ------------------------ | ------------------------------------------------------------------------- |
+| Interactive review branch    | `/review`, `/end-review` | One review pass with an optional structured handoff or queued fix turn    |
+| Bounded independent fix loop | `/loop-review`           | Standard or parallel specialized review, guarded repair, and verification |
 
 ## Interactive review with `/review`
 
@@ -34,19 +34,19 @@ The `/review` selector also lets you add or remove session-persisted custom revi
 
 ## Bounded review/fix loop with `/loop-review`
 
-> Independent review → guarded fix → deterministic verification → fresh re-review, repeated until the target is convincingly clean or a safety bound stops the run.
+> Independent review panel → guarded fix → deterministic verification → fresh re-review, repeated until the target is convincingly clean or a safety bound stops the run.
 
 Reviewers never inherit a fixer's claims, fixer outcomes are treated as candidates until a later reviewer confirms the finding disappeared, and Git invariants prevent the target from moving underneath the loop.
 
-|                    |                                                                         |
-| ------------------ | ----------------------------------------------------------------------- |
-| UI                 | Blocking TUI progress panel; `Esc` requests cancellation                |
-| Default passes     | 4                                                                       |
-| Default clean runs | 1                                                                       |
-| Reviewer           | Fresh isolated `AgentSession` every pass, read-only tools               |
-| Fixer              | Guarded edit/write tools; persistent context by default                 |
-| Shell access       | Reviewer/fixer: none; optional verification runs separately on the host |
-| Settings           | `~/.pi/agent/review-loop.json`                                          |
+|                    |                                                                               |
+| ------------------ | ----------------------------------------------------------------------------- |
+| UI                 | Blocking TUI progress panel; `Esc` requests cancellation                      |
+| Default passes     | 4                                                                             |
+| Default clean runs | 1                                                                             |
+| Reviewer           | Fresh isolated `AgentSession` per panel member with inspection tools and Bash |
+| Fixer              | Guarded edit/write tools; persistent context by default                       |
+| Shell access       | Reviewer: general Bash; fixer: none; verification runs separately on host     |
+| Settings           | `~/.pi/agent/review-loop.json`                                                |
 
 ## Quick start
 
@@ -62,13 +62,19 @@ Review everything on the current feature branch relative to `main`:
 /loop-review branch main
 ```
 
+Run the configured blind adversarial review panel in parallel:
+
+```text
+/loop-review uncommitted --mode adversarial
+```
+
 Add one run-specific instruction without changing global settings:
 
 ```text
-/loop-review uncommitted --extra "Prioritize authorization boundaries and missing regression tests"
+/loop-review uncommitted --mode security --extra "Prioritize authorization boundaries and missing regression tests"
 ```
 
-Configure role models, reasoning, verification, and convergence:
+Configure the review mode, parallel agent count, role models, reasoning, verification, and convergence:
 
 ```text
 /settings-review
@@ -87,17 +93,33 @@ While a run is active, press `Esc` to stop. Completed edits remain in the worktr
 /loop-review commit <revision> [display title]
 /loop-review pr <number-or-github-url>
 /loop-review folder <path...>
+/loop-review <target> --mode <standard|adversarial|security|migration>
 /settings-review
 ```
 
 `/loop-review settings` remains available for compatibility, including its `setting` alias.
 
-Every run target accepts one quoted extra instruction:
+Every run target accepts a mode override and one quoted extra instruction:
 
 ```text
+--mode adversarial
+--mode=security
 --extra "instruction"
 --extra="instruction"
 ```
+
+## Review modes
+
+| Mode          | Reviewer assignments                                              |
+| ------------- | ----------------------------------------------------------------- |
+| `standard`    | Balanced general review                                           |
+| `adversarial` | Root-cause analysis and whole-system design challenge             |
+| `security`    | Trust boundaries and attacker/abuse cases                         |
+| `migration`   | Behavioral equivalence and compatibility/ownership/platform risks |
+
+The **Review agents** setting controls how many independent sessions run concurrently on every pass (1–8). Specialized assignments rotate across larger panels; a one-agent specialized panel receives the combined mode brief.
+
+Parallel panel members inspect the same frozen fingerprint in independent sessions and cannot see one another's findings. The host unions exact distinct findings instead of majority-voting away findings reported by only one reviewer. Duplicate findings retain reviewer provenance.
 
 With no target, the TUI opens a selector with a smart default:
 
@@ -136,12 +158,12 @@ A successful loop is stricter than “the fixer said it worked.”
 
 1. **Freeze the target.** Record branch, HEAD, scope, initial status, and target fingerprints.
 2. **Baseline verification.** Run the configured command before review, if any.
-3. **Fresh review.** Start a new read-only reviewer session and require a structured verdict.
-4. **Prioritize findings.** P0–P2 are actionable; P3 follows the `fixP3Findings` setting.
+3. **Fresh review panel.** Start the configured number of new reviewer sessions. Panel members run concurrently against the same fingerprint and require a structured verdict from every member.
+4. **Aggregate and prioritize findings.** Union and deduplicate panel findings; P0–P2 are actionable and P3 follows the `fixP3Findings` setting.
 5. **Guarded repair.** Give actionable findings to the fixer without generic shell access.
 6. **Verify.** Run the host command after changes. A failure gets at most two bounded repair attempts.
 7. **Re-review independently.** A fixer-reported outcome is not confirmed until a later reliable review omits the same finding fingerprint.
-8. **Require clean evidence.** A clean review, passing configured verification, unchanged target, and the configured count of clean runs are all required.
+8. **Require clean evidence.** The aggregated panel must have no qualifying actionable findings, configured verification must pass, the target must remain unchanged, and the configured count of clean panel runs must be reached.
 
 The loop blocks on recurring findings, target mutation during review, branch/HEAD changes, out-of-folder edits, deferred actionable findings, reviewer protocol failure, or exhausted repair limits.
 
@@ -170,7 +192,9 @@ Settings persist globally in `~/.pi/agent/review-loop.json` by default.
 
 | Setting              | Default          | Purpose                                                      |
 | -------------------- | ---------------- | ------------------------------------------------------------ |
-| Reviewer model       | Current Pi model | Independent diagnosis and structured findings                |
+| Review mode          | `standard`       | Select reviewer specialization and strategy                  |
+| Review agents        | `1`              | Independent reviewer sessions launched concurrently; 1–8     |
+| Reviewer model       | Current Pi model | Model used by every independent panel member                 |
 | Reviewer thinking    | Current Pi level | Reasoning used by fresh reviewer sessions                    |
 | Fixer model          | Current Pi model | Guarded implementation role                                  |
 | Fixer thinking       | Current Pi level | Reasoning used for repairs                                   |
@@ -183,11 +207,15 @@ Settings persist globally in `~/.pi/agent/review-loop.json` by default.
 
 `current model` and `current level` are dynamic references: they resolve from the outer Pi session at run start. Explicit model settings store only `provider/model-id`, never credentials. Unsupported reasoning levels are resolved safely against the chosen model.
 
+Settings schema version 2 introduced `reviewMode` and `reviewerCount`. Version 1 and pre-versioned files are migrated on load and written back as version 2. Older extension releases that only understand version 1 cannot consume a version 2 file; downgrade by moving `review-loop.json` aside and letting that release regenerate its defaults.
+
 Example persisted configuration:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
+  "reviewMode": "adversarial",
+  "reviewerCount": 4,
   "reviewerModel": {
     "provider": "xai",
     "modelId": "grok-4.5"
@@ -228,7 +256,11 @@ If no command is configured, a clean result means **review-clean**, not test-ver
 
 ## Models and isolation
 
-- Every reviewer pass gets a fresh in-memory session.
+- Every panel member gets a fresh in-memory session and specialized assignment.
+- Parallel reviewers inspect the same frozen fingerprint without seeing each other's output.
+- Reviewers do not receive `edit` or `write`, but they do receive unrestricted general Bash for inspection, tests, and Git history. Their prompt forbids mutations; the host rejects convergence if the target changes during review.
+- Reviewers inherit the outer session's active tools and normal user-level extensions, including FFF when installed. Project extensions remain disabled; `edit` and `write` are removed from the inherited active set.
+- All panel members currently use the configured reviewer model; role-specific reviewer models are not yet configurable.
 - The fixer is persistent by default so it can retain implementation context; `fresh` resets it each pass.
 - Child sessions do not recursively load project extensions.
 - Provider definitions and effective authentication are transferred from the already-resolved outer runtime.
@@ -238,6 +270,8 @@ If no command is configured, a clean result means **review-clean**, not test-ver
 This separation prevents a fixer from grading its own work and keeps the outer conversation/model unchanged.
 
 ## Safety guarantees
+
+Reviewer Bash and inherited user extensions run with the user's permissions. Reviewers are instructed to use Bash only for inspection, tests, and read-only Git history; Bash is not technically read-only. A target fingerprint change blocks convergence but cannot undo shell or extension side effects.
 
 The fixer can inspect and mutate files through guarded tools, but it has no generic shell. It cannot:
 
@@ -253,7 +287,7 @@ Additional invariants:
 - HEAD and active branch must remain frozen after target resolution.
 - Folder targets cannot mutate outside selected paths.
 - Paths resolving through symlinks into `.git` or outside the repository are rejected.
-- A read-only reviewer changing the target blocks the run.
+- A reviewer changing the target blocks the run.
 - Aborting preserves completed edits and reports that edits may remain.
 - Only one review loop runs per Pi session.
 
@@ -263,7 +297,7 @@ Review Loop improves confidence; it does not replace human review for security-c
 
 | Status      | Meaning                                                                                            |
 | ----------- | -------------------------------------------------------------------------------------------------- |
-| `clean`     | Required clean reviews and verification succeeded on an unchanged target                           |
+| `clean`     | The panel had no qualifying actionable findings and verification succeeded on an unchanged target  |
 | `blocked`   | A safety invariant, recurring issue, protocol problem, or verification bound prevented convergence |
 | `exhausted` | Maximum passes ended before fresh clean evidence was available                                     |
 | `aborted`   | User/session cancellation; completed edits were preserved                                          |
@@ -276,7 +310,7 @@ Expand the final custom message in Pi to inspect per-pass verdicts, finding ledg
 ### Security-focused review of local changes
 
 ```text
-/loop-review uncommitted --extra "Trace trust boundaries, authz decisions, secret handling, and failure modes"
+/loop-review uncommitted --mode security --extra "Trace trust boundaries, authz decisions, secret handling, and failure modes"
 ```
 
 ### Review a feature branch with stronger convergence
@@ -319,7 +353,7 @@ PR targets require no tracked, untracked, **or ignored** worktree entries. This 
 
 ### The loop is blocked after a fixer said “fixed”
 
-That is expected when no fresh reviewer has independently confirmed the finding disappeared, the finding recurred, or verification still fails.
+That is expected when no fresh reviewer panel has independently confirmed the finding disappeared, the finding recurred, or verification still fails.
 
 ### Verification was skipped for a PR
 
@@ -334,6 +368,7 @@ Open settings and choose an authenticated model currently visible to Pi, or swit
 - Commit repair supports only current `HEAD`.
 - Historical commit repair does not create temporary worktrees.
 - Project-local settings overrides are not implemented.
+- All parallel panel members currently share one configured reviewer model.
 - Interrupted runs are marked interrupted but cannot resume.
 - PR checkout is the one intentional branch switch and remains active after a completed run.
 

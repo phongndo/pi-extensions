@@ -3,7 +3,46 @@ import test from "node:test";
 import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { GitClient, type ExecGit, type StreamGit } from "../git.ts";
 import type { ReviewTargetSnapshot } from "../models.ts";
-import { formatDiffPage, ReviewTargetAccess } from "../reviewer.ts";
+import {
+  createReviewerPassCache,
+  formatDiffPage,
+  reviewerActiveTools,
+  ReviewTargetAccess,
+} from "../reviewer.ts";
+
+test("reviewers inherit active tools except edit and write", () => {
+  const tools = new Set(reviewerActiveTools(["fffind", "ffgrep", "custom", "edit", "write"]));
+  assert.ok(tools.has("bash"));
+  assert.ok(tools.has("fffind"));
+  assert.ok(tools.has("ffgrep"));
+  assert.ok(tools.has("custom"));
+  assert.equal(tools.has("edit"), false);
+  assert.equal(tools.has("write"), false);
+});
+
+test("reviewer pass cache shares successes and evicts rejected operations", async () => {
+  const cache = createReviewerPassCache();
+  let attempts = 0;
+  const failed = cache.get("status", async () => {
+    attempts += 1;
+    throw new Error("transient status failure");
+  });
+  assert.equal(
+    cache.get("status", async () => "unexpected"),
+    failed,
+  );
+  await assert.rejects(failed, /transient status failure/);
+
+  assert.equal(
+    await cache.get("status", async () => {
+      attempts += 1;
+      return "ready";
+    }),
+    "ready",
+  );
+  assert.equal(attempts, 2);
+  assert.equal(await cache.get("status", async () => "unexpected"), "ready");
+});
 
 test("diff continuation uses the lines that fit within the byte budget", () => {
   const lines = Array.from({ length: 100 }, (_, index) => `line-${index}-${"x".repeat(1_000)}`);

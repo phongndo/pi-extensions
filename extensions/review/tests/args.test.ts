@@ -51,26 +51,31 @@ test("parses all direct targets and settings alias", () => {
   assert.deepEqual(parseReviewLoopArgs("uncommitted"), {
     action: "run",
     target: { type: "uncommitted" },
+    reviewMode: undefined,
     extraInstruction: undefined,
   });
-  assert.deepEqual(parseReviewLoopArgs(`branch main --extra="security only"`), {
+  assert.deepEqual(parseReviewLoopArgs(`branch main --mode adversarial --extra="security only"`), {
     action: "run",
     target: { type: "baseBranch", branch: "main" },
+    reviewMode: "adversarial",
     extraInstruction: "security only",
   });
   assert.deepEqual(parseReviewLoopArgs("commit abc title words"), {
     action: "run",
     target: { type: "commit", sha: "abc", title: "title words" },
+    reviewMode: undefined,
     extraInstruction: undefined,
   });
   assert.deepEqual(parseReviewLoopArgs("pr 123"), {
     action: "run",
     target: { type: "pullRequest", reference: "123" },
+    reviewMode: undefined,
     extraInstruction: undefined,
   });
-  assert.deepEqual(parseReviewLoopArgs("folder src docs"), {
+  assert.deepEqual(parseReviewLoopArgs("folder src docs --mode=security"), {
     action: "run",
     target: { type: "folder", paths: ["src", "docs"] },
+    reviewMode: "security",
     extraInstruction: undefined,
   });
   assert.deepEqual(parseReviewLoopArgs("setting"), { action: "settings" });
@@ -84,6 +89,13 @@ test("rejects malformed arguments", () => {
   assert.throws(() => parseReviewLoopArgs("uncommitted --extra"), /Missing value/);
   assert.throws(() => parseReviewLoopArgs("wat"), /Unknown review target/);
   assert.throws(() => parseReviewLoopArgs("settings --extra x"), /does not accept/);
+  assert.throws(() => parseReviewLoopArgs("settings --mode adversarial"), /does not accept/);
+  assert.throws(() => parseReviewLoopArgs("uncommitted --mode"), /Missing value/);
+  assert.throws(() => parseReviewLoopArgs("uncommitted --mode hostile"), /Unknown review mode/);
+  assert.throws(
+    () => parseReviewLoopArgs("uncommitted --mode standard --mode security"),
+    /only once/,
+  );
 });
 
 test("offers target and settings completions", () => {

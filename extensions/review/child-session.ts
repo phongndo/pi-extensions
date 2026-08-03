@@ -91,9 +91,9 @@ export interface ChildSessionOptions {
 }
 
 /**
- * Create an in-memory role session. Review-loop role callers disable extensions so code from the
- * mutable target cannot execute; role-model providers have already been copied from the outer
- * runtime. Tests and other callers may opt into extension loading explicitly.
+ * Create an in-memory role session. Reviewers may inherit normal user extensions while keeping
+ * project trust disabled; fixers disable extensions. Role-model providers have already been copied
+ * from the outer runtime.
  */
 export async function createChildSession(options: ChildSessionOptions): Promise<AgentSession> {
   // Keep global and project documents separate so package/resource paths retain their normal
