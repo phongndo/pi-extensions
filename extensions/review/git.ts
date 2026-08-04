@@ -212,6 +212,7 @@ async function lstatIfPresent(path: string): Promise<Stats | undefined> {
 }
 
 const OTHER_FILE_LIST_MAX_BYTES = 16 * 1024 * 1024;
+const IGNORED_DESCENDANT_LIST_MAX_BYTES = 64 * 1024 * 1024;
 const DIFF_STAT_MAX_BYTES = 1024 * 1024;
 
 export async function cappedGitText(
@@ -241,11 +242,16 @@ async function otherFiles(
   ignored: boolean,
   maxFiles = Number.POSITIVE_INFINITY,
   collapseDirectories = false,
+  maxListingBytes = OTHER_FILE_LIST_MAX_BYTES,
+  excludedScopes?: readonly string[],
 ): Promise<string[]> {
   const args = ["-c", "core.quotePath=false", "ls-files", "--others"];
   if (ignored) args.push("--ignored");
   if (collapseDirectories) args.push("--directory", "--no-empty-directory");
   args.push("--exclude-standard", "-z");
+  if (excludedScopes?.length) {
+    args.push("--", ".", ...excludedScopes.map((scope) => `:(exclude,literal)${scope}`));
+  }
   const files: string[] = [];
   let pending = Buffer.alloc(0);
   let outputBytes = 0;
@@ -253,13 +259,18 @@ async function otherFiles(
     args,
     (chunk) => {
       outputBytes += chunk.length;
-      if (outputBytes > OTHER_FILE_LIST_MAX_BYTES) {
-        throw new Error("Git file listing exceeds its byte safety limit.");
+      if (outputBytes > maxListingBytes) {
+        throw new Error(
+          `Git file listing exceeds its ${maxListingBytes / (1024 * 1024)} MiB safety limit.`,
+        );
       }
       pending = Buffer.concat([pending, chunk]);
       let separator = pending.indexOf(0);
       while (separator >= 0) {
-        if (separator > 0) files.push(pending.subarray(0, separator).toString("utf8"));
+        if (separator > 0) {
+          const file = pending.subarray(0, separator).toString("utf8");
+          if (!excludedScopes || !pathIsInScope(file, excludedScopes)) files.push(file);
+        }
         if (files.length > maxFiles) {
           throw new Error(
             `${ignored ? "Ignored" : "Untracked"} file count exceeds its ${maxFiles}-file safety limit.`,
@@ -865,6 +876,7 @@ export async function targetFingerprint(
 
 export const REPOSITORY_FINGERPRINT_MAX_FILES = 20_000;
 export const REPOSITORY_FINGERPRINT_MAX_BYTES = 64 * 1024 * 1024;
+const IGNORED_FINGERPRINT_MAX_DESCENDANTS = REPOSITORY_FINGERPRINT_MAX_FILES;
 const IGNORED_FINGERPRINT_SAMPLE_BYTES = 64 * 1024;
 const IGNORED_FINGERPRINT_TOTAL_SAMPLE_BYTES = 4 * 1024 * 1024;
 
@@ -948,9 +960,17 @@ async function hashExtraWorktreeFiles(
     listUntrackedFiles(git, repositoryRoot, state.maxFiles),
     otherFiles(git, repositoryRoot, true, state.maxFiles, true),
     // Enumerate ignored descendants so an existing child's content cannot change behind an
-    // unchanged parent-directory timestamp. Count collapsed ignored trees against the file budget
-    // while the listing-byte and sampling-byte budgets bound their descendant traversal.
-    otherFiles(git, repositoryRoot, true),
+    // unchanged parent-directory timestamp. Count collapsed ignored trees against the configurable
+    // file budget, and separately cap retained descendants before fingerprinting them.
+    otherFiles(
+      git,
+      repositoryRoot,
+      true,
+      IGNORED_FINGERPRINT_MAX_DESCENDANTS,
+      false,
+      IGNORED_DESCENDANT_LIST_MAX_BYTES,
+      scopes,
+    ),
   ]);
   const countedFiles = new Set([
     ...untracked.filter((file) => !scopes || !pathIsInScope(file, scopes)),

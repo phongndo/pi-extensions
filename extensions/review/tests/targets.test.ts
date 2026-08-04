@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   GitClient,
   outsideScopeFingerprint,
+  REPOSITORY_FINGERPRINT_MAX_FILES,
   repositoryFingerprint,
   snapshotFingerprint,
   targetFingerprint,
@@ -303,6 +304,51 @@ test("repository fingerprints sample ignored files outside the tracked byte budg
   await writeFile(join(root, ".eslintcache"), Buffer.alloc(4_096, 1));
 
   await repositoryFingerprint(new GitClient(executor(), root), root, { maxBytes: 1 });
+});
+
+test("outside-scope fingerprints exclude selected ignored descendants before capping", async () => {
+  const root = await repository();
+  const suffix = ["a", "b", "c", "d", "e"].map((component) => component.repeat(200)).join("/");
+  const listing = Buffer.from(
+    Array.from(
+      { length: REPOSITORY_FINGERPRINT_MAX_FILES + 1 },
+      (_value, index) => `cache/${index}/${suffix}\0`,
+    ).join(""),
+  );
+  assert.ok(listing.length > 16 * 1024 * 1024);
+  let ignoredDescendantArgs: string[] = [];
+
+  const stream: StreamGit = async (args, _options, onStdout) => {
+    if (args.includes("--ignored") && !args.includes("--directory")) {
+      ignoredDescendantArgs = args;
+      onStdout(listing);
+    }
+    return { stdout: "", stderr: "", code: 0 };
+  };
+  const git = new GitClient(executor(), root, undefined, stream);
+
+  await assert.doesNotReject(outsideScopeFingerprint(git, root, ["cache"]));
+  assert.ok(ignoredDescendantArgs.includes(":(exclude,literal)cache"));
+});
+
+test("repository fingerprints cap distinct ignored descendants", async () => {
+  const root = await repository();
+  const suffix = ["a", "b", "c", "d", "e"].map((component) => component.repeat(170)).join("/");
+  const listing = Buffer.from(
+    Array.from(
+      { length: REPOSITORY_FINGERPRINT_MAX_FILES + 1 },
+      (_value, index) => `cache/${index}/${suffix}\0`,
+    ).join(""),
+  );
+  assert.ok(listing.length > 16 * 1024 * 1024);
+
+  const stream: StreamGit = async (args, _options, onStdout) => {
+    if (args.includes("--ignored") && !args.includes("--directory")) onStdout(listing);
+    return { stdout: "", stderr: "", code: 0 };
+  };
+  const git = new GitClient(executor(), root, undefined, stream);
+
+  await assert.rejects(repositoryFingerprint(git, root), /Ignored file count exceeds/);
 });
 
 test("repository fingerprints count ignored trees instead of their descendants", async () => {
