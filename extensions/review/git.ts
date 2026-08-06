@@ -949,6 +949,13 @@ async function hashGitDiff(
   assertDiffExitCode(result, [0]);
 }
 
+function isIgnoredFileCountLimitError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /^Ignored file count exceeds its \d+-file safety limit\.$/.test(error.message)
+  );
+}
+
 async function hashExtraWorktreeFiles(
   hash: ReturnType<typeof createHash>,
   git: GitClient,
@@ -956,13 +963,18 @@ async function hashExtraWorktreeFiles(
   state: FingerprintBudget,
   scopes?: readonly string[],
 ): Promise<void> {
-  const [untracked, ignoredRoots, ignored] = await Promise.all([
+  const [untracked, ignoredRoots] = await Promise.all([
     listUntrackedFiles(git, repositoryRoot, state.maxFiles),
     otherFiles(git, repositoryRoot, true, state.maxFiles, true),
-    // Enumerate ignored descendants so an existing child's content cannot change behind an
-    // unchanged parent-directory timestamp. Count collapsed ignored trees against the configurable
-    // file budget, and separately cap retained descendants before fingerprinting them.
-    otherFiles(
+  ]);
+
+  // Prefer full ignored descendants so content cannot change behind an unchanged parent-directory
+  // timestamp. Huge ignored trees (typical node_modules installs) fall back to collapsed roots
+  // instead of aborting the review loop.
+  let ignored: string[];
+  let ignoredMode: "descendants" | "collapsed" = "descendants";
+  try {
+    ignored = await otherFiles(
       git,
       repositoryRoot,
       true,
@@ -970,8 +982,14 @@ async function hashExtraWorktreeFiles(
       false,
       IGNORED_DESCENDANT_LIST_MAX_BYTES,
       scopes,
-    ),
-  ]);
+    );
+  } catch (error) {
+    if (!isIgnoredFileCountLimitError(error)) throw error;
+    ignored = ignoredRoots;
+    ignoredMode = "collapsed";
+  }
+
+  hash.update(`ignored-mode\0${ignoredMode}\0`);
   const countedFiles = new Set([
     ...untracked.filter((file) => !scopes || !pathIsInScope(file, scopes)),
     ...ignoredRoots.filter((file) => !scopes || !pathIsInScope(file, scopes)),

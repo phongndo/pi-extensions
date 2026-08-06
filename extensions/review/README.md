@@ -22,7 +22,7 @@ Start directly or open the target selector:
 /settings-review
 ```
 
-For an existing conversation, choose **Empty branch** to isolate the review or **Current session** to review inline. Review turns expose only repository-confined read/search tools plus a bounded, read-only Git target tool; mutation and shell tools are blocked. `/loop-review` is unavailable on an active empty review branch. Empty-branch reviews remain read-only until they are completed with:
+For an existing conversation, choose **Empty branch** to isolate the review or **Current session** to review inline. Interactive review keeps the session's normal tools and user extensions (including FFF/`fffind`/`ffgrep` when installed). An optional `review_target` helper can page status and diffs for the selected target. `/loop-review` is unavailable on an active empty review branch. Empty-branch reviews finish with:
 
 ```text
 /end-review
@@ -38,15 +38,15 @@ The `/review` selector also lets you add or remove session-persisted custom revi
 
 Reviewers never inherit a fixer's claims, fixer outcomes are treated as candidates until a later reviewer confirms the finding disappeared, and Git invariants prevent the target from moving underneath the loop.
 
-|                    |                                                                               |
-| ------------------ | ----------------------------------------------------------------------------- |
-| UI                 | Blocking TUI progress panel; `Esc` requests cancellation                      |
-| Default passes     | 4                                                                             |
-| Default clean runs | 1                                                                             |
-| Reviewer           | Fresh isolated `AgentSession` per panel member with inspection tools and Bash |
-| Fixer              | Guarded edit/write tools; persistent context by default                       |
-| Shell access       | Reviewer: general Bash; fixer: none; verification runs separately on host     |
-| Settings           | `~/.pi/agent/review-loop.json`                                                |
+|                    |                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| UI                 | Blocking TUI progress panel; `Esc` requests cancellation                                     |
+| Default passes     | 4                                                                                            |
+| Default clean runs | 1                                                                                            |
+| Reviewer           | Fresh isolated `AgentSession` per panel member; user extensions + tools minus `edit`/`write` |
+| Fixer              | Guarded edit/write tools; persistent context by default                                      |
+| Shell access       | Reviewer: general Bash + inherited tools; fixer: none; verification on host                  |
+| Settings           | `~/.pi/agent/review-loop.json`                                                               |
 
 ## Quick start
 
@@ -256,8 +256,8 @@ If no command is configured, a clean result means **review-clean**, not test-ver
 
 - Every panel member gets a fresh in-memory session and its review assignment.
 - Parallel reviewers inspect the same frozen fingerprint without seeing each other's output.
-- Reviewers do not receive `edit` or `write`, but they do receive unrestricted general Bash for inspection, tests, and Git history. Their prompt forbids mutations; the host rejects convergence if the target changes during review.
-- Reviewers inherit the outer session's active tools and normal user-level extensions, including FFF when installed. Project extensions remain disabled; `edit` and `write` are removed from the inherited active set.
+- Reviewers inherit the outer session's active tools and normal user-level extensions (including FFF when installed). Project extensions remain disabled.
+- Only `edit` and `write` are removed from the inherited active set. Reviewers still receive unrestricted general Bash for inspection, tests, and Git history. Their prompt forbids mutations; the host rejects convergence if the target changes during review.
 - All panel members currently use the configured reviewer model; role-specific reviewer models are not yet configurable.
 - The fixer is persistent by default so it can retain implementation context; `fresh` resets it each pass.
 - Child sessions do not recursively load project extensions.
@@ -288,6 +288,7 @@ Additional invariants:
 - A reviewer changing the target blocks the run.
 - Aborting preserves completed edits and reports that edits may remain.
 - Only one review loop runs per Pi session.
+- Repository fingerprints include ignored worktree files. When an ignored tree exceeds the descendant safety cap (for example a large `node_modules`), the host falls back to collapsed ignored directory roots instead of aborting.
 
 Review Loop improves confidence; it does not replace human review for security-critical or irreversible changes.
 

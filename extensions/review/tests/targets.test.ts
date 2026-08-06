@@ -331,7 +331,7 @@ test("outside-scope fingerprints exclude selected ignored descendants before cap
   assert.ok(ignoredDescendantArgs.includes(":(exclude,literal)cache"));
 });
 
-test("repository fingerprints cap distinct ignored descendants", async () => {
+test("repository fingerprints fall back to collapsed ignored roots past the descendant cap", async () => {
   const root = await repository();
   const suffix = ["a", "b", "c", "d", "e"].map((component) => component.repeat(170)).join("/");
   const listing = Buffer.from(
@@ -344,11 +344,14 @@ test("repository fingerprints cap distinct ignored descendants", async () => {
 
   const stream: StreamGit = async (args, _options, onStdout) => {
     if (args.includes("--ignored") && !args.includes("--directory")) onStdout(listing);
+    if (args.includes("--ignored") && args.includes("--directory"))
+      onStdout(Buffer.from("cache/\0"));
     return { stdout: "", stderr: "", code: 0 };
   };
   const git = new GitClient(executor(), root, undefined, stream);
 
-  await assert.rejects(repositoryFingerprint(git, root), /Ignored file count exceeds/);
+  // Oversized ignored trees must not abort the loop; collapsed roots remain fingerprintable.
+  await assert.doesNotReject(repositoryFingerprint(git, root));
 });
 
 test("repository fingerprints count ignored trees instead of their descendants", async () => {
