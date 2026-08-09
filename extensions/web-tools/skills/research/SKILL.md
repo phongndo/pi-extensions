@@ -64,7 +64,7 @@ Retain the returned `session_id`. The ledger is private, bounded, automatically 
 
 ### Native fast path
 
-When `web_research_state` is available, prefer it over temporary files and shell commands. Call `web_capabilities` with `research_state` first if the capability is configured but deferred. Then use:
+When `web_research_state` is available, prefer it over temporary files and shell commands. Call `tool_search` with the exact capability id `web.research_state` first if it is configured but deferred. Standalone Web Tools installs may expose `web_capabilities` with `research_state` as a fallback. Then use:
 
 - `action: "init"` with the initialization object serialized in `payload_json`
 - `action: "ingest"` with `session_id` and the round object in `payload_json`

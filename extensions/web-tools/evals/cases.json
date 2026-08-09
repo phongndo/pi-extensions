@@ -21,8 +21,8 @@
   {
     "id": "capability-load-academic",
     "prompt": "The academic web tools are configured but deferred. Load only the capability needed to find research papers.",
-    "expected_first_tool": "web_capabilities",
-    "allowed_tools": ["web_capabilities"],
+    "expected_first_tool": "tool_search",
+    "allowed_tools": ["tool_search"],
     "category": "efficiency",
     "max_tool_calls": 1
   },

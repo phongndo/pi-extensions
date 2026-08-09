@@ -84,11 +84,35 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  extensions/tool-search:
+    devDependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: 0.82.1
+        version: 0.82.1(ws@8.21.1)(zod@4.4.3)
+      '@types/node':
+        specifier: ^24.12.4
+        version: 24.13.3
+      oxfmt:
+        specifier: 0.61.0
+        version: 0.61.0
+      oxlint:
+        specifier: 1.76.0
+        version: 1.76.0
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   extensions/web-tools:
     dependencies:
       firecrawl:
         specifier: 4.30.1
         version: 4.30.1(debug@4.4.3)
+      pi-tool-search:
+        specifier: workspace:*
+        version: link:../tool-search
     devDependencies:
       '@earendil-works/pi-ai':
         specifier: 0.82.1
@@ -149,6 +173,9 @@ packages:
   '@aws-sdk/core@3.977.1':
     resolution: {integrity: sha512-KVtQRtc00ES/y+Sc3vYXeP6pCIcNlBJCZOwvqSy8ZpVGmbM5+IG+AfhuTKQ2oXmIVqZJewaGMMpzPkywC6xg0w==}
     engines: {node: '>=20.0.0'}
+    deprecated: |-
+      Deprecated due to Document number parsing bug in JSON, see
+        https://github.com/aws/aws-sdk-js-v3/issues/8246. Newer version available.
 
   '@aws-sdk/credential-provider-env@3.972.61':
     resolution: {integrity: sha512-qihs2ekMb89Nxd2JenCgVFhjbkb3EIo7HEBCBzyZACKVJdrLUZBLOmAE3xr0Sayml8n/jZSzwO/IufIiIzO7PQ==}

@@ -1,17 +1,18 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): faster Codex requests, bounded web research, independent review/fix loops, observable multi-agent procedures, and a safe PR-publishing prompt.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): faster Codex requests, deferred tool discovery, bounded web research, independent review/fix loops, observable multi-agent procedures, and a safe PR-publishing prompt.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled research skill, and prompt templates together.
 
 ## Extension suite
 
-| Extension                                     | Use it when…                                                                                              | Main entry point                | Side effects                                                               |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| [Fast Mode](extensions/fast-mode/README.md)   | You want eligible Codex requests to ask for priority service                                              | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
-| [Web Tools](extensions/web-tools/README.md)   | You need live search, page extraction, site mapping, browser work, or evidence-grounded research          | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
-| [Review](extensions/review/README.md)         | You want either an interactive review handoff or an independent review/fix loop that verifies convergence | `/review`, `/loop-review`       | `/review` may check out a PR; `/loop-review` may edit its target           |
-| [Procedures](extensions/procedures/README.md) | A task benefits from visible, code-driven multi-agent orchestration                                       | `/proc`, `/monitor`             | Depends on reviewed procedure source and declared child tools              |
+| Extension                                       | Use it when…                                                                                              | Main entry point                | Side effects                                                               |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
+| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                              | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
+| [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand            | `tool_search`, `/tool-search`   | Additively activates registered Pi tools                                   |
+| [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research          | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
+| [Review](extensions/review/README.md)           | You want either an interactive review handoff or an independent review/fix loop that verifies convergence | `/review`, `/loop-review`       | `/review` may check out a PR; `/loop-review` may edit its target           |
+| [Procedures](extensions/procedures/README.md)   | A task benefits from visible, code-driven multi-agent orchestration                                       | `/proc`, `/monitor`             | Depends on reviewed procedure source and declared child tools              |
 
 Also included: [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work.
 
@@ -61,7 +62,7 @@ Eligible `openai-codex` requests gain `service_tier: "priority"`; the built-in f
 /web-tools
 ```
 
-Add a Firecrawl key, inspect credits, choose context/cost limits, and decide which specialized capabilities can be activated. For a sourced research task:
+Add a Firecrawl key, inspect credits, choose context/cost limits, and decide which specialized capabilities can be activated. Deferred web capabilities register with the suite-level `tool_search` catalog under `web.*`. For a sourced research task:
 
 ```text
 /skill:research Compare the current migration guidance from the two primary vendors.
@@ -112,6 +113,7 @@ Generated procedures are ephemeral unless promoted explicitly with `/proc save`.
 | Need                                                                | Prefer                               | Why                                                                |
 | ------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
 | One known page                                                      | `web_fetch`                          | Smallest live-web operation                                        |
+| Missing specialized capability                                      | `tool_search`                        | Loads the smallest matching namespaced tool bundle additively      |
 | Unknown source                                                      | `web_search`, then selective fetches | Bounded discovery before extraction                                |
 | Rigorous multi-source report                                        | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations        |
 | One interactive review with a handoff                               | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes            |
@@ -132,6 +134,7 @@ Each stage has a different trust boundary: external evidence, controlled impleme
 | Command                      | Description                                                       |
 | ---------------------------- | ----------------------------------------------------------------- |
 | `/fast`                      | Toggle global Codex Fast Mode                                     |
+| `/tool-search`               | Show available namespaced deferred-tool capabilities              |
 | `/web-tools`                 | Open Firecrawl configuration                                      |
 | `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
 | `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
@@ -188,6 +191,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 ├── src/index.ts                    # Reserved workspace-wide extension entry point
 ├── extensions/
 │   ├── fast-mode/                  # /fast
+│   ├── tool-search/                # tool_search and capability registry
 │   ├── web-tools/                  # web_* tools and research skill
 │   ├── review/                     # /review, /end-review, /loop-review
 │   └── procedures/                 # /proc, /monitor, procedure_status
@@ -215,6 +219,7 @@ Common focused commands:
 ```bash
 pnpm check:root
 pnpm --filter pi-fast-mode check
+pnpm --filter pi-tool-search check
 pnpm --filter pi-web-tools check
 pnpm --filter pi-review check
 pnpm --filter pi-procedures check
@@ -252,6 +257,7 @@ hk run pre-commit
 ## Documentation map
 
 - [Fast Mode](extensions/fast-mode/README.md)
+- [Tool Search](extensions/tool-search/README.md)
 - [Web Tools](extensions/web-tools/README.md)
 - [Web Tools evaluations](extensions/web-tools/evals/README.md)
 - [Research skill](extensions/web-tools/skills/research/SKILL.md)

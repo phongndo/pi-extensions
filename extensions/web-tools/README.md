@@ -6,17 +6,17 @@ Web Tools gives Pi a deliberately small default surface (`web_search`, `web_fetc
 
 ## At a glance
 
-|                          |                                                          |
-| ------------------------ | -------------------------------------------------------- |
-| Configuration            | `/web-tools`                                             |
-| Status                   | `/web-tools status`                                      |
-| Research workflow        | `/skill:research <question>`                             |
-| Provider                 | Firecrawl                                                |
-| Default tools            | `web_search`, `web_fetch`, `web_map`, `web_capabilities` |
-| Default specialized mode | Deferred and additive                                    |
-| Config                   | `~/.pi/agent/web.json`                                   |
-| Telemetry                | `~/.pi/agent/web-telemetry.jsonl`                        |
-| API key                  | `FIRECRAWL_API_KEY` or macOS Keychain                    |
+|                          |                                                     |
+| ------------------------ | --------------------------------------------------- |
+| Configuration            | `/web-tools`                                        |
+| Status                   | `/web-tools status`                                 |
+| Research workflow        | `/skill:research <question>`                        |
+| Provider                 | Firecrawl                                           |
+| Default tools            | `web_search`, `web_fetch`, `web_map`, `tool_search` |
+| Default specialized mode | Deferred and additive                               |
+| Config                   | `~/.pi/agent/web.json`                              |
+| Telemetry                | `~/.pi/agent/web-telemetry.jsonl`                   |
+| API key                  | `FIRECRAWL_API_KEY` or macOS Keychain               |
 
 ## Quick start
 
@@ -65,21 +65,21 @@ The bundled skill adds an adaptive evidence ledger, source-quality checks, contr
 
 ## Routing: choose the smallest sufficient tool
 
-| Situation                                            | Tool/path                                          |
-| ---------------------------------------------------- | -------------------------------------------------- |
-| The exact URL is known                               | `web_fetch`                                        |
-| The source is unknown                                | `web_search`, then fetch 2–3 selected sources      |
-| The site is known but the page is not                | `web_map`, then selective `web_fetch`              |
-| Two to four independent queries are known upfront    | Load `multi_search` and use `web_search_many`      |
-| Five or more known URLs need extraction              | Enable/load `batch`, then use `web_batch_fetch`    |
-| Broad linked-page coverage of one site is required   | Enable/load `crawl` and use `web_crawl`            |
-| A page needs clicks or dynamic navigation            | Enable/load `interact` or `browser`                |
-| One page must become structured JSON                 | Enable/load `extract`                              |
-| A difficult local PDF/document needs OCR             | Enable/load `parse`                                |
-| The question needs scholarly literature              | Enable/load `academic`                             |
-| The question needs GitHub implementation history     | Enable/load `academic`, then `web_github_research` |
-| Deterministic tools cannot locate a complex answer   | Enable/load bounded `agent` as a last resort       |
-| A multi-source answer needs auditable evidence state | `/skill:research` and `research_state`             |
+| Situation                                            | Tool/path                                           |
+| ---------------------------------------------------- | --------------------------------------------------- |
+| The exact URL is known                               | `web_fetch`                                         |
+| The source is unknown                                | `web_search`, then fetch 2–3 selected sources       |
+| The site is known but the page is not                | `web_map`, then selective `web_fetch`               |
+| Two to four independent queries are known upfront    | Load `web.multi_search`, then use `web_search_many` |
+| Five or more known URLs need extraction              | Enable/load `web.batch`, then use `web_batch_fetch` |
+| Broad linked-page coverage of one site is required   | Enable/load `web.crawl`, then use `web_crawl`       |
+| A page needs clicks or dynamic navigation            | Load `web.interact` or `web.browser`                |
+| One page must become structured JSON                 | Load `web.extract`                                  |
+| A difficult local PDF/document needs OCR             | Load `web.parse`                                    |
+| The question needs scholarly literature              | Load `web.academic`                                 |
+| The question needs GitHub implementation history     | Load `web.academic`, then use `web_github_research` |
+| Deterministic tools cannot locate a complex answer   | Load bounded `web.agent` as a last resort           |
+| A multi-source answer needs auditable evidence state | `/skill:research` and `web.research_state`          |
 
 The extension intentionally does not expose a generic code executor over web tools. Predictable concurrency, deduplication, pagination, and shaping are automated; adaptive query reformulation and citation judgment remain visible model decisions.
 
@@ -108,34 +108,35 @@ For a small selected set, issue 2–4 independent calls together so Pi runs them
 
 Discovers and ranks URLs within one known site without scraping every page. Use it to locate a documentation page, policy, changelog, or section before fetching selected URLs.
 
-### `web_capabilities`
+### `tool_search`
 
-Loads configured specialized capability groups. Activation is additive for the current session, preserving prompt-cache efficiency and keeping irrelevant tool schemas out of model context.
+The suite-level Tool Search extension discovers namespaced capability bundles and activates their tools additively. Search by task or use an exact web capability ID:
 
 ```json
 {
-  "capabilities": ["multi_search", "batch"]
+  "query": "web.batch",
+  "limit": 1
 }
 ```
 
-A capability must first be enabled in `/web-tools` unless it is inherently tied to an enabled core function.
+A capability must first be enabled in `/web-tools` unless it is inherently tied to an enabled core function. A standalone Web Tools install without the Tool Search extension keeps `web_capabilities` as a compatibility loader.
 
 ## Specialized capabilities
 
-| Capability        | Exposed tools                                                                    | Purpose                                                                         |
-| ----------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `multi_search`    | `web_search_many`                                                                | Run 2–4 queries concurrently with fair facet coverage or Reciprocal Rank Fusion |
-| `search_feedback` | `web_search_feedback`                                                            | Rate a used/rejected search; first feedback may recover one search credit       |
-| `batch`           | `web_batch_fetch`                                                                | Start/status/page/cancel larger known-URL extraction jobs                       |
-| `crawl`           | `web_crawl`                                                                      | Bounded linked-page crawl with status and cursor pagination                     |
-| `interact`        | `web_interact`                                                                   | Act in browser state attached to a scrape or URL                                |
-| `extract`         | `web_extract`                                                                    | Extract one known page to a natural-language goal and optional JSON Schema      |
-| `browser`         | `web_browser`                                                                    | Open/execute/list/close standalone billed browser sessions                      |
-| `agent`           | `web_agent`                                                                      | Bounded autonomous Firecrawl research job for difficult discovery               |
-| `parse`           | `web_parse`                                                                      | Upload and parse/OCR one local document, up to 50 MB                            |
-| `monitor`         | `web_monitor`                                                                    | Read or mutate persistent scheduled monitors                                    |
-| `academic`        | `web_paper_search`, `web_paper_read`, `web_paper_related`, `web_github_research` | Scholarly and repository-history research                                       |
-| `research_state`  | `web_research_state`                                                             | Private evidence-ledger operations for the research skill                       |
+| Capability ID         | Exposed tools                                                                    | Purpose                                                                         |
+| --------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `web.multi_search`    | `web_search_many`                                                                | Run 2–4 queries concurrently with fair facet coverage or Reciprocal Rank Fusion |
+| `web.search_feedback` | `web_search_feedback`                                                            | Rate a used/rejected search; first feedback may recover one search credit       |
+| `web.batch`           | `web_batch_fetch`                                                                | Start/status/page/cancel larger known-URL extraction jobs                       |
+| `web.crawl`           | `web_crawl`                                                                      | Bounded linked-page crawl with status and cursor pagination                     |
+| `web.interact`        | `web_interact`                                                                   | Act in browser state attached to a scrape or URL                                |
+| `web.extract`         | `web_extract`                                                                    | Extract one known page to a natural-language goal and optional JSON Schema      |
+| `web.browser`         | `web_browser`                                                                    | Open/execute/list/close standalone billed browser sessions                      |
+| `web.agent`           | `web_agent`                                                                      | Bounded autonomous Firecrawl research job for difficult discovery               |
+| `web.parse`           | `web_parse`                                                                      | Upload and parse/OCR one local document, up to 50 MB                            |
+| `web.monitor`         | `web_monitor`                                                                    | Read or mutate persistent scheduled monitors                                    |
+| `web.academic`        | `web_paper_search`, `web_paper_read`, `web_paper_related`, `web_github_research` | Scholarly and repository-history research                                       |
+| `web.research_state`  | `web_research_state`                                                             | Private evidence-ledger operations for the research skill                       |
 
 When **Defer specialized tools** is off, enabled specialized tools are activated immediately. Deferred mode is recommended unless every turn needs the larger surface.
 
@@ -190,7 +191,7 @@ Run `/web-tools` in TUI mode to edit settings. The page opens immediately; Keych
 | Crawl pages       |          100 | Maximum pages accepted by one crawl                        |
 | Agent credits     |          100 | Maximum one autonomous job may request                     |
 | Session credits   |          200 | Budget-aware operation guard per Pi session                |
-| Specialized tools |     Deferred | Load only through `web_capabilities`                       |
+| Specialized tools |     Deferred | Load through suite-level `tool_search`                     |
 
 The TUI also controls maximum scrape formats, expensive JSON/enhanced-proxy features, and every capability group.
 
@@ -340,11 +341,11 @@ It rotates at 5 MB and records operation timing, result size, credits, and error
 
 ### Read a difficult PDF
 
-Try `web_fetch` with bounded PDF parsing first. If the document is local or needs stronger OCR, enable/load `parse`, approve the upload, and use `web_parse`.
+Try `web_fetch` with bounded PDF parsing first. If the document is local or needs stronger OCR, enable/load `web.parse`, approve the upload, and use `web_parse`.
 
 ### Investigate a regression in an open-source project
 
-Enable/load `academic`, then use `web_github_research` for issue/PR history and README evidence. Use ordinary `web_search` for release notes or external announcements.
+Enable/load `web.academic`, then use `web_github_research` for issue/PR history and README evidence. Use ordinary `web_search` for release notes or external announcements.
 
 ## Troubleshooting
 
@@ -354,7 +355,7 @@ Run `/web-tools key` or set `FIRECRAWL_API_KEY`, then use `/web-tools status` to
 
 ### A specialized tool is missing
 
-Enable its group in `/web-tools`, then ask the model to call `web_capabilities` with the capability name. Activation is additive; disabling a capability in config affects future application/reload behavior.
+Enable its group in `/web-tools`, then ask the model to call `tool_search` with the namespaced capability ID, such as `web.batch`. Activation is additive; disabling a capability in config affects future application/reload behavior. Standalone Web Tools installs without Tool Search use the `web_capabilities` fallback.
 
 ### `/web-tools` says TUI mode is required
 

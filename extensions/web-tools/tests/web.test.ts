@@ -12,10 +12,14 @@ import {
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, test } from "node:test";
 import Firecrawl from "firecrawl";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  discoverAndLoadExtensions,
+  type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   beginOperation,
@@ -42,6 +46,7 @@ import webExtension, {
   normalizeConfig,
   storeKeychainPassword,
 } from "../index.ts";
+import toolSearchExtension from "pi-tool-search";
 import { registerFirecrawlTools } from "../tools.ts";
 
 const execFileAsync = promisify(execFile);
@@ -1016,6 +1021,69 @@ test("specialized web tools are deferred and loaded additively", async () => {
   await tools
     .get("web_capabilities")
     .execute("test", { capabilities: ["multi_search"] });
+  assert(active.includes("web_search_many"));
+});
+
+test("loads after tool search before extension actions are initialized", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-web-loader-test-"));
+  temporaryPaths.add(directory);
+
+  const loaded = await discoverAndLoadExtensions(
+    [
+      fileURLToPath(new URL("../../tool-search/index.ts", import.meta.url)),
+      fileURLToPath(new URL("../index.ts", import.meta.url)),
+    ],
+    directory,
+    join(directory, "agent"),
+  );
+
+  assert.deepEqual(loaded.errors, []);
+  assert.equal(loaded.extensions.length, 2);
+  assert(loaded.extensions[1]?.tools.has("web_search"));
+});
+
+test("registers web capability bundles with global tool search", async () => {
+  const eventHandlers = new Map<string, Set<(data: unknown) => void>>();
+  const tools = new Map<string, any>();
+  const handlers = new Map<string, Array<() => unknown>>();
+  let active: string[] = [];
+  const pi = {
+    events: {
+      emit(channel: string, data: unknown) {
+        for (const handler of eventHandlers.get(channel) ?? []) handler(data);
+      },
+      on(channel: string, handler: (data: unknown) => void) {
+        const current = eventHandlers.get(channel) ?? new Set();
+        current.add(handler);
+        eventHandlers.set(channel, current);
+        return () => current.delete(handler);
+      },
+    },
+    registerCommand() {},
+    registerTool(tool: { name: string }) {
+      tools.set(tool.name, tool);
+      active = [...new Set([...active, tool.name])];
+    },
+    on(name: string, handler: () => unknown) {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+    },
+    getAllTools: () => [...tools.values()],
+    getActiveTools: () => [...active],
+    setActiveTools(names: string[]) {
+      active = [...names];
+    },
+  } as unknown as ExtensionAPI;
+  toolSearchExtension(pi);
+  webExtension(pi);
+  for (const handler of handlers.get("session_start") ?? []) await handler();
+
+  assert(active.includes("tool_search"));
+  assert(!active.includes("web_capabilities"));
+  assert(!active.includes("web_search_many"));
+  const result = await tools
+    .get("tool_search")
+    .execute("test", { query: "web.multi_search", limit: 1 });
+  assert.deepEqual(result.details.added, ["web_search_many"]);
   assert(active.includes("web_search_many"));
 });
 
