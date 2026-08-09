@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "pnpm run check:root && pnpm --filter pi-fast-mode check && pnpm --filter pi-tool-search check && pnpm --filter pi-web-tools check && pnpm --filter pi-review check && pnpm --filter pi-procedures check",
+    "check": "pnpm run check:root && pnpm --filter pi-ask check && pnpm --filter pi-fast-mode check && pnpm --filter pi-tool-search check && pnpm --filter pi-web-tools check && pnpm --filter pi-review check && pnpm --filter pi-procedures check",
     "check:root": "pnpm run format:check && pnpm run lint && pnpm run typecheck",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
@@ -34,6 +34,7 @@
   "pi": {
     "extensions": [
       "./src/index.ts",
+      "./extensions/ask/index.ts",
       "./extensions/fast-mode/index.ts",
       "./extensions/tool-search/index.ts",
       "./extensions/web-tools/index.ts",
