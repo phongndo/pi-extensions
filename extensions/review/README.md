@@ -22,7 +22,7 @@ Start directly or open the target selector:
 /settings-review
 ```
 
-For an existing conversation, choose **Empty branch** to isolate the review or **Current session** to review inline. Interactive review keeps the session's normal tools and user extensions (including FFF/`fffind`/`ffgrep` when installed). An optional `review_target` helper can page status and diffs for the selected target. `/loop-review` is unavailable on an active empty review branch. Empty-branch reviews finish with:
+For an existing conversation, choose **Empty branch** to isolate the review or **Current session** to review inline. Interactive review trusts the agent's normal tools and user extensions—including Git through Bash and FFF/`fffind`/`ffgrep` when installed—and does not add a review-specific tool to the main agent. `/loop-review` is unavailable on an active empty review branch. Empty-branch reviews finish with:
 
 ```text
 /end-review
@@ -378,7 +378,7 @@ pnpm --filter pi-review check
 pnpm --filter pi-review format
 ```
 
-After local changes, run `/reload` in Pi. Tests cover argument parsing, target safety, symlink/Git-metadata confinement, model resolution, reviewer pagination/protocols, fixer restrictions, verification cancellation, convergence, and custom rendering.
+After local changes, run `/reload` in Pi. Tests cover argument parsing, target safety, symlink/Git-metadata confinement, model resolution, reviewer prompting/protocols, fixer restrictions, verification cancellation, convergence, and custom rendering.
 
 ## Attribution
 

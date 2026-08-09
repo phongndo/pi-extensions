@@ -160,13 +160,10 @@ grep
 find
 ls
 bash
-review_target
 submit_review
 ```
 
-Remove `edit` and `write` from the inherited active set. General Bash is intentionally available, while the reviewer prompt forbids target and Git-state mutations. Load normal user-level extensions, including FFF when configured, but never trust project extensions.
-`review_target` should provide bounded, paginated access to status, changed
-files, diff stats, and diffs using host-controlled Git commands.
+Remove `edit` and `write` from the inherited active set. General Bash is intentionally available, while the reviewer prompt forbids target and Git-state mutations. Load normal user-level extensions, including FFF when configured, but never trust project extensions. Put the frozen target descriptor and host-derived changed-path inventory directly in the reviewer prompt, and let reviewers inspect with normal Bash, read, and search tools.
 
 ### Fixer
 
@@ -502,7 +499,7 @@ Exit criteria:
 - Adapt target parsing, smart defaults, branch/commit selectors, PR handling,
   project guideline discovery, and rubric from `pi-review`, with attribution.
 - Freeze target snapshots and implement Git invariants.
-- Implement bounded `review_target` operations and changed-line maps.
+- Put frozen target metadata and changed paths in reviewer prompts, and implement changed-line maps for host validation.
 
 Exit criteria:
 
