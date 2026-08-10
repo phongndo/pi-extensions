@@ -100,7 +100,7 @@ Custom extension footers are not modified. The decorator reuses space already re
 
 ## Child sessions and other extensions
 
-Fast Mode decorates both provider lookup and the active model runtime. This matters for extensions such as Procedures and Review Loop, which create isolated `AgentSession`s and may transfer provider authentication into child runtimes. Eligible Codex requests made through those runtimes inherit the global Fast Mode policy without recursively loading this extension.
+Fast Mode decorates both provider lookup and the active model runtime. This matters for Review Loop, which creates isolated `AgentSession`s and may transfer provider authentication into child runtimes. Eligible Codex requests made through those runtimes inherit the global Fast Mode policy without recursively loading this extension.
 
 ## Failure behavior
 

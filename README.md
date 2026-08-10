@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, independent review/fix loops, observable multi-agent procedures, and a safe PR-publishing prompt.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, independent review/fix loops, and a safe PR-publishing prompt.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled research skill, and prompt templates together.
 
@@ -13,7 +13,6 @@ The workspace is one Pi package, so installation exposes every extension, the bu
 | [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand            | `tool_search`, `/tool-search`   | Additively activates registered Pi tools                                   |
 | [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research          | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
 | [Review](extensions/review/README.md)           | You want either an interactive review handoff or an independent review/fix loop that verifies convergence | `/review`, `/loop-review`       | `/review` may check out a PR; `/loop-review` may edit its target           |
-| [Procedures](extensions/procedures/README.md)   | A task benefits from visible, code-driven multi-agent orchestration                                       | `/proc`, `/monitor`             | Depends on reviewed procedure source and declared child tools              |
 
 The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 
@@ -89,21 +88,7 @@ For automatic repair and independent convergence checking, use the bounded loop.
 
 The loop uses a fresh reviewer each pass, a guarded fixer, and optional deterministic verification.
 
-### 4. Generate an observable workflow
-
-```text
-/proc Inspect this service, propose the smallest safe implementation, ask before editing, implement it, and verify the focused tests.
-```
-
-Review the generated JavaScript body and its declared child-agent tools. It then runs autonomously in the background; inspect it only when needed:
-
-```text
-/monitor
-```
-
-Generated procedures are ephemeral unless promoted explicitly with `/proc save`.
-
-### 5. Publish finished work
+### 4. Publish finished work
 
 ```text
 /yeet
@@ -113,25 +98,24 @@ Generated procedures are ephemeral unless promoted explicitly with `/proc save`.
 
 ## Choosing the right primitive
 
-| Need                                                                | Prefer                               | Why                                                                |
-| ------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
-| Material ambiguity during an active run                             | `question`                           | Pauses in place and resumes with a compact answer map              |
-| One known page                                                      | `web_fetch`                          | Smallest live-web operation                                        |
-| Missing specialized capability                                      | `tool_search`                        | Loads the smallest matching namespaced tool bundle additively      |
-| Unknown source                                                      | `web_search`, then selective fetches | Bounded discovery before extraction                                |
-| Rigorous multi-source report                                        | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations        |
-| One interactive review with a handoff                               | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes            |
-| Independent review, repair, and convergence                         | `/loop-review`                       | Purpose-built convergence and Git safety                           |
-| Custom fan-out/fan-in, optional checkpoints, or role specialization | `/proc`                              | Ordinary JavaScript owns control flow; `/monitor` exposes progress |
-| Finished changes ready for GitHub                                   | `/yeet`                              | Repo-native verification and PR-template workflow                  |
+| Need                                        | Prefer                               | Why                                                           |
+| ------------------------------------------- | ------------------------------------ | ------------------------------------------------------------- |
+| Material ambiguity during an active run     | `question`                           | Pauses in place and resumes with a compact answer map         |
+| One known page                              | `web_fetch`                          | Smallest live-web operation                                   |
+| Missing specialized capability              | `tool_search`                        | Loads the smallest matching namespaced tool bundle additively |
+| Unknown source                              | `web_search`, then selective fetches | Bounded discovery before extraction                           |
+| Rigorous multi-source report                | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations   |
+| One interactive review with a handoff       | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes       |
+| Independent review, repair, and convergence | `/loop-review`                       | Purpose-built convergence and Git safety                      |
+| Finished changes ready for GitHub           | `/yeet`                              | Repo-native verification and PR-template workflow             |
 
 A useful sequence for larger changes is:
 
 ```text
-research → procedure → review loop → yeet
+research → review loop → yeet
 ```
 
-Each stage has a different trust boundary: external evidence, controlled implementation, independent verification, then publication.
+Each stage has a different trust boundary: external evidence, independent verification, then publication.
 
 ## Command reference
 
@@ -146,14 +130,6 @@ Each stage has a different trust boundary: external evidence, controlled impleme
 | `/settings-review`           | Configure Review Loop mode, models, and convergence               |
 | `/end-review`                | Return from an isolated review, optionally summarize or fix       |
 | `/loop-review [target]`      | Run standard or parallel specialized review/fix loops             |
-| `/proc <goal>`               | Generate, review, and launch an ephemeral procedure               |
-| `/proc run <name> [goal]`    | Run a saved procedure                                             |
-| `/proc save <run-id> [name]` | Promote an ephemeral run to `.pi/procedures/`                     |
-| `/proc pause <run-id>`       | Pause new task scheduling                                         |
-| `/proc resume <run-id>`      | Resume a paused run                                               |
-| `/proc stop <run-id>`        | Stop an active run                                                |
-| `/proc restart <run-id>`     | Start a terminal run again                                        |
-| `/monitor [run-id]`          | Inspect and control procedure runs                                |
 | `/yeet [instructions]`       | Publish appropriate work as one ready PR                          |
 
 See each extension README for complete syntax, safety constraints, and troubleshooting.
@@ -162,18 +138,16 @@ See each extension README for complete syntax, safety constraints, and troublesh
 
 Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature             | Location                                     | Contains                                                            |
-| ------------------- | -------------------------------------------- | ------------------------------------------------------------------- |
-| Fast Mode           | `~/.pi/agent/fast-mode.json`                 | Global on/off state                                                 |
-| Web Tools           | `~/.pi/agent/web.json`                       | Tool toggles, context limits, and credit guards                     |
-| Firecrawl key       | macOS Keychain or `FIRECRAWL_API_KEY`        | API credential; environment takes precedence                        |
-| Web telemetry       | `~/.pi/agent/web-telemetry.jsonl`            | Rotating privacy-safe operation metrics and input fingerprints      |
-| Interactive review  | Current Pi session                           | Review-branch origin and custom instructions                        |
-| Review loop         | `~/.pi/agent/review-loop.json`               | Role model references, reasoning, convergence, verification command |
-| Procedure run store | `~/.pi/agent/procedure-runs/<project-hash>/` | Run snapshots and ephemeral generated source                        |
-| Saved procedures    | `<project>/.pi/procedures/`                  | Explicitly promoted manifests and JavaScript source                 |
+| Feature            | Location                              | Contains                                                            |
+| ------------------ | ------------------------------------- | ------------------------------------------------------------------- |
+| Fast Mode          | `~/.pi/agent/fast-mode.json`          | Global on/off state                                                 |
+| Web Tools          | `~/.pi/agent/web.json`                | Tool toggles, context limits, and credit guards                     |
+| Firecrawl key      | macOS Keychain or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                        |
+| Web telemetry      | `~/.pi/agent/web-telemetry.jsonl`     | Rotating privacy-safe operation metrics and input fingerprints      |
+| Interactive review | Current Pi session                    | Review-branch origin and custom instructions                        |
+| Review loop        | `~/.pi/agent/review-loop.json`        | Role model references, reasoning, convergence, verification command |
 
-Credentials are not written into Review Loop settings or procedure definitions.
+Provider credentials are not written into Review Loop settings.
 
 ## Security model
 
@@ -183,7 +157,6 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
 - `/review pr` checks out a GitHub PR locally; `/loop-review` gives trusted reviewer models the user's active tools and general Bash while keeping fixer mutations guarded.
-- Procedures isolate orchestration code in a bounded worker/VM, but source-declared child agents can edit files or run shell commands. Source review is the launch safety boundary.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 
 Read the extension-specific safety section before enabling mutating or billed capabilities.
@@ -198,8 +171,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── fast-mode/                  # /fast
 │   ├── tool-search/                # tool_search and capability registry
 │   ├── web-tools/                  # web_* tools and research skill
-│   ├── review/                     # /review, /end-review, /loop-review
-│   └── procedures/                 # /proc, /monitor, procedure_status
+│   └── review/                     # /review, /end-review, /loop-review
 ├── prompt/yeet.md                  # /yeet prompt template
 ├── package.json                    # root Pi package manifest
 └── pnpm-workspace.yaml             # extension workspace packages
@@ -228,7 +200,6 @@ pnpm --filter pi-fast-mode check
 pnpm --filter pi-tool-search check
 pnpm --filter pi-web-tools check
 pnpm --filter pi-review check
-pnpm --filter pi-procedures check
 pnpm format
 pnpm lint
 pnpm lint:fix
@@ -270,8 +241,4 @@ hk run pre-commit
 - [Research skill](extensions/web-tools/skills/research/SKILL.md)
 - [Review](extensions/review/README.md)
 - [Review Loop design plan](extensions/review/PLAN.md)
-- [Procedures](extensions/procedures/README.md)
-- [Procedure authoring guide](extensions/procedures/AUTHORING.md)
-- [Procedure research/design rationale](extensions/procedures/RESEARCH.md)
-- [Procedure manual QA](extensions/procedures/QA.md)
 - [`/yeet` prompt](prompt/yeet.md)
