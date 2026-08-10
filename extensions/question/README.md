@@ -13,6 +13,7 @@ A small, native interactive clarification tool for Pi. The model can call `quest
 - Adds “None of the above” as the final option; its note can stand alone as the answer.
 - Lets notes supplement any selected option and wraps them below the option list without extra indentation or another pane.
 - Shows no empty circle markers; marked answers receive a trailing `✓`.
+- Expands the option-label column to avoid cutting readable choices off at the native 32-column default.
 - Uses a compact native chat editor without the stock shortcut footer.
 - Supports `j`/`k` option navigation and `h`/`l` or left/right question-layer navigation.
 - Uses Ctrl+P/Ctrl+N to switch question layers while editing free text or notes.

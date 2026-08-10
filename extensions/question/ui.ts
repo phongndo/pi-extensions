@@ -19,6 +19,8 @@ import {
 } from "@earendil-works/pi-tui";
 
 const NUMBER_SHORTCUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+const MIN_OPTION_COLUMN_WIDTH = 32;
+const MAX_OPTION_COLUMN_WIDTH = 90;
 export const OTHER_CHOICE = "None of the above";
 const OTHER_DESCRIPTION = "Optionally, add details in notes (tab).";
 const MAX_CUSTOM_ANSWER_LENGTH = 4_000;
@@ -71,7 +73,10 @@ export class NumberedSelectList extends SelectList {
     const numberedItems = items.map((item, index) =>
       index < count ? { ...item, label: `${index + 1}. ${item.label}` } : item,
     );
-    super(numberedItems, maxVisible, theme);
+    super(numberedItems, maxVisible, theme, {
+      minPrimaryColumnWidth: MIN_OPTION_COLUMN_WIDTH,
+      maxPrimaryColumnWidth: MAX_OPTION_COLUMN_WIDTH,
+    });
     this.shortcutItems = numberedItems.slice(0, count);
   }
 

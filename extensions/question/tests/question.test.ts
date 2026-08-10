@@ -91,6 +91,26 @@ test("number keys immediately select the matching native list item", () => {
   assert.equal(selected, "second");
 });
 
+test("uses available width instead of cutting option labels off at 32 columns", () => {
+  const plain = (text: string) => text;
+  const label = "Improve the existing multi-select user interface";
+  const list = new NumberedSelectList(
+    [{ value: "improve", label, description: "Keep the current schema" }],
+    1,
+    {
+      selectedPrefix: plain,
+      selectedText: plain,
+      description: plain,
+      scrollInfo: plain,
+      noMatch: plain,
+    },
+  );
+
+  const rendered = list.render(120).join("\n");
+  assert.match(rendered, new RegExp(label));
+  assert.match(rendered, /Keep the current schema/);
+});
+
 test("j/k and tab/shift-tab navigate the option list", () => {
   const plain = (text: string) => text;
   const list = new NumberedSelectList(
