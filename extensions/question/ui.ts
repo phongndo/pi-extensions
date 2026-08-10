@@ -25,19 +25,19 @@ const MAX_CUSTOM_ANSWER_LENGTH = 4_000;
 
 type Theme = ExtensionContext["ui"]["theme"];
 
-export interface AskChoice {
+export interface QuestionChoice {
   label: string;
   description?: string;
 }
 
-export interface AskDialogQuestion {
+export interface DialogQuestion {
   id: string;
   question: string;
-  options: AskChoice[];
+  options: QuestionChoice[];
   multiple: boolean;
 }
 
-export type AskDialogAnswers = Record<string, string[]>;
+export type DialogAnswers = Record<string, string[]>;
 
 interface QuestionState {
   editor: Editor;
@@ -95,13 +95,13 @@ export class NumberedSelectList extends SelectList {
 }
 
 /** A single layered dialog following Codex's request-user-input interaction model. */
-export class AskDialog extends Container implements Focusable {
+export class QuestionDialog extends Container implements Focusable {
   private readonly tui: TUI;
   private readonly keybindings: KeybindingsManager;
   private readonly theme: Theme;
-  private readonly questions: AskDialogQuestion[];
+  private readonly questions: DialogQuestion[];
   private readonly states: QuestionState[];
-  private readonly done: (answers: AskDialogAnswers | undefined) => void;
+  private readonly done: (answers: DialogAnswers | undefined) => void;
   private readonly notify: (message: string) => void;
   private readonly signal: AbortSignal | undefined;
   private readonly onAbort: () => void;
@@ -123,10 +123,10 @@ export class AskDialog extends Container implements Focusable {
     tui: TUI,
     keybindings: KeybindingsManager,
     theme: Theme,
-    questions: AskDialogQuestion[],
+    questions: DialogQuestion[],
     signal: AbortSignal | undefined,
     notify: (message: string) => void,
-    done: (answers: AskDialogAnswers | undefined) => void,
+    done: (answers: DialogAnswers | undefined) => void,
   ) {
     super();
     this.tui = tui;
@@ -159,7 +159,7 @@ export class AskDialog extends Container implements Focusable {
     this.syncEditorFocus();
   }
 
-  private currentQuestion(): AskDialogQuestion {
+  private currentQuestion(): DialogQuestion {
     return this.questions[this.currentIndex]!;
   }
 
@@ -190,7 +190,7 @@ export class AskDialog extends Container implements Focusable {
     );
   }
 
-  private listChoices(index: number): AskChoice[] {
+  private listChoices(index: number): QuestionChoice[] {
     const question = this.questions[index]!;
     const state = this.states[index]!;
     const choices = question.options.map((option) => {
@@ -361,8 +361,8 @@ export class AskDialog extends Container implements Focusable {
     this.requestRender();
   }
 
-  private collectAnswers(): AskDialogAnswers {
-    const answers: AskDialogAnswers = {};
+  private collectAnswers(): DialogAnswers {
+    const answers: DialogAnswers = {};
     for (const [index, question] of this.questions.entries()) {
       const state = this.states[index]!;
       if (question.options.length === 0) {
@@ -386,7 +386,7 @@ export class AskDialog extends Container implements Focusable {
     return answers;
   }
 
-  private finish(value: AskDialogAnswers | undefined): void {
+  private finish(value: DialogAnswers | undefined): void {
     if (this.settled) return;
     this.settled = true;
     this.done(value);
@@ -517,7 +517,7 @@ function dialogOptions(signal: AbortSignal | undefined): { signal: AbortSignal }
 }
 
 /** Non-TUI fallback used by Pi's RPC extension UI protocol. */
-export async function showAskEditor(
+export async function showQuestionEditor(
   ctx: ExtensionContext,
   title: string,
   signal: AbortSignal | undefined,
@@ -527,10 +527,10 @@ export async function showAskEditor(
 }
 
 /** Non-TUI fallback used by Pi's RPC extension UI protocol. */
-export async function selectAskChoice(
+export async function selectQuestionChoice(
   ctx: ExtensionContext,
   title: string,
-  choices: AskChoice[],
+  choices: QuestionChoice[],
   signal: AbortSignal | undefined,
 ): Promise<number | undefined> {
   if (signal?.aborted) return undefined;
@@ -542,15 +542,15 @@ export async function selectAskChoice(
   return selected === undefined ? undefined : displayed.indexOf(selected);
 }
 
-export async function showAskDialog(
+export async function showQuestionDialog(
   ctx: ExtensionContext,
-  questions: AskDialogQuestion[],
+  questions: DialogQuestion[],
   signal: AbortSignal | undefined,
-): Promise<AskDialogAnswers | undefined> {
+): Promise<DialogAnswers | undefined> {
   if (signal?.aborted) return undefined;
-  return ctx.ui.custom<AskDialogAnswers | undefined>(
+  return ctx.ui.custom<DialogAnswers | undefined>(
     (tui, theme, keybindings, done) =>
-      new AskDialog(
+      new QuestionDialog(
         tui,
         keybindings,
         theme,

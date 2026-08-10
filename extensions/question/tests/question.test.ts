@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import askExtension, { normalizeQuestions } from "../index.ts";
-import { AskDialog, NumberedSelectList, type AskDialogAnswers } from "../ui.ts";
+import questionExtension, { normalizeQuestions } from "../index.ts";
+import { NumberedSelectList, QuestionDialog, type DialogAnswers } from "../ui.ts";
 
 function createHarness() {
   const tools = new Map<string, any>();
@@ -13,8 +13,8 @@ function createHarness() {
       tools.set(tool.name, tool);
     },
   } as unknown as ExtensionAPI;
-  askExtension(pi);
-  return { tool: tools.get("ask") };
+  questionExtension(pi);
+  return { tool: tools.get("question") };
 }
 
 function createContext(input: {
@@ -42,12 +42,14 @@ function createContext(input: {
   } as unknown as ExtensionContext;
 }
 
-test("registers a compact sequential ask tool", () => {
+test("registers a compact sequential question tool", () => {
   const { tool } = createHarness();
-  assert.equal(tool.name, "ask");
-  assert.equal(tool.label, "ask");
+  assert.equal(tool.name, "question");
+  assert.equal(tool.label, "question");
   assert.equal(tool.executionMode, "sequential");
-  assert.equal(tool.promptGuidelines, undefined);
+  assert.deepEqual(tool.promptGuidelines, [
+    "Use the question tool proactively whenever you need clarification about the user's intent, scope, preferences, constraints, or tradeoffs; prefer one brief question over guessing at a consequential assumption. Do not use question for information discoverable with available tools or for trivial, low-impact choices. Batch related questions in one call.",
+  ]);
   assert.match(tool.description, /batch related questions/);
 });
 
@@ -57,11 +59,12 @@ test("keeps the provider-visible tool contract cache-stable", () => {
     name: tool.name,
     description: tool.description,
     promptSnippet: tool.promptSnippet,
+    promptGuidelines: tool.promptGuidelines,
     parameters: tool.parameters,
     executionMode: tool.executionMode,
   };
   const fingerprint = createHash("sha256").update(JSON.stringify(contract)).digest("hex");
-  assert.equal(fingerprint, "d873b791d8ff9c00ea119954b62cd07d62760670e15f51b0ce63963ad032c0aa");
+  assert.equal(fingerprint, "2bf4f78e8243becca421c3cca08df8f0ab3a28d826c06e27b23919552092aa86");
 });
 
 test("number keys immediately select the matching native list item", () => {
@@ -116,7 +119,7 @@ test("j/k and tab/shift-tab navigate the option list", () => {
 });
 
 test("matches Codex's layered option-and-notes flow", () => {
-  let result: AskDialogAnswers | undefined;
+  let result: DialogAnswers | undefined;
   const tui = { terminal: { rows: 40 }, requestRender() {} };
   const keybindings = {
     matches(data: string, binding: string) {
@@ -127,7 +130,7 @@ test("matches Codex's layered option-and-notes flow", () => {
     fg: (_role: string, text: string) => text,
     bold: (text: string) => text,
   };
-  const dialog = new AskDialog(
+  const dialog = new QuestionDialog(
     tui as any,
     keybindings as any,
     theme as any,
@@ -181,8 +184,8 @@ test("matches Codex's layered option-and-notes flow", () => {
     second: ["Gamma"],
   });
 
-  let noteOnlyResult: AskDialogAnswers | undefined;
-  const noteOnlyDialog = new AskDialog(
+  let noteOnlyResult: DialogAnswers | undefined;
+  const noteOnlyDialog = new QuestionDialog(
     tui as any,
     keybindings as any,
     theme as any,

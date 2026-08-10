@@ -8,14 +8,14 @@ The workspace is one Pi package, so installation exposes every extension, the bu
 
 | Extension                                       | Use it when…                                                                                              | Main entry point                | Side effects                                                               |
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| [Ask](extensions/ask/README.md)                 | The agent needs a material clarification without ending its current run                                   | `ask`                           | Pauses the active tool call until the user answers or cancels              |
+| [Question](extensions/question/README.md)       | The agent needs a material clarification without ending its current run                                   | `question`                      | Pauses the active tool call until the user answers or cancels              |
 | [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                              | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
 | [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand            | `tool_search`, `/tool-search`   | Additively activates registered Pi tools                                   |
 | [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research          | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
 | [Review](extensions/review/README.md)           | You want either an interactive review handoff or an independent review/fix loop that verifies convergence | `/review`, `/loop-review`       | `/review` may check out a PR; `/loop-review` may edit its target           |
 | [Procedures](extensions/procedures/README.md)   | A task benefits from visible, code-driven multi-agent orchestration                                       | `/proc`, `/monitor`             | Depends on reviewed procedure source and declared child tools              |
 
-The `ask` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
+The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 
 Also included: [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work.
 
@@ -115,7 +115,7 @@ Generated procedures are ephemeral unless promoted explicitly with `/proc save`.
 
 | Need                                                                | Prefer                               | Why                                                                |
 | ------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
-| Material ambiguity during an active run                             | `ask`                                | Pauses in place and resumes with a compact answer map              |
+| Material ambiguity during an active run                             | `question`                           | Pauses in place and resumes with a compact answer map              |
 | One known page                                                      | `web_fetch`                          | Smallest live-web operation                                        |
 | Missing specialized capability                                      | `tool_search`                        | Loads the smallest matching namespaced tool bundle additively      |
 | Unknown source                                                      | `web_search`, then selective fetches | Bounded discovery before extraction                                |
@@ -194,7 +194,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 .
 ├── src/index.ts                    # Reserved workspace-wide extension entry point
 ├── extensions/
-│   ├── ask/                        # ask
+│   ├── question/                   # question
 │   ├── fast-mode/                  # /fast
 │   ├── tool-search/                # tool_search and capability registry
 │   ├── web-tools/                  # web_* tools and research skill
@@ -223,7 +223,7 @@ Common focused commands:
 
 ```bash
 pnpm check:root
-pnpm --filter pi-ask check
+pnpm --filter pi-question check
 pnpm --filter pi-fast-mode check
 pnpm --filter pi-tool-search check
 pnpm --filter pi-web-tools check
@@ -262,7 +262,7 @@ hk run pre-commit
 
 ## Documentation map
 
-- [Ask](extensions/ask/README.md)
+- [Question](extensions/question/README.md)
 - [Fast Mode](extensions/fast-mode/README.md)
 - [Tool Search](extensions/tool-search/README.md)
 - [Web Tools](extensions/web-tools/README.md)

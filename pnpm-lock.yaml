@@ -36,7 +36,7 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
 
-  extensions/ask:
+  extensions/question:
     devDependencies:
       '@earendil-works/pi-coding-agent':
         specifier: 0.82.1

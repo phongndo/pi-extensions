@@ -1,12 +1,12 @@
 {
-  "name": "pi-ask",
+  "name": "pi-question",
   "version": "0.1.0",
   "private": true,
   "description": "Native interactive clarification tool for Pi",
   "keywords": [
-    "ask",
     "pi-extension",
     "pi-package",
+    "question",
     "user-input"
   ],
   "type": "module",

@@ -3,10 +3,10 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import {
   OTHER_CHOICE,
-  selectAskChoice,
-  showAskDialog,
-  showAskEditor,
-  type AskChoice,
+  selectQuestionChoice,
+  showQuestionDialog,
+  showQuestionEditor,
+  type QuestionChoice,
 } from "./ui.ts";
 
 const MAX_CUSTOM_ANSWER_LENGTH = 4_000;
@@ -47,49 +47,49 @@ const QuestionSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const AskParameters = Type.Object(
+export const QuestionParameters = Type.Object(
   {
     questions: Type.Array(QuestionSchema, { minItems: 1, maxItems: 4 }),
   },
   { additionalProperties: false },
 );
 
-export type AskInput = Static<typeof AskParameters>;
+export type QuestionInput = Static<typeof QuestionParameters>;
 
-export interface AskOption {
+export interface QuestionOption {
   label: string;
   description?: string;
 }
 
-export interface AskQuestion {
+export interface Question {
   id: string;
   question: string;
-  options: AskOption[];
+  options: QuestionOption[];
   multiple: boolean;
 }
 
-export type AskAnswers = Record<string, string[]>;
+export type QuestionAnswers = Record<string, string[]>;
 
-export type AskDetails =
+export type QuestionDetails =
   | {
       status: "answered";
-      questions: AskQuestion[];
-      answers: AskAnswers;
+      questions: Question[];
+      answers: QuestionAnswers;
     }
   | {
       status: "cancelled";
-      questions: AskQuestion[];
-      answers: AskAnswers;
+      questions: Question[];
+      answers: QuestionAnswers;
     }
   | {
       status: "unavailable";
-      questions: AskQuestion[];
+      questions: Question[];
       mode: ExtensionContext["mode"];
     };
 
 interface PromptResult {
   cancelled: boolean;
-  answers: AskAnswers;
+  answers: QuestionAnswers;
 }
 
 function replaceControlCharacters(value: string): string {
@@ -114,35 +114,35 @@ function preview(value: string, length = 72): string {
   return cleaned.length <= length ? cleaned : `${cleaned.slice(0, length - 1)}…`;
 }
 
-export function normalizeQuestions(input: AskInput["questions"]): AskQuestion[] {
+export function normalizeQuestions(input: QuestionInput["questions"]): Question[] {
   if (input.length === 0 || input.length > 4) {
-    throw new Error("ask requires one to four questions.");
+    throw new Error("question requires one to four questions.");
   }
   const ids = new Set<string>();
   return input.map((candidate) => {
     const id = candidate.id.trim();
     const question = cleanModelText(candidate.question);
     if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id) || !question) {
-      throw new Error("ask requires valid question ids and non-empty text.");
+      throw new Error("question requires valid question ids and non-empty text.");
     }
-    if (ids.has(id)) throw new Error(`ask question ids must be unique: ${id}`);
+    if (ids.has(id)) throw new Error(`question ids must be unique: ${id}`);
     ids.add(id);
 
     if (
       candidate.options !== undefined &&
       (candidate.options.length < 2 || candidate.options.length > 6)
     ) {
-      throw new Error(`ask question ${id} requires two to six options.`);
+      throw new Error(`question ${id} requires two to six options.`);
     }
     const labels = new Set<string>();
     const options = (candidate.options ?? []).map((candidateOption) => {
       const label = cleanModelText(candidateOption.label);
       const key = label.toLowerCase();
-      if (!label) throw new Error(`ask question ${id} has an empty option label.`);
+      if (!label) throw new Error(`question ${id} has an empty option label.`);
       if (key === OTHER_CHOICE.toLowerCase()) {
-        throw new Error(`ask question ${id} uses reserved option label: ${OTHER_CHOICE}.`);
+        throw new Error(`question ${id} uses reserved option label: ${OTHER_CHOICE}.`);
       }
-      if (labels.has(key)) throw new Error(`ask question ${id} has duplicate option labels.`);
+      if (labels.has(key)) throw new Error(`question ${id} has duplicate option labels.`);
       labels.add(key);
       const description = candidateOption.description
         ? cleanModelText(candidateOption.description)
@@ -152,19 +152,19 @@ export function normalizeQuestions(input: AskInput["questions"]): AskQuestion[] 
 
     const multiple = candidate.multiple ?? false;
     if (multiple && options.length === 0) {
-      throw new Error(`ask question ${id} cannot use multiple without options.`);
+      throw new Error(`question ${id} cannot use multiple without options.`);
     }
     return { id, question, options, multiple };
   });
 }
 
-function titleFor(question: AskQuestion, index: number, total: number): string {
+function titleFor(question: Question, index: number, total: number): string {
   const prefix = total > 1 ? `[${index + 1}/${total}] ` : "";
   const suffix = question.multiple ? " (select all that apply)" : "";
   return `${prefix}${question.question}${suffix}`;
 }
 
-function optionChoice(option: AskOption, marker?: string): AskChoice {
+function optionChoice(option: QuestionOption, marker?: string): QuestionChoice {
   return {
     label: marker ? `${marker} ${option.label}` : option.label,
     ...(option.description ? { description: option.description } : {}),
@@ -178,7 +178,7 @@ async function promptForText(
 ): Promise<string | undefined> {
   while (true) {
     if (signal?.aborted) return undefined;
-    const answer = await showAskEditor(ctx, title, signal);
+    const answer = await showQuestionEditor(ctx, title, signal);
     if (answer === undefined || signal?.aborted) return undefined;
     const trimmed = answer.trim();
     if (!trimmed) {
@@ -198,17 +198,17 @@ async function promptForText(
 
 async function promptSingleChoice(
   ctx: ExtensionContext,
-  question: AskQuestion,
+  question: Question,
   index: number,
   total: number,
   signal: AbortSignal | undefined,
 ): Promise<string[] | undefined> {
-  const choices: AskChoice[] = [
+  const choices: QuestionChoice[] = [
     ...question.options.map((option) => optionChoice(option)),
     { label: CUSTOM_CHOICE },
   ];
   while (true) {
-    const selectedIndex = await selectAskChoice(
+    const selectedIndex = await selectQuestionChoice(
       ctx,
       titleFor(question, index, total),
       choices,
@@ -225,7 +225,7 @@ async function promptSingleChoice(
 
 async function promptMultipleChoice(
   ctx: ExtensionContext,
-  question: AskQuestion,
+  question: Question,
   index: number,
   total: number,
   signal: AbortSignal | undefined,
@@ -234,7 +234,7 @@ async function promptMultipleChoice(
   let customAnswer: string | undefined;
 
   while (true) {
-    const choices: AskChoice[] = question.options.map((option) =>
+    const choices: QuestionChoice[] = question.options.map((option) =>
       optionChoice(option, selectedLabels.has(option.label) ? "✓" : "○"),
     );
     choices.push({
@@ -243,7 +243,7 @@ async function promptMultipleChoice(
     const answerCount = selectedLabels.size + (customAnswer ? 1 : 0);
     choices.push({ label: answerCount > 0 ? `Done — ${answerCount} selected` : "Done" });
 
-    const selectedIndex = await selectAskChoice(
+    const selectedIndex = await selectQuestionChoice(
       ctx,
       titleFor(question, index, total),
       choices,
@@ -280,15 +280,15 @@ async function promptMultipleChoice(
 
 export async function promptForAnswers(
   ctx: ExtensionContext,
-  questions: AskQuestion[],
+  questions: Question[],
   signal: AbortSignal | undefined,
 ): Promise<PromptResult> {
   if (ctx.mode === "tui") {
-    const answers = await showAskDialog(ctx, questions, signal);
+    const answers = await showQuestionDialog(ctx, questions, signal);
     return answers === undefined ? { cancelled: true, answers: {} } : { cancelled: false, answers };
   }
 
-  const answers: AskAnswers = {};
+  const answers: QuestionAnswers = {};
   for (const [index, question] of questions.entries()) {
     let answer: string[] | undefined;
     if (question.options.length === 0) {
@@ -306,18 +306,21 @@ export async function promptForAnswers(
   return { cancelled: false, answers };
 }
 
-function answerContent(answers: AskAnswers): string {
+function answerContent(answers: QuestionAnswers): string {
   return JSON.stringify(answers);
 }
 
-export default function askExtension(pi: ExtensionAPI): void {
+export default function questionExtension(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "ask",
-    label: "ask",
+    name: "question",
+    label: "question",
     description:
-      "Ask the user one to four brief, related questions and wait for answers. Use only when answers materially affect the work; batch related questions in one call instead of asking them separately. Options are optional; use two to four normally (maximum six). The UI always allows a custom answer.",
-    promptSnippet: "Ask the user brief questions and wait for the answers",
-    parameters: AskParameters,
+      "Ask the user one to four brief, related questions and wait for answers. Supports free-text, single-choice, and multiple-choice questions; batch related questions in one call. Use two to four options normally (maximum six). The UI always allows a custom answer.",
+    promptSnippet: "Ask the user brief clarifying questions and wait for the answers",
+    promptGuidelines: [
+      "Use the question tool proactively whenever you need clarification about the user's intent, scope, preferences, constraints, or tradeoffs; prefer one brief question over guessing at a consequential assumption. Do not use question for information discoverable with available tools or for trivial, low-impact choices. Batch related questions in one call.",
+    ],
+    parameters: QuestionParameters,
     executionMode: "sequential",
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -325,7 +328,7 @@ export default function askExtension(pi: ExtensionAPI): void {
       if (!ctx.hasUI) {
         return {
           content: [{ type: "text", text: '{"unavailable":"interactive UI required"}' }],
-          details: { status: "unavailable", questions, mode: ctx.mode } satisfies AskDetails,
+          details: { status: "unavailable", questions, mode: ctx.mode } satisfies QuestionDetails,
         };
       }
 
@@ -337,7 +340,7 @@ export default function askExtension(pi: ExtensionAPI): void {
             status: "cancelled",
             questions,
             answers: result.answers,
-          } satisfies AskDetails,
+          } satisfies QuestionDetails,
         };
       }
 
@@ -347,7 +350,7 @@ export default function askExtension(pi: ExtensionAPI): void {
           status: "answered",
           questions,
           answers: result.answers,
-        } satisfies AskDetails,
+        } satisfies QuestionDetails,
       };
     },
 
@@ -359,14 +362,14 @@ export default function askExtension(pi: ExtensionAPI): void {
           ? preview(first.question, 120)
           : `${questions.length} questions`;
       return new Text(
-        `${theme.fg("toolTitle", theme.bold("ask"))} ${theme.fg("muted", summary)}`,
+        `${theme.fg("toolTitle", theme.bold("question"))} ${theme.fg("muted", summary)}`,
         0,
         0,
       );
     },
 
     renderResult(result, options, theme) {
-      const details = result.details as AskDetails | undefined;
+      const details = result.details as QuestionDetails | undefined;
       if (!details) {
         const text = result.content.find((item) => item.type === "text");
         return new Text(text?.type === "text" ? text.text : "", 0, 0);

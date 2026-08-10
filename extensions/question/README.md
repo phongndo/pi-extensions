@@ -1,10 +1,10 @@
-# Pi Ask
+# Pi Question
 
-A small, native interactive clarification tool for Pi. The model can call `ask` during an ordinary agent run, Pi pauses that tool call for the user's response, and the same run resumes with a compact answer result.
+A small, native interactive clarification tool for Pi. The model can call `question` during an ordinary agent run, Pi pauses that tool call for the user's response, and the same run resumes with a compact answer result.
 
 ## Behavior
 
-- Available as the `ask` tool in normal interactive chat; it is not tied to plan mode.
+- Available as the `question` tool in normal interactive chat; it is not tied to plan mode.
 - Uses Pi's native `SelectList` and chat editor, including configured select/cancel keybindings.
 - Supports one to four related questions per call and up to six options per question.
 - Keeps every question in one layered dialog, with answers preserved while navigating layers.
@@ -82,26 +82,26 @@ Cancellation is represented as:
 
 The tool keeps its recurring prompt cost small:
 
-- One short tool description and one one-line tool snippet
-- No separate system-prompt guideline
+- One short tool description, one-line tool snippet, and focused system-prompt guideline
+- The guideline encourages proactive clarification while discouraging questions about discoverable facts or trivial choices
 - A six-option ceiling for flexibility, while prompting models to prefer two to four
 - No duplicated headers or option values
 - Short answer IDs rather than question text as result keys
 - No prose wrapper around answers
 - Full display state kept in `details`, not model-facing `content`
 
-The model is instructed to batch related questions while asking only when the answers materially affect the work.
+The model is instructed to use `question` proactively when clarification would improve the result, prefer a brief question over a consequential assumption, and batch related questions in one call.
 
 ## Prompt caching
 
-Calling `ask` does not change Pi's active tools, system prompt, or provider-visible tool definitions. The answer is an ordinary tool result, so repeated calls preserve the existing prompt prefix.
+Calling `question` does not change Pi's active tools, system prompt, or provider-visible tool definitions. The answer is an ordinary tool result, so repeated calls preserve the existing prompt prefix.
 
-OpenAI requires tool definitions and their ordering to remain identical for a cache hit. Adding `ask`, or changing its name, description, snippet, or JSON schema during `/reload`, therefore causes one expected cache miss in the current session. UI and execution code live separately in `ui.ts` so visual changes can be reloaded without changing that provider-visible contract. A focused test snapshots the contract fingerprint to make accidental cache-busting changes explicit.
+OpenAI requires tool definitions and their ordering to remain identical for a cache hit. Adding `question`, or changing its name, description, snippet, guideline, or JSON schema during `/reload`, therefore causes one expected cache miss in the current session. UI and execution code live separately in `ui.ts` so visual changes can be reloaded without changing that provider-visible contract. A focused test snapshots the contract fingerprint to make accidental cache-busting changes explicit.
 
-For extension development, load contract changes before a session becomes large or use a short test session. At runtime, `ask` itself does not invalidate the cache.
+For extension development, load contract changes before a session becomes large or use a short test session. At runtime, `question` itself does not invalidate the cache.
 
 ## Development
 
 ```bash
-pnpm --filter pi-ask check
+pnpm --filter pi-question check
 ```
