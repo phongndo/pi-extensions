@@ -179,17 +179,23 @@ Read the extension-specific safety section before enabling mutating or billed ca
 
 ## Development
 
-Install dependencies once:
+Enter the pinned Nix development shell, then install dependencies once:
 
 ```bash
+nix develop
 pnpm install
 ```
+
+If you do not use Nix, install the Node.js and pnpm versions listed in [Requirements](#requirements) and run `pnpm install` directly.
 
 Run the complete workspace validation:
 
 ```bash
 pnpm check
+nix flake check # Reproducible sandboxed equivalent
 ```
+
+Format the Nix source with `nix fmt`.
 
 Common focused commands:
 
