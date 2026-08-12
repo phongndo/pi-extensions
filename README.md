@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, visual explanations, independent review/fix loops, and a safe PR-publishing prompt.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, independent review/fix loops, and a safe PR-publishing prompt.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, and prompt templates together.
 
@@ -18,7 +18,8 @@ The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches 
 
 Also included:
 
-- [`/skill:pi-show-me`](skills/show-me/SKILL.md), restates a topic as a compact diagram, call tree, or code-shape sketch
+- [`/skill:huh`](skills/huh/SKILL.md), restates the previous response more simply, concisely, and without jargon
+- [`/skill:visualize`](skills/visualize/SKILL.md), explains a topic with a compact diagram, call tree, or code-shape sketch
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
 ## Quick start
@@ -73,15 +74,23 @@ Add a Firecrawl key, inspect credits, choose context/cost limits, and decide whi
 /skill:research Compare the current migration guidance from the two primary vendors.
 ```
 
-### 3. Ask for the shape, not the essay
+### 3. Ask for a simpler explanation
 
 ```text
-/skill:pi-show-me the review loop
+/skill:huh
 ```
 
-The agent answers with call trees, types, compact diagrams, or a one-off HTML sketch instead of a wall of prose.
+The agent restates its previous response in plain, concise language.
 
-### 4. Review changes
+### 4. Visualize a topic
+
+```text
+/skill:visualize the review loop
+```
+
+The agent uses the smallest useful diagram, call tree, formula, or code-shape sketch instead of explaining the topic in prose.
+
+### 5. Review changes
 
 Start a one-pass review in an empty branch of the current Pi session, then return with a structured handoff:
 
@@ -99,7 +108,7 @@ For automatic repair and independent convergence checking, use the bounded loop.
 
 The loop uses a fresh reviewer each pass, a guarded fixer, and optional deterministic verification.
 
-### 5. Publish finished work
+### 6. Publish finished work
 
 ```text
 /yeet
@@ -118,7 +127,8 @@ The loop uses a fresh reviewer each pass, a guarded fixer, and optional determin
 | Rigorous multi-source report                | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations   |
 | One interactive review with a handoff       | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes       |
 | Independent review, repair, and convergence | `/loop-review`                       | Purpose-built convergence and Git safety                      |
-| The last answer was a wall of prose         | `/skill:pi-show-me`                  | Compact diagrams, call trees, types, and file layouts         |
+| The last answer was confusing or too wordy  | `/skill:huh`                         | A simpler, concise restatement without jargon                 |
+| A concept would be clearer as a visual      | `/skill:visualize`                   | A compact diagram, call tree, formula, or code-shape sketch   |
 | Finished changes ready for GitHub           | `/yeet`                              | Repo-native verification and PR-template workflow             |
 
 A useful sequence for larger changes is:
@@ -138,7 +148,8 @@ Each stage has a different trust boundary: external evidence, independent verifi
 | `/web-tools`                 | Open Firecrawl configuration                                      |
 | `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
 | `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
-| `/skill:pi-show-me [topic]`  | Restate the current topic as compact visuals instead of prose     |
+| `/skill:huh`                 | Restate the previous response simply, concisely, and coherently   |
+| `/skill:visualize [topic]`   | Explain a topic with the smallest useful visual                   |
 | `/review [target]`           | Start an interactive review in an empty branch or current session |
 | `/settings-review`           | Configure Review Loop mode, models, and convergence               |
 | `/end-review`                | Return from an isolated review, optionally summarize or fix       |
@@ -185,7 +196,9 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── tool-search/                # tool_search and capability registry
 │   ├── web-tools/                  # web_* tools and research skill
 │   └── review/                     # /review, /end-review, /loop-review
-├── skills/show-me/                 # /skill:pi-show-me visual explanations
+├── skills/
+│   ├── huh/                        # /skill:huh plain-language restatements
+│   └── visualize/                  # /skill:visualize compact visual explanations
 ├── prompt/yeet.md                  # /yeet prompt template
 ├── package.json                    # root Pi package manifest
 └── pnpm-workspace.yaml             # extension workspace packages
@@ -259,7 +272,8 @@ hk run pre-commit
 - [Web Tools](extensions/web-tools/README.md)
 - [Web Tools evaluations](extensions/web-tools/evals/README.md)
 - [Research skill](extensions/web-tools/skills/research/SKILL.md)
-- [Show-me skill](skills/show-me/SKILL.md)
+- [Huh skill](skills/huh/SKILL.md)
+- [Visualize skill](skills/visualize/SKILL.md)
 - [Review](extensions/review/README.md)
 - [Review Loop design plan](extensions/review/PLAN.md)
 - [`/yeet` prompt](prompt/yeet.md)

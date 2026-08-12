@@ -1,6 +1,6 @@
 ---
 name: research
-description: Performs rigorous, evidence-grounded, multi-step web research with adaptive search budgets, query reformulation, source-quality checks, contradiction tracking, and claim-level citations. Use for current, comparative, obscure, multi-hop, due-diligence, broad-list, or report-style questions requiring multiple sources. Do not use for a trivial fact, a known URL, or local repository work.
+description: Call for current, comparative, obscure, multi-hop, due-diligence, broad-list, or report-style questions that require multiple sources, adaptive searching, source-quality checks, contradiction tracking, or claim-level citations. Do not call for a trivial fact, a known URL, or local repository work.
 compatibility: Requires Pi with web_search, web_fetch, web_map, read, write, and bash tools; network access is required.
 metadata:
   author: local
