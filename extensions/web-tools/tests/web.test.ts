@@ -41,6 +41,7 @@ import webExtension, {
   attachFirecrawlAbortSignal,
   buildRequest,
   formatResponse,
+  importFirecrawlSdk,
   isKeychainItemNotFound,
   loadConfig,
   normalizeConfig,
@@ -71,6 +72,37 @@ afterEach(async () => {
 function operation(name: string): Operation {
   return beginOperation(name);
 }
+
+test("Firecrawl SDK import retries the Bun/Jiti follow-redirects cold-load failure", async () => {
+  let attempts = 0;
+  const sdk = { default: Firecrawl };
+  const loaded = await importFirecrawlSdk(async () => {
+    attempts++;
+    if (attempts === 1) {
+      const error = new TypeError("First argument must be an Error object");
+      error.stack = `${error.stack}\n    at follow-redirects/index.js:647:30`;
+      throw error;
+    }
+    return sdk;
+  });
+
+  assert.equal(loaded, sdk);
+  assert.equal(attempts, 2);
+});
+
+test("Firecrawl SDK import does not retry unrelated failures", async () => {
+  let attempts = 0;
+  const failure = new Error("module is unavailable");
+
+  await assert.rejects(
+    importFirecrawlSdk(async () => {
+      attempts++;
+      throw failure;
+    }),
+    (error) => error === failure,
+  );
+  assert.equal(attempts, 1);
+});
 
 test("search request normalization enforces compact deterministic filters", () => {
   const config = normalizeConfig({ maxLimit: 10 });

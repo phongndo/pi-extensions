@@ -30,7 +30,8 @@ import {
   type SettingItem,
 } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import Firecrawl, { type ScrapeOptions } from "firecrawl";
+import type Firecrawl from "firecrawl";
+import type { ScrapeOptions } from "firecrawl";
 import {
   onToolSearchReady,
   registerToolCapabilities,
@@ -674,6 +675,42 @@ export function attachFirecrawlAbortSignal(
   defaults.signal = signal;
 }
 
+type FirecrawlSdkModule = { default: typeof Firecrawl };
+type FirecrawlSdkImporter = () => Promise<FirecrawlSdkModule>;
+
+function isTransientFirecrawlImportError(error: unknown): boolean {
+  return (
+    isRecord(error) &&
+    error.message === "First argument must be an Error object" &&
+    typeof error.stack === "string" &&
+    error.stack.includes("follow-redirects")
+  );
+}
+
+export async function importFirecrawlSdk(
+  importer: FirecrawlSdkImporter = () => import("firecrawl"),
+): Promise<FirecrawlSdkModule> {
+  try {
+    return await importer();
+  } catch (error) {
+    // Pi's Bun/Jiti runtime can fail the first cold import while evaluating
+    // follow-redirects' custom Error prototypes. The transform cache is valid
+    // after that attempt, so retry only this exact compatibility failure.
+    if (!isTransientFirecrawlImportError(error)) throw error;
+    return importer();
+  }
+}
+
+let firecrawlSdkPromise: Promise<FirecrawlSdkModule> | undefined;
+
+async function loadFirecrawlSdk(): Promise<FirecrawlSdkModule> {
+  firecrawlSdkPromise ??= importFirecrawlSdk().catch((error) => {
+    firecrawlSdkPromise = undefined;
+    throw error;
+  });
+  return firecrawlSdkPromise;
+}
+
 async function createFirecrawlClient(signal?: AbortSignal): Promise<Firecrawl> {
   const resolved = await resolveApiKey();
   if (!resolved.key)
@@ -684,7 +721,8 @@ async function createFirecrawlClient(signal?: AbortSignal): Promise<Firecrawl> {
       "Configure one with /web-tools or FIRECRAWL_API_KEY.",
     );
   const config = await loadConfig();
-  const client = new Firecrawl({
+  const { default: FirecrawlClient } = await loadFirecrawlSdk();
+  const client = new FirecrawlClient({
     apiKey: resolved.key,
     apiUrl: firecrawlEndpoints().apiRoot,
     timeoutMs: config.timeoutMs,
