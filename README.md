@@ -99,14 +99,14 @@ Start a one-pass review in an empty branch of the current Pi session, then retur
 /end-review
 ```
 
-For automatic repair and independent convergence checking, use the bounded loop. Configure 1–8 blind review agents in `/settings-review`; they run concurrently on each pass:
+For automatic repair and independent convergence checking, use the bounded loop. Configure 1–8 blind review agents plus separate reviewer, finding-verifier, and fixer models in `/settings-review`; reviewers run concurrently on each pass:
 
 ```text
 /loop-review uncommitted --mode adversarial
 /loop-review uncommitted --mode adversarial --extra "Prioritize auth boundaries and regression coverage"
 ```
 
-The loop uses a fresh reviewer each pass, a guarded fixer, and optional deterministic verification.
+The loop uses a fresh blind reviewer panel each pass, independently verifies candidate findings before repair, applies confirmed findings through a guarded fixer, and optionally runs deterministic checks.
 
 ### 6. Publish finished work
 

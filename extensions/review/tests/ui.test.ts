@@ -3,10 +3,12 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { defaultSettings, ReviewLoopSettingsStore } from "../settings.ts";
 import {
+  clampConfiguredThinkingLevel,
   formatLoopProgressLine,
   NumberedSelectList,
   reviewTargetItems,
@@ -60,8 +62,9 @@ async function exerciseSettingsEditor(editorResult: string | undefined): Promise
             done,
           );
           assert.match(component.render(160).join("\n"), /Review agents/);
+          assert.match(component.render(160).join("\n"), /Verifier model/);
           if (customCalls === 1) {
-            for (let index = 0; index < 10; index += 1) component.handleInput?.("\u001b[B");
+            for (let index = 0; index < 12; index += 1) component.handleInput?.("\u001b[B");
             component.handleInput?.("\r");
             component.handleInput?.("\r");
           } else {
@@ -137,6 +140,27 @@ test("sanitizes model selector labels and descriptions", () => {
   ]);
   assert.equal(item?.label, "Model Name");
   assert.equal(item?.description, "provider/model");
+});
+
+test("clamps configured reasoning to the selected model's highest supported level", () => {
+  const reasoningModel: Model<"openai-responses"> = {
+    id: "reasoning",
+    name: "Reasoning",
+    api: "openai-responses",
+    provider: "test",
+    baseUrl: "https://example.test",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_000,
+    maxTokens: 100,
+    thinkingLevelMap: { xhigh: null, max: null },
+  };
+  const plainModel = { ...reasoningModel, id: "plain", reasoning: false };
+
+  assert.equal(clampConfiguredThinkingLevel(reasoningModel, "max"), "high");
+  assert.equal(clampConfiguredThinkingLevel(plainModel, "max"), "off");
+  assert.equal(clampConfiguredThinkingLevel(reasoningModel, undefined), undefined);
 });
 
 test("keeps Pi's standard working marker visible throughout loop progress", () => {

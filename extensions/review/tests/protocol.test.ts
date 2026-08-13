@@ -8,6 +8,7 @@ import { buildFixerPrompt } from "../prompts.ts";
 import {
   fixerFindingsByteBudget,
   fixerInputByteBudget,
+  validateFindingVerificationSubmission,
   validateFixSubmission,
   validateReviewSubmission,
 } from "../protocol.ts";
@@ -335,6 +336,48 @@ test("bounds optional host context in fixer prompts without dropping current fin
   assert.match(prompt, new RegExp(reviewed.findings[0]!.id));
   assert.match(prompt, /omitted to fit the fixer context/);
   assert.match(prompt, /FINAL_UNIQUE_ERROR/);
+});
+
+test("validates complete finding-verification outcomes", () => {
+  const result = validateFindingVerificationSubmission(
+    {
+      outcomes: [
+        {
+          findingId: "RL-1",
+          verdict: "confirmed",
+          explanation: "The changed branch returns the wrong value.",
+        },
+        {
+          findingId: "RL-2",
+          verdict: "rejected",
+          explanation: "The caller normalizes this value before use.",
+        },
+      ],
+      summary: "Verified both candidates.",
+    },
+    ["RL-1", "RL-2"],
+  );
+  assert.equal(result.outcomes.length, 2);
+  assert.throws(
+    () =>
+      validateFindingVerificationSubmission({ outcomes: [], summary: "Nothing to report." }, [
+        "RL-1",
+      ]),
+    /omitted/,
+  );
+  assert.throws(
+    () =>
+      validateFindingVerificationSubmission(
+        {
+          outcomes: [
+            { findingId: "other", verdict: "uncertain", explanation: "Unknown contract." },
+          ],
+          summary: "Blocked.",
+        },
+        ["RL-1"],
+      ),
+    /Unknown finding ID/,
+  );
 });
 
 test("validates complete fixer outcomes", () => {

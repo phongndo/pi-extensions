@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { REVIEW_MODES } from "../models.ts";
 import {
+  buildFindingVerificationPrompt,
   buildReviewerPrompt,
+  FINDING_VERIFIER_SYSTEM_PROMPT,
   FIXER_SYSTEM_PROMPT,
   reviewerPathInventoryByteBudget,
+  ReviewPromptBudgetError,
 } from "../prompts.ts";
 import { reviewerCountForMode, reviewerProfilesForMode } from "../review-modes.ts";
 
@@ -66,7 +69,45 @@ test("puts mode and blind panel assignment into each reviewer prompt", () => {
   assert.match(prompt, /directly read any inventory path absent from the tracked diff/i);
 });
 
-test("fails fast when the complete path inventory cannot fit the reviewer prompt", () => {
+test("builds an independent candidate-verification prompt without panel provenance", () => {
+  const prompt = buildFindingVerificationPrompt({
+    target: {
+      type: "uncommitted",
+      repositoryRoot: "/repo",
+      originalHead: "a".repeat(40),
+      originalBranch: "main",
+      baseSha: "a".repeat(40),
+    },
+    fingerprint: "fingerprint",
+    pass: 1,
+    changedFiles: ["src/example.ts"],
+    findings: [
+      {
+        id: "RL-123",
+        fingerprint: "finding-fingerprint",
+        pass: 1,
+        priority: "P2",
+        title: "Wrong result",
+        path: "src/example.ts",
+        startLine: 4,
+        endLine: 4,
+        impact: "Returns the wrong result.",
+        evidence: "The changed operand has the opposite sign.",
+        suggestedFix: "Use the expected operand.",
+        reportedBy: ["adversarial", "adversarial-2"],
+      },
+    ],
+  });
+
+  assert.match(FINDING_VERIFIER_SYSTEM_PROMPT, /confirmed only when/i);
+  assert.match(FINDING_VERIFIER_SYSTEM_PROMPT, /rejected only when/i);
+  assert.match(prompt, /BEGIN_UNTRUSTED_FINDING_CANDIDATES_JSON/);
+  assert.match(prompt, /RL-123/);
+  assert.match(prompt, /src\/example\.ts/);
+  assert.doesNotMatch(prompt, /reportedBy|adversarial-2|Use the expected operand/);
+});
+
+test("fails fast when the complete path inventory cannot fit review prompts", () => {
   const reviewer = reviewerProfilesForMode("standard")[0]!;
   const suffix = "x".repeat(40);
   const changedFiles = Array.from(
@@ -94,6 +135,45 @@ test("fails fast when the complete path inventory cannot fit the reviewer prompt
         128,
       ),
     /path inventory exceeds.*2\/200 paths fit/i,
+  );
+
+  assert.throws(
+    () =>
+      buildFindingVerificationPrompt(
+        {
+          target: {
+            type: "uncommitted",
+            repositoryRoot: "/repo",
+            originalHead: "a".repeat(40),
+            originalBranch: "main",
+            baseSha: "a".repeat(40),
+            initialUntrackedPaths: changedFiles,
+          },
+          fingerprint: "fingerprint",
+          pass: 1,
+          changedFiles,
+          findings: [
+            {
+              id: "RL-123",
+              fingerprint: "finding-fingerprint",
+              pass: 1,
+              priority: "P2",
+              title: "Wrong result",
+              path: changedFiles[0]!,
+              startLine: 1,
+              endLine: 1,
+              impact: "Returns the wrong result.",
+              evidence: "The changed operand has the opposite sign.",
+              suggestedFix: "Use the expected operand.",
+              reportedBy: ["general"],
+            },
+          ],
+        },
+        128,
+      ),
+    (error: unknown) =>
+      error instanceof ReviewPromptBudgetError &&
+      /path inventory exceeds.*2\/200 paths fit/i.test(error.message),
   );
 
   assert.equal(reviewerPathInventoryByteBudget(8_000), 2_000);

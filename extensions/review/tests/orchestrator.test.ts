@@ -7,6 +7,12 @@ import { promisify } from "node:util";
 import test from "node:test";
 import type { ResolvedModels } from "../child-session.ts";
 import {
+  FindingVerificationProtocolError,
+  type FindingVerifierRunner,
+  type FindingVerifierRunInput,
+  type FindingVerifierRunOutput,
+} from "../finding-verifier.ts";
+import {
   FixerProtocolError,
   assertMutationPath,
   type FixerRunner,
@@ -22,7 +28,12 @@ import type {
   VerificationResult,
 } from "../models.ts";
 import { emptyUsage } from "../models.ts";
-import { aggregateReviewerPanel, runReviewLoop } from "../orchestrator.ts";
+import {
+  aggregateReviewerPanel,
+  runReviewLoop as runReviewLoopCore,
+  type RunReviewLoopOptions,
+} from "../orchestrator.ts";
+import { ReviewPromptBudgetError } from "../prompts.ts";
 import { reviewerProfilesForMode } from "../review-modes.ts";
 import { resultContextContent } from "../renderers.ts";
 import {
@@ -84,6 +95,11 @@ const models = {
     thinkingLevel: "off",
     displayName: "Reviewer",
   },
+  verifier: {
+    reference: { provider: "test", modelId: "verifier" },
+    thinkingLevel: "off",
+    displayName: "Verifier",
+  },
   fixer: {
     reference: { provider: "test", modelId: "fixer" },
     thinkingLevel: "off",
@@ -93,7 +109,7 @@ const models = {
 
 function settings(overrides: Partial<ReviewLoopSettings> = {}): ReviewLoopSettings {
   return {
-    version: 2,
+    version: 3,
     reviewMode: "standard",
     reviewerCount: 1,
     maximumPasses: 4,
@@ -135,6 +151,32 @@ class SequenceReviewer implements ReviewerRunner {
     this.index += 1;
     return { submission, usage: emptyUsage(), protocolRetries: 0 };
   }
+}
+
+const confirmingFindingVerifier: FindingVerifierRunner = {
+  async verify(input: FindingVerifierRunInput): Promise<FindingVerifierRunOutput> {
+    return {
+      submission: {
+        outcomes: input.findings.map((item) => ({
+          findingId: item.id,
+          verdict: "confirmed" as const,
+          explanation: "Confirmed by independent test verifier.",
+        })),
+        summary: "Confirmed all candidate findings.",
+      },
+      usage: emptyUsage(),
+      protocolRetries: 0,
+    };
+  },
+};
+
+function runReviewLoop(
+  options: Omit<RunReviewLoopOptions, "findingVerifier"> & {
+    findingVerifier?: FindingVerifierRunner;
+  },
+) {
+  const { findingVerifier = confirmingFindingVerifier, ...rest } = options;
+  return runReviewLoopCore({ ...rest, findingVerifier });
 }
 
 class FakeFixer implements FixerRunner {
@@ -324,6 +366,257 @@ test("aggregates duplicate panel findings and preserves reviewer provenance", ()
   assert.match(blocked.submission.blockedReason ?? "", /Adversarial reviewer 2/);
 });
 
+test("rejects false-positive candidates before the fixer runs", async () => {
+  const { root, target } = await fixture();
+  await writeFile(join(root, "a.ts"), "bad\n", "utf8");
+  const fixer = new FakeFixer(() => {
+    throw new Error("The fixer must not receive rejected candidates.");
+  });
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(input): Promise<FindingVerifierRunOutput> {
+      return {
+        submission: {
+          outcomes: input.findings.map((item) => ({
+            findingId: item.id,
+            verdict: "rejected" as const,
+            explanation: "The surrounding guard proves the candidate behavior is unreachable.",
+          })),
+          summary: "Rejected the false positive.",
+        },
+        usage: emptyUsage(),
+        protocolRetries: 0,
+      };
+    },
+  };
+
+  const result = await runReviewLoop({
+    target,
+    settings: settings(),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [finding(1)], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => fixer,
+    host: { execute: executor(), verify: noVerification },
+  });
+
+  assert.equal(result.status, "clean");
+  assert.equal(fixer.calls, 0);
+  assert.equal(result.ledger[0]?.status, "invalid");
+  assert.match(result.ledger[0]?.explanation ?? "", /guard proves/);
+  assert.equal(result.passes[0]?.findingVerification?.[0]?.verdict, "rejected");
+});
+
+test("blocks uncertain candidate findings instead of discarding or fixing them", async () => {
+  const { root, target } = await fixture();
+  await writeFile(join(root, "a.ts"), "bad\n", "utf8");
+  const fixer = new FakeFixer(() => {
+    throw new Error("The fixer must not receive uncertain candidates.");
+  });
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(input): Promise<FindingVerifierRunOutput> {
+      return {
+        submission: {
+          outcomes: input.findings.map((item) => ({
+            findingId: item.id,
+            verdict: "uncertain" as const,
+            explanation: "The external runtime contract is not available in this repository.",
+          })),
+          summary: "Could not establish the candidate.",
+        },
+        usage: emptyUsage(),
+        protocolRetries: 0,
+      };
+    },
+  };
+
+  const result = await runReviewLoop({
+    target,
+    settings: settings(),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [finding(1)], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => fixer,
+    host: { execute: executor(), verify: noVerification },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /could not establish or reject/i);
+  assert.equal(fixer.calls, 0);
+  assert.equal(result.ledger[0]?.status, "unverified");
+  assert.match(resultContextContent(result), /Unresolved findings:[\s\S]*unverified/);
+});
+
+test("preserves confirmed findings when another candidate is uncertain", async () => {
+  const { root, target } = await fixture();
+  await writeFile(join(root, "a.ts"), "bad\n", "utf8");
+  const confirmed = finding(1);
+  const uncertain = {
+    ...finding(1),
+    id: "RL-uncertain",
+    fingerprint: "uncertain-fingerprint",
+    title: "Uncertain value",
+  };
+  const fixer = new FakeFixer(() => {
+    throw new Error("The fixer must not run while any candidate is uncertain.");
+  });
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(): Promise<FindingVerifierRunOutput> {
+      return {
+        submission: {
+          outcomes: [
+            {
+              findingId: confirmed.id,
+              verdict: "confirmed",
+              explanation: "The bad value is directly observable.",
+            },
+            {
+              findingId: uncertain.id,
+              verdict: "uncertain",
+              explanation: "The external runtime contract is unavailable.",
+            },
+          ],
+          summary: "One candidate was confirmed and one remains uncertain.",
+        },
+        usage: emptyUsage(),
+        protocolRetries: 0,
+      };
+    },
+  };
+
+  const result = await runReviewLoop({
+    target,
+    settings: settings(),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [confirmed, uncertain], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => fixer,
+    host: { execute: executor(), verify: noVerification },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(fixer.calls, 0);
+  assert.equal(result.ledger.find((entry) => entry.findingId === confirmed.id)?.status, "queued");
+  assert.equal(
+    result.ledger.find((entry) => entry.findingId === uncertain.id)?.status,
+    "unverified",
+  );
+  const context = resultContextContent(result);
+  assert.match(context, /Unresolved findings:[\s\S]*queued/);
+  assert.match(context, /Unresolved findings:[\s\S]*unverified/);
+});
+
+test("blocks when a finding verifier changes the frozen target", async () => {
+  const { root, target } = await fixture();
+  await writeFile(join(root, "a.ts"), "bad\n", "utf8");
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(input): Promise<FindingVerifierRunOutput> {
+      await writeFile(join(root, "a.ts"), "mutated by verifier\n", "utf8");
+      return confirmingFindingVerifier.verify(input);
+    },
+  };
+
+  const result = await runReviewLoop({
+    target,
+    settings: settings(),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [finding(1)], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => new FakeFixer(() => undefined),
+    host: { execute: executor(), verify: noVerification },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /changed while findings were being verified/i);
+});
+
+test("stops immediately when a finding verifier changes an ignored file", async () => {
+  const { root, target } = await fixture();
+  await writeFile(join(root, "a.ts"), "bad\n", "utf8");
+  await writeFile(join(root, ".gitignore"), ".env\n", "utf8");
+  await writeFile(join(root, ".env"), "user-owned\n", "utf8");
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(input): Promise<FindingVerifierRunOutput> {
+      await writeFile(join(root, ".env"), "mutated by verifier\n", "utf8");
+      return confirmingFindingVerifier.verify(input);
+    },
+  };
+  const fixer = new FakeFixer(() => undefined);
+  let verificationCalls = 0;
+  const verify = async (): Promise<VerificationResult> => {
+    verificationCalls += 1;
+    return { configured: true, command: "test", passed: true, exitCode: 0 };
+  };
+
+  const result = await runReviewLoop({
+    target,
+    settings: settings({ verificationCommand: "test" }),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [finding(1)], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => fixer,
+    host: { execute: executor(), verify },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /finding verifier changed files in the repository/i);
+  assert.equal(fixer.calls, 0);
+  assert.equal(verificationCalls, 1);
+  assert.equal(result.passes[0]?.findingVerification, undefined);
+});
+
+test("stops folder runs immediately when a finding verifier changes an outside-scope file", async () => {
+  const { root, target: uncommittedTarget } = await fixture();
+  await mkdir(join(root, "selected"));
+  await writeFile(join(root, "selected", "value.ts"), "bad\n", "utf8");
+  const target: ReviewTargetSnapshot = {
+    ...uncommittedTarget,
+    type: "folder",
+    paths: ["selected"],
+    baseSha: undefined,
+  };
+  const selectedFinding = { ...finding(1), path: "selected/value.ts" };
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(input): Promise<FindingVerifierRunOutput> {
+      await writeFile(join(root, "a.ts"), "mutated outside scope by verifier\n", "utf8");
+      return confirmingFindingVerifier.verify(input);
+    },
+  };
+  const fixer = new FakeFixer(() => undefined);
+  let verificationCalls = 0;
+  const verify = async (): Promise<VerificationResult> => {
+    verificationCalls += 1;
+    return { configured: true, command: "test", passed: true, exitCode: 0 };
+  };
+
+  const result = await runReviewLoop({
+    target,
+    settings: settings({ verificationCommand: "test" }),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [selectedFinding], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => fixer,
+    host: { execute: executor(), verify },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /outside the selected folder scope/i);
+  assert.equal(fixer.calls, 0);
+  assert.equal(verificationCalls, 1);
+  assert.equal(result.passes[0]?.findingVerification, undefined);
+});
+
 test("preserves the originating panel failure while aborting sibling reviewers", async () => {
   const { target } = await fixture();
   const reviewer: ReviewerRunner = {
@@ -376,6 +669,58 @@ test("retains reviewer usage when a terminal protocol failure is thrown", async 
 
   assert.equal(result.status, "blocked");
   assert.deepEqual(result.usage, billedUsage);
+});
+
+test("retains finding-verifier usage when its protocol fails", async () => {
+  const { root, target } = await fixture();
+  await writeFile(join(root, "a.ts"), "bad\n", "utf8");
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(input): Promise<FindingVerifierRunOutput> {
+      input.onUsage?.(billedUsage);
+      throw new FindingVerificationProtocolError("Finding verifier protocol failed after retry.");
+    },
+  };
+  const result = await runReviewLoop({
+    target,
+    settings: settings(),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [finding(1)], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => new FakeFixer(() => undefined),
+    host: { execute: executor(), verify: noVerification },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /Finding verifier protocol failed/);
+  assert.deepEqual(result.usage, billedUsage);
+});
+
+test("blocks when the finding verifier prompt exceeds its model budget", async () => {
+  const { root, target } = await fixture();
+  await writeFile(join(root, "a.ts"), "bad\n", "utf8");
+  const findingVerifier: FindingVerifierRunner = {
+    async verify(): Promise<FindingVerifierRunOutput> {
+      throw new ReviewPromptBudgetError(
+        "Review target path inventory exceeds the finding-verifier prompt budget. Review a smaller target or use a model with a larger context window.",
+      );
+    },
+  };
+  const result = await runReviewLoop({
+    target,
+    settings: settings(),
+    models,
+    reviewer: new SequenceReviewer([
+      { verdict: "findings", findings: [finding(1)], humanCallouts: [] },
+    ]),
+    findingVerifier,
+    createFixer: () => new FakeFixer(() => undefined),
+    host: { execute: executor(), verify: noVerification },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /Review a smaller target or use a model/);
 });
 
 test("retains fixer usage when a terminal protocol failure is thrown", async () => {

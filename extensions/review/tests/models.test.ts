@@ -140,6 +140,8 @@ test("child runtimes preserve authenticated native extension providers", async (
     settings: {
       ...defaultSettings(),
       reviewerModel: { provider: "test", modelId: "test" },
+      verifierModel: { provider: "test", modelId: "test" },
+      verifierThinking: "max",
       fixerModel: { provider: "test", modelId: "test" },
     },
     currentModel: undefined,
@@ -147,6 +149,8 @@ test("child runtimes preserve authenticated native extension providers", async (
     outerRegistry,
   });
   assert.equal(resolved.reviewerModel.id, "test");
+  assert.equal(resolved.verifierModel.id, "test");
+  assert.equal(resolved.verifier.thinkingLevel, "off");
   assert.equal(resolved.fixerModel.id, "test");
 });
 
@@ -245,6 +249,7 @@ test("role preflight honors outer account-filtered model availability", async ()
       settings: {
         ...defaultSettings(),
         reviewerModel: { provider: "test", modelId: "test" },
+        verifierModel: { provider: "test", modelId: "test" },
         fixerModel: { provider: "test", modelId: "test" },
       },
       currentModel: undefined,
@@ -268,6 +273,7 @@ test("outer role-model preflight aborts without waiting for provider authenticat
     settings: {
       ...defaultSettings(),
       reviewerModel: { provider: "test", modelId: "test" },
+      verifierModel: { provider: "test", modelId: "test" },
       fixerModel: { provider: "test", modelId: "test" },
     },
     currentModel: undefined,

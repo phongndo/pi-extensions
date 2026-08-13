@@ -328,7 +328,7 @@ export async function ensureModelAuth(runtime: ModelRuntime, model: Model<Api>):
 function resolveReference(
   configured: ModelReference | undefined,
   currentModel: Model<Api> | undefined,
-  role: "Reviewer" | "Fixer",
+  role: "Reviewer" | "Verifier" | "Fixer",
 ): ModelReference {
   if (configured) return configured;
   if (!currentModel) {
@@ -340,7 +340,7 @@ function resolveReference(
 }
 
 async function resolveOneRole(
-  role: "Reviewer" | "Fixer",
+  role: "Reviewer" | "Verifier" | "Fixer",
   configuredReference: ModelReference | undefined,
   configuredThinking: ModelThinkingLevel | undefined,
   currentModel: Model<Api> | undefined,
@@ -403,8 +403,10 @@ async function awaitOuterDiscovery<T>(operation: Promise<T>, signal?: AbortSigna
 export interface ResolvedModels {
   runtime: ModelRuntime;
   reviewerModel: Model<Api>;
+  verifierModel: Model<Api>;
   fixerModel: Model<Api>;
   reviewer: ResolvedRoleModel;
+  verifier: ResolvedRoleModel;
   fixer: ResolvedRoleModel;
 }
 
@@ -421,6 +423,11 @@ export async function resolveRoleModels(options: {
     options.currentModel,
     "Reviewer",
   );
+  const verifierReference = resolveReference(
+    options.settings.verifierModel,
+    options.currentModel,
+    "Verifier",
+  );
   const fixerReference = resolveReference(
     options.settings.fixerModel,
     options.currentModel,
@@ -432,6 +439,7 @@ export async function resolveRoleModels(options: {
   const outerAvailable = options.outerRegistry.getAvailable();
   const selected = [
     ["Reviewer", reviewerReference],
+    ["Verifier", verifierReference],
     ["Fixer", fixerReference],
   ] as const;
   for (const [role, reference] of selected) {
@@ -459,7 +467,11 @@ export async function resolveRoleModels(options: {
     availableModels.set(model.provider, ids);
   }
   const effectiveAuth = new Map<string, AuthResult | undefined>();
-  for (const providerId of new Set([reviewerReference.provider, fixerReference.provider])) {
+  for (const providerId of new Set([
+    reviewerReference.provider,
+    verifierReference.provider,
+    fixerReference.provider,
+  ])) {
     effectiveAuth.set(
       providerId,
       await awaitOuterDiscovery(options.outerRegistry.getProviderAuth(providerId), options.signal),
@@ -480,6 +492,14 @@ export async function resolveRoleModels(options: {
     currentThinking,
     runtime,
   );
+  const verifier = await resolveOneRole(
+    "Verifier",
+    options.settings.verifierModel,
+    options.settings.verifierThinking,
+    options.currentModel,
+    currentThinking,
+    runtime,
+  );
   const fixer = await resolveOneRole(
     "Fixer",
     options.settings.fixerModel,
@@ -491,8 +511,10 @@ export async function resolveRoleModels(options: {
   return {
     runtime,
     reviewerModel: reviewer.model,
+    verifierModel: verifier.model,
     fixerModel: fixer.model,
     reviewer: reviewer.resolved,
+    verifier: verifier.resolved,
     fixer: fixer.resolved,
   };
 }

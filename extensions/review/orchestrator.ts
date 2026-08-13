@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ResolvedModels } from "./child-session.ts";
+import {
+  FindingVerificationProtocolError,
+  type FindingVerifierRunner,
+} from "./finding-verifier.ts";
 import { FixerProtocolError, snapshotIgnoredPaths, type FixerRunner } from "./fixer.ts";
 import {
   GitClient,
@@ -12,6 +16,7 @@ import {
 } from "./git.ts";
 import type {
   FindingLedgerEntry,
+  FindingVerificationSubmission,
   FixSubmission,
   NormalizedReviewSubmission,
   ProgressUpdate,
@@ -27,7 +32,12 @@ import type {
   VerificationResult,
 } from "./models.ts";
 import { addUsage, emptyUsage } from "./models.ts";
-import { assertFindingsByteBudget, fixerFindingsByteBudget } from "./protocol.ts";
+import {
+  assertFindingsByteBudget,
+  fixerFindingsByteBudget,
+  validateFindingVerificationSubmission,
+} from "./protocol.ts";
+import { ReviewPromptBudgetError } from "./prompts.ts";
 import { reviewerProfilesForMode, type ReviewerProfile } from "./review-modes.ts";
 import { createReviewerPassCache, ReviewerProtocolError, type ReviewerRunner } from "./reviewer.ts";
 import { assertTargetInvariants } from "./targets.ts";
@@ -205,6 +215,7 @@ export interface RunReviewLoopOptions {
   settings: ReviewLoopSettings;
   models: ResolvedModels;
   reviewer: ReviewerRunner;
+  findingVerifier: FindingVerifierRunner;
   createFixer: () => FixerRunner;
   host: OrchestratorHost;
   reviewInstructions?: string;
@@ -659,26 +670,6 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
       );
       uniquePush(humanCallouts, reviewed.submission.humanCallouts);
 
-      const actionable = reviewed.submission.findings
-        .filter((finding) => options.settings.fixP3Findings || finding.priority !== "P3")
-        .sort((left, right) => priorityRank(left) - priorityRank(right));
-      if (reviewed.submission.verdict === "findings") {
-        try {
-          assertFindingsByteBudget(
-            actionable,
-            fixerFindingsByteBudget(options.models.fixerModel.contextWindow),
-          );
-        } catch (error) {
-          throw new ReviewerProtocolError(error instanceof Error ? error.message : String(error), {
-            cause: error,
-          });
-        }
-      }
-      const excluded = reviewed.submission.findings.filter(
-        (finding) => !options.settings.fixP3Findings && finding.priority === "P3",
-      );
-      for (const finding of excluded) excludedByFingerprint.set(finding.fingerprint, finding);
-      const actionableFingerprints = actionable.map((finding) => finding.fingerprint).sort();
       const passRecord: ReviewPassRecord = {
         pass,
         mode: options.settings.reviewMode,
@@ -686,8 +677,8 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
         verdict: reviewed.submission.verdict,
         reviewers: reviewed.reviewers,
         findingIds: reviewed.submission.findings.map((finding) => finding.id),
-        actionableFindingIds: actionable.map((finding) => finding.id),
-        excludedFindingIds: excluded.map((finding) => finding.id),
+        actionableFindingIds: [],
+        excludedFindingIds: [],
         humanCallouts: reviewed.submission.humanCallouts,
       };
       passes.push(passRecord);
@@ -708,6 +699,123 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
         break;
       }
 
+      let confirmedFindings = reviewed.submission.findings;
+      let uncertainFindings: ReviewFinding[] = [];
+      if (reviewed.submission.findings.length > 0) {
+        phase(
+          "verifying-findings",
+          pass,
+          `independently verifying ${reviewed.submission.findings.length} candidate finding${reviewed.submission.findings.length === 1 ? "" : "s"}`,
+          reviewFingerprint,
+        );
+        const reportedUsage = emptyUsage();
+        const beforeFindingVerificationRepository = await repositoryFingerprint(
+          git,
+          options.target.repositoryRoot,
+        );
+        const beforeFindingVerificationOutside = await folderOutsideFingerprint();
+        const verified = await options.findingVerifier.verify({
+          target: options.target,
+          fingerprint: reviewFingerprint,
+          pass,
+          findings: reviewed.submission.findings,
+          changedFiles: undefined,
+          passCache: reviewerPassCache,
+          reviewInstructions: options.reviewInstructions,
+          extraInstruction: options.extraInstruction,
+          projectGuidelines: options.projectGuidelines,
+          signal: options.signal,
+          onUsage: (addition) => {
+            addUsage(reportedUsage, addition);
+            addUsage(usage, addition);
+          },
+        });
+        addUnreportedUsage(usage, verified.usage, reportedUsage);
+        await assertTargetInvariants(git, options.target);
+        const afterFindingVerificationOutside = await folderOutsideFingerprint();
+        const afterFindingVerificationRepository = await repositoryFingerprint(
+          git,
+          options.target.repositoryRoot,
+        );
+        const afterFindingVerification = await targetFingerprint(git, options.target);
+        if (beforeFindingVerificationOutside !== afterFindingVerificationOutside) {
+          setTerminal(
+            "blocked",
+            "The finding verifier changed files outside the selected folder scope.",
+          );
+          break;
+        }
+        if (reviewFingerprint !== afterFindingVerification) {
+          setTerminal("blocked", "The review target changed while findings were being verified.");
+          break;
+        }
+        if (beforeFindingVerificationRepository !== afterFindingVerificationRepository) {
+          setTerminal("blocked", "The finding verifier changed files in the repository.");
+          break;
+        }
+        let verificationSubmission: FindingVerificationSubmission;
+        try {
+          verificationSubmission = validateFindingVerificationSubmission(
+            verified.submission,
+            reviewed.submission.findings.map((finding) => finding.id),
+          );
+        } catch (error) {
+          throw new FindingVerificationProtocolError(
+            error instanceof Error ? error.message : String(error),
+            { cause: error },
+          );
+        }
+        passRecord.findingVerification = verificationSubmission.outcomes.map((outcome) => ({
+          ...outcome,
+        }));
+        passRecord.findingVerificationSummary = verificationSubmission.summary;
+
+        const outcomes = new Map(
+          verificationSubmission.outcomes.map((outcome) => [outcome.findingId, outcome]),
+        );
+        confirmedFindings = [];
+        uncertainFindings = [];
+        for (const finding of reviewed.submission.findings) {
+          const outcome = outcomes.get(finding.id);
+          if (!outcome) {
+            throw new FindingVerificationProtocolError(
+              `Finding verifier omitted an outcome for ${finding.id}.`,
+            );
+          }
+          if (outcome.verdict === "confirmed") {
+            confirmedFindings.push(finding);
+            continue;
+          }
+          const entry = upsertFinding(finding);
+          entry.candidateStatus = undefined;
+          entry.explanation = outcome.explanation;
+          candidateOutcomes.delete(finding.fingerprint);
+          confirmedFixed.delete(finding.fingerprint);
+          if (outcome.verdict === "rejected") {
+            entry.status = "invalid";
+          } else {
+            entry.status = "unverified";
+            uncertainFindings.push(finding);
+          }
+        }
+        if (uncertainFindings.length > 0) {
+          for (const finding of confirmedFindings) {
+            const outcome = outcomes.get(finding.id);
+            if (!outcome) {
+              throw new FindingVerificationProtocolError(
+                `Finding verifier omitted an outcome for ${finding.id}.`,
+              );
+            }
+            const entry = upsertFinding(finding);
+            entry.status = "queued";
+            entry.candidateStatus = undefined;
+            entry.explanation = outcome.explanation;
+            candidateOutcomes.delete(finding.fingerprint);
+            confirmedFixed.delete(finding.fingerprint);
+          }
+        }
+      }
+
       for (const [fingerprint, candidateStatus] of candidateOutcomes) {
         const entry = ledgerByFingerprint.get(fingerprint);
         if (entry && entry.pass < pass && !allFingerprints.has(fingerprint)) {
@@ -717,6 +825,37 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
           if (candidateStatus === "fixed") confirmedFixed.add(fingerprint);
         }
       }
+
+      if (uncertainFindings.length > 0) {
+        setTerminal(
+          "blocked",
+          `Independent verification could not establish or reject ${uncertainFindings.length} candidate finding${uncertainFindings.length === 1 ? "" : "s"}.`,
+        );
+        break;
+      }
+
+      const actionable = confirmedFindings
+        .filter((finding) => options.settings.fixP3Findings || finding.priority !== "P3")
+        .sort((left, right) => priorityRank(left) - priorityRank(right));
+      if (actionable.length > 0) {
+        try {
+          assertFindingsByteBudget(
+            actionable,
+            fixerFindingsByteBudget(options.models.fixerModel.contextWindow),
+          );
+        } catch (error) {
+          throw new ReviewerProtocolError(error instanceof Error ? error.message : String(error), {
+            cause: error,
+          });
+        }
+      }
+      const excluded = confirmedFindings.filter(
+        (finding) => !options.settings.fixP3Findings && finding.priority === "P3",
+      );
+      for (const finding of excluded) excludedByFingerprint.set(finding.fingerprint, finding);
+      passRecord.actionableFindingIds = actionable.map((finding) => finding.id);
+      passRecord.excludedFindingIds = excluded.map((finding) => finding.id);
+      const actionableFingerprints = actionable.map((finding) => finding.fingerprint).sort();
 
       if (
         actionable.length > 0 &&
@@ -868,7 +1007,12 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
   } catch (error) {
     if (options.signal?.aborted || isAbortError(error)) {
       setTerminal("aborted", "Stopped by the user; completed file edits were left in place.");
-    } else if (error instanceof ReviewerProtocolError || error instanceof FixerProtocolError) {
+    } else if (
+      error instanceof ReviewerProtocolError ||
+      error instanceof FindingVerificationProtocolError ||
+      error instanceof FixerProtocolError ||
+      error instanceof ReviewPromptBudgetError
+    ) {
       setTerminal("blocked", error.message);
     } else if (
       error instanceof Error &&
@@ -984,6 +1128,7 @@ export async function runReviewLoop(options: RunReviewLoopOptions): Promise<Revi
     finalFingerprint,
     verification: currentVerification,
     reviewer: options.models.reviewer,
+    verifier: options.models.verifier,
     fixer: options.models.fixer,
     usage,
     startedAt,

@@ -67,10 +67,12 @@ function icon(result: ReviewLoopResult): string {
 }
 
 function expandedDetails(result: ReviewLoopResult): string {
+  const verifier = result.verifier ?? result.reviewer;
   const lines = [
     `Target: ${result.target ? describeTarget(result.target) : "unresolved"}`,
     `Mode: ${reviewModeLabel(result)}`,
     `Reviewer model: ${result.reviewer.reference.provider}/${result.reviewer.reference.modelId} (${result.reviewer.thinkingLevel})`,
+    `Verifier model: ${verifier.reference.provider}/${verifier.reference.modelId} (${verifier.thinkingLevel})`,
     `Fixer: ${result.fixer.reference.provider}/${result.fixer.reference.modelId} (${result.fixer.thinkingLevel})`,
     `Started: ${result.startedAt}`,
     `Finished: ${result.finishedAt}`,
@@ -88,13 +90,21 @@ function expandedDetails(result: ReviewLoopResult): string {
             : `verification failed (${pass.verification.exitCode ?? "unknown"})`
           : "no verification command"
       : "verification not run";
+    const findingVerification = pass.findingVerification ?? [];
+    const findingVerificationLabel =
+      findingVerification.length === 0
+        ? "no candidate verification"
+        : `${findingVerification.filter((outcome) => outcome.verdict === "confirmed").length} confirmed, ${findingVerification.filter((outcome) => outcome.verdict === "rejected").length} rejected, ${findingVerification.filter((outcome) => outcome.verdict === "uncertain").length} uncertain`;
     lines.push(
-      `  ${pass.pass}. ${pass.verdict}; ${reviewers.length || 1} reviewer${reviewers.length === 1 || reviewers.length === 0 ? "" : "s"}; ${pass.actionableFindingIds.length} actionable, ${pass.excludedFindingIds.length} excluded; ${verification}`,
+      `  ${pass.pass}. ${pass.verdict}; ${reviewers.length || 1} reviewer${reviewers.length === 1 || reviewers.length === 0 ? "" : "s"}; ${findingVerificationLabel}; ${pass.actionableFindingIds.length} actionable, ${pass.excludedFindingIds.length} excluded; ${verification}`,
     );
     for (const reviewer of reviewers) {
       lines.push(
         `     ${reviewer.reviewerLabel}: ${reviewer.verdict}; ${reviewer.findingIds.length} finding${reviewer.findingIds.length === 1 ? "" : "s"}`,
       );
+    }
+    if (pass.findingVerificationSummary) {
+      lines.push(`     Finding verifier: ${pass.findingVerificationSummary}`);
     }
     if (pass.fixerSummary) lines.push(`     Fixer: ${pass.fixerSummary}`);
   }
@@ -173,6 +183,7 @@ export function resultContextContent(result: ReviewLoopResult): string {
     (entry) =>
       entry.status === "deferred" ||
       entry.status === "recurring" ||
+      entry.status === "unverified" ||
       entry.status === "queued" ||
       entry.status === "pending",
   );

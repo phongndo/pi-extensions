@@ -17,12 +17,14 @@ export interface ModelReference {
 export type MaximumPasses = number | "unlimited";
 
 export interface ReviewLoopSettings {
-  version: 2;
+  version: 3;
   reviewMode: ReviewMode;
   /** Independent reviewer sessions launched concurrently on each pass. */
   reviewerCount: number;
   reviewerModel?: ModelReference;
   reviewerThinking?: ThinkingLevel;
+  verifierModel?: ModelReference;
+  verifierThinking?: ThinkingLevel;
   fixerModel?: ModelReference;
   fixerThinking?: ThinkingLevel;
   maximumPasses: MaximumPasses;
@@ -97,6 +99,19 @@ export interface NormalizedReviewSubmission {
   blockedReason?: string;
 }
 
+export type FindingVerificationVerdict = "confirmed" | "rejected" | "uncertain";
+
+export interface FindingVerificationOutcome {
+  findingId: string;
+  verdict: FindingVerificationVerdict;
+  explanation: string;
+}
+
+export interface FindingVerificationSubmission {
+  outcomes: FindingVerificationOutcome[];
+  summary: string;
+}
+
 export interface FixOutcome {
   findingId: string;
   status: "fixed" | "invalid" | "deferred";
@@ -147,7 +162,7 @@ export interface FindingLedgerEntry {
   title: string;
   path: string;
   pass: number;
-  status: "queued" | "pending" | "fixed" | "invalid" | "deferred" | "recurring";
+  status: "queued" | "pending" | "fixed" | "invalid" | "unverified" | "deferred" | "recurring";
   reportedBy?: string[];
   candidateStatus?: "fixed" | "invalid";
   explanation?: string;
@@ -172,6 +187,8 @@ export interface ReviewPassRecord {
   actionableFindingIds: string[];
   excludedFindingIds: string[];
   humanCallouts: string[];
+  findingVerification?: FindingVerificationOutcome[];
+  findingVerificationSummary?: string;
   verification?: VerificationResult;
   fixerSummary?: string;
 }
@@ -180,6 +197,7 @@ export type RunPhase =
   | "resolving-target"
   | "baseline-verification"
   | "reviewing"
+  | "verifying-findings"
   | "fixing"
   | "verifying"
   | "clean-pass"
@@ -217,6 +235,7 @@ export interface ReviewLoopResult {
   finalFingerprint?: string;
   verification: VerificationResult;
   reviewer: ResolvedRoleModel;
+  verifier: ResolvedRoleModel;
   fixer: ResolvedRoleModel;
   usage: UsageSummary;
   startedAt: string;

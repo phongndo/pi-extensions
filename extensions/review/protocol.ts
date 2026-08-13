@@ -19,6 +19,8 @@ import {
   type GitMetadataPathCache,
 } from "./path-safety.ts";
 import type {
+  FindingVerificationOutcome,
+  FindingVerificationSubmission,
   FixOutcome,
   FixSubmission,
   NormalizedReviewSubmission,
@@ -114,6 +116,28 @@ export const fixSubmissionSchema = Type.Object(
   { additionalProperties: false },
 );
 export type FixSubmissionInput = Static<typeof fixSubmissionSchema>;
+
+export function findingVerificationSubmissionSchemaForMaxFindings(maxFindings: number) {
+  const boundedMaximum = Math.min(MAX_REVIEW_FINDINGS, Math.max(1, Math.floor(maxFindings)));
+  return Type.Object(
+    {
+      outcomes: Type.Array(
+        Type.Object({
+          findingId: Type.String({ minLength: 1, maxLength: 128 }),
+          verdict: StringEnum(["confirmed", "rejected", "uncertain"] as const),
+          explanation: Type.String({ minLength: 1, maxLength: MAX_EXPLANATION }),
+        }),
+        { maxItems: boundedMaximum },
+      ),
+      summary: Type.String({ minLength: 1, maxLength: MAX_SUMMARY }),
+    },
+    { additionalProperties: false },
+  );
+}
+
+export const findingVerificationSubmissionSchema =
+  findingVerificationSubmissionSchemaForMaxFindings(MAX_REVIEW_FINDINGS);
+export type FindingVerificationSubmissionInput = Static<typeof findingVerificationSubmissionSchema>;
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -462,6 +486,48 @@ export async function validateReviewSubmission(
   return result;
 }
 
+export function validateFindingVerificationSubmission(
+  value: unknown,
+  expectedFindingIds: readonly string[],
+): FindingVerificationSubmission {
+  const input = requireRecord(value, "Finding verification submission");
+  const expected = new Set(expectedFindingIds);
+  const seen = new Set<string>();
+  const outcomes = requireArray(input.outcomes, "outcomes", MAX_REVIEW_FINDINGS).map(
+    (entry, index) => {
+      const outcome = requireRecord(entry, `outcomes[${index}]`);
+      const findingId = requireString(outcome.findingId, `outcomes[${index}].findingId`, 128);
+      if (!expected.has(findingId)) {
+        throw new Error(`Unknown finding ID in verification outcome: ${findingId}`);
+      }
+      if (seen.has(findingId)) {
+        throw new Error(`Duplicate finding verification outcome for ${findingId}.`);
+      }
+      seen.add(findingId);
+      const verdict = outcome.verdict;
+      if (verdict !== "confirmed" && verdict !== "rejected" && verdict !== "uncertain") {
+        throw new Error(`outcomes[${index}].verdict is invalid.`);
+      }
+      return {
+        findingId,
+        verdict,
+        explanation: requireString(
+          outcome.explanation,
+          `outcomes[${index}].explanation`,
+          MAX_EXPLANATION,
+        ),
+      } satisfies FindingVerificationOutcome;
+    },
+  );
+  for (const id of expected) {
+    if (!seen.has(id)) throw new Error(`Finding verifier omitted an outcome for ${id}.`);
+  }
+  return {
+    outcomes,
+    summary: requireString(input.summary, "summary", MAX_SUMMARY),
+  };
+}
+
 export function validateFixSubmission(
   value: unknown,
   expectedFindingIds: readonly string[],
@@ -529,4 +595,10 @@ export function asReviewSubmission(input: ReviewSubmissionInput): ReviewSubmissi
 
 export function asFixSubmission(input: FixSubmissionInput): FixSubmission {
   return input as FixSubmission;
+}
+
+export function asFindingVerificationSubmission(
+  input: FindingVerificationSubmissionInput,
+): FindingVerificationSubmission {
+  return input as FindingVerificationSubmission;
 }

@@ -13,7 +13,7 @@ import {
 
 test("defaults and migrates the pre-versioned shape", () => {
   assert.deepEqual(defaultSettings(), {
-    version: 2,
+    version: 3,
     reviewMode: "standard",
     reviewerCount: 1,
     maximumPasses: 4,
@@ -30,7 +30,7 @@ test("defaults and migrates the pre-versioned shape", () => {
       reviewerModel: "openai/gpt-test",
     }),
     {
-      version: 2,
+      version: 3,
       reviewMode: "standard",
       reviewerCount: 1,
       maximumPasses: 6,
@@ -38,6 +38,7 @@ test("defaults and migrates the pre-versioned shape", () => {
       fixP3Findings: false,
       fixerContext: "fresh",
       reviewerModel: { provider: "openai", modelId: "gpt-test" },
+      verifierModel: { provider: "openai", modelId: "gpt-test" },
     },
   );
 });
@@ -61,10 +62,34 @@ test("rejects invalid ranges and model references", () => {
   );
   assert.throws(() => normalizeSettings({ reviewerModel: "missing-slash" }), /provider\/model/);
   assert.throws(() => normalizeSettings({ reviewerThinking: "ultra" }), /not a supported/);
+  assert.throws(() => normalizeSettings({ verifierThinking: "ultra" }), /not a supported/);
   assert.throws(() => normalizeSettings({ reviewMode: "hostile" }), /reviewMode must be one of/);
   assert.throws(() => normalizeSettings({ reviewerCount: 0 }), /between 1 and 8/);
   assert.throws(() => normalizeSettings({ reviewerCount: 9 }), /between 1 and 8/);
-  assert.equal(normalizeSettings({ version: 1 }).version, 2);
+  assert.equal(normalizeSettings({ version: 1 }).version, 3);
+  assert.equal(normalizeSettings({ version: 2 }).version, 3);
+  assert.equal(
+    normalizeSettings({
+      version: 2,
+      reviewerThinking: "max",
+      reviewerModel: "openai/reviewer",
+    }).verifierThinking,
+    "max",
+  );
+  assert.deepEqual(
+    normalizeSettings({
+      version: 2,
+      reviewerModel: "openai/reviewer",
+    }).verifierModel,
+    { provider: "openai", modelId: "reviewer" },
+  );
+  assert.equal(
+    normalizeSettings({
+      version: 3,
+      reviewerModel: "openai/reviewer",
+    }).verifierModel,
+    undefined,
+  );
   assert.equal(normalizeSettings({ reviewMode: "adversarial" }).reviewMode, "adversarial");
   assert.equal(normalizeSettings({ reviewMode: "adversarial" }).reviewerCount, 2);
   assert.equal(normalizeSettings({ reviewMode: "adversarial", reviewerCount: 4 }).reviewerCount, 4);
@@ -94,13 +119,19 @@ test("persists atomically and reports corrupt files", async () => {
   settings.verificationCommand = "pnpm test";
   await saveSettings(settings, path);
   assert.deepEqual(await loadSettings(path), settings);
-  assert.equal((JSON.parse(await readFile(path, "utf8")) as { version: number }).version, 2);
+  assert.equal((JSON.parse(await readFile(path, "utf8")) as { version: number }).version, 3);
 
-  await writeFile(path, '{"version":1,"maximumPasses":6}', "utf8");
+  await writeFile(
+    path,
+    '{"version":2,"maximumPasses":6,"reviewerModel":"openai/reviewer","reviewerThinking":"high"}',
+    "utf8",
+  );
   const migrated = await loadSettings(path);
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.equal(migrated.maximumPasses, 6);
-  assert.equal((JSON.parse(await readFile(path, "utf8")) as { version: number }).version, 2);
+  assert.deepEqual(migrated.verifierModel, { provider: "openai", modelId: "reviewer" });
+  assert.equal(migrated.verifierThinking, "high");
+  assert.equal((JSON.parse(await readFile(path, "utf8")) as { version: number }).version, 3);
 
   await writeFile(path, '{"verificationComand":"pnpm test"}', "utf8");
   await assert.rejects(loadSettings(path), /Invalid review-loop settings.*verificationComand/);

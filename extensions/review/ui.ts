@@ -1,4 +1,9 @@
-import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import {
+  clampThinkingLevel,
+  type Api,
+  type Model,
+  type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import {
   DynamicBorder,
   type ExtensionCommandContext,
@@ -258,6 +263,13 @@ function modelForReference(
   return reference ? ctx.modelRegistry.find(reference.provider, reference.modelId) : ctx.model;
 }
 
+export function clampConfiguredThinkingLevel(
+  model: Model<Api> | undefined,
+  level: ModelThinkingLevel | undefined,
+): ModelThinkingLevel | undefined {
+  return model && level ? clampThinkingLevel(model, level) : level;
+}
+
 interface SettingsEditorRequest {
   id: "verificationCommand" | "reviewInstructions";
   title: string;
@@ -391,10 +403,20 @@ export async function showReviewLoopSettings(
             modelItems,
             (selected) => {
               const reference = modelReferenceFromValue(selected);
+              const thinking = clampConfiguredThinkingLevel(
+                modelForReference(ctx, reference),
+                settings.reviewerThinking,
+              );
               save("reviewerModel", currentModelValue(reference), (value) => {
                 if (reference) value.reviewerModel = reference;
                 else delete value.reviewerModel;
+                if (thinking) value.reviewerThinking = thinking;
+                else delete value.reviewerThinking;
               });
+              settingsList.updateValue(
+                "reviewerThinking",
+                currentThinkingValue(settings.reviewerThinking),
+              );
             },
             close,
           ),
@@ -426,6 +448,60 @@ export async function showReviewLoopSettings(
         },
       },
       {
+        id: "verifierModel",
+        label: "Verifier model",
+        currentValue: currentModelValue(settings.verifierModel),
+        submenu: (_current, close) =>
+          choiceSubmenu(
+            "Verifier model",
+            modelItems,
+            (selected) => {
+              const reference = modelReferenceFromValue(selected);
+              const thinking = clampConfiguredThinkingLevel(
+                modelForReference(ctx, reference),
+                settings.verifierThinking,
+              );
+              save("verifierModel", currentModelValue(reference), (value) => {
+                if (reference) value.verifierModel = reference;
+                else delete value.verifierModel;
+                if (thinking) value.verifierThinking = thinking;
+                else delete value.verifierThinking;
+              });
+              settingsList.updateValue(
+                "verifierThinking",
+                currentThinkingValue(settings.verifierThinking),
+              );
+            },
+            close,
+          ),
+      },
+      {
+        id: "verifierThinking",
+        label: "Verifier thinking",
+        currentValue: currentThinkingValue(settings.verifierThinking),
+        submenu: (_current, close) => {
+          const model = modelForReference(ctx, settings.verifierModel);
+          const levels = supportedThinkingLevels(model);
+          const choices: SelectItem[] = [
+            { value: "__current__", label: "current level" },
+            ...levels.map((level) => ({ value: level, label: level })),
+          ];
+          return choiceSubmenu(
+            "Verifier thinking",
+            choices,
+            (selected) => {
+              const level =
+                selected === "__current__" ? undefined : (selected as ModelThinkingLevel);
+              save("verifierThinking", currentThinkingValue(level), (value) => {
+                if (level) value.verifierThinking = level;
+                else delete value.verifierThinking;
+              });
+            },
+            close,
+          );
+        },
+      },
+      {
         id: "fixerModel",
         label: "Fixer model",
         currentValue: currentModelValue(settings.fixerModel),
@@ -435,10 +511,20 @@ export async function showReviewLoopSettings(
             modelItems,
             (selected) => {
               const reference = modelReferenceFromValue(selected);
+              const thinking = clampConfiguredThinkingLevel(
+                modelForReference(ctx, reference),
+                settings.fixerThinking,
+              );
               save("fixerModel", currentModelValue(reference), (value) => {
                 if (reference) value.fixerModel = reference;
                 else delete value.fixerModel;
+                if (thinking) value.fixerThinking = thinking;
+                else delete value.fixerThinking;
               });
+              settingsList.updateValue(
+                "fixerThinking",
+                currentThinkingValue(settings.fixerThinking),
+              );
             },
             close,
           ),

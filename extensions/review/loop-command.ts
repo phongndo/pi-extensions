@@ -6,6 +6,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { resolveRoleModels, type TrustedContextFile } from "./child-session.ts";
+import { SdkFindingVerifier } from "./finding-verifier.ts";
 import { SdkFixer } from "./fixer.ts";
 import {
   defaultBranch,
@@ -450,7 +451,7 @@ export function registerReviewLoopCommand(pi: ExtensionAPI): void {
               phase: "resolving-target",
               pass: 0,
               maximumPasses: settings.maximumPasses,
-              detail: "preflighting reviewer and fixer models",
+              detail: "preflighting reviewer, verifier, and fixer models",
             });
             // Model/auth preflight happens before PR checkout or any fixer edit.
             const models = await resolveRoleModels({
@@ -501,11 +502,20 @@ export function registerReviewLoopCommand(pi: ExtensionAPI): void {
               fixerContextWindow: models.fixerModel.contextWindow,
               inheritedToolNames: reviewerToolNames,
             });
+            const findingVerifier = new SdkFindingVerifier({
+              execute,
+              modelRuntime: models.runtime,
+              model: models.verifierModel,
+              thinkingLevel: models.verifier.thinkingLevel,
+              contextFiles: trustedFiles,
+              inheritedToolNames: reviewerToolNames,
+            });
             return runReviewLoop({
               target,
               settings,
               models,
               reviewer,
+              findingVerifier,
               createFixer: () =>
                 new SdkFixer({
                   modelRuntime: models.runtime,

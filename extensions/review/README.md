@@ -34,9 +34,9 @@ The `/review` selector also lets you add or remove session-persisted custom revi
 
 ## Bounded review/fix loop with `/loop-review`
 
-> Independent review panel → guarded fix → deterministic verification → fresh re-review, repeated until the target is convincingly clean or a safety bound stops the run.
+> Independent review panel → candidate verification → guarded fix → deterministic verification → fresh re-review, repeated until the target is convincingly clean or a safety bound stops the run.
 
-Reviewers never inherit a fixer's claims, fixer outcomes are treated as candidates until a later reviewer confirms the finding disappeared, and Git invariants prevent the target from moving underneath the loop.
+The finding verifier never sees panel transcripts or provenance, reviewers never inherit a fixer's claims, fixer outcomes remain candidates until a later reviewer confirms the finding disappeared, and Git invariants prevent the target from moving underneath the loop.
 
 |                    |                                                                                              |
 | ------------------ | -------------------------------------------------------------------------------------------- |
@@ -157,13 +157,15 @@ A successful loop is stricter than “the fixer said it worked.”
 1. **Freeze the target.** Record branch, HEAD, scope, initial status, and target fingerprints.
 2. **Baseline verification.** Run the configured command before review, if any.
 3. **Fresh review panel.** Start the configured number of new reviewer sessions. Panel members run concurrently against the same fingerprint and require a structured verdict from every member.
-4. **Aggregate and prioritize findings.** Union and deduplicate panel findings; P0–P2 are actionable and P3 follows the `fixP3Findings` setting.
-5. **Guarded repair.** Give actionable findings to the fixer without generic shell access.
-6. **Verify.** Run the host command after changes. A failure gets at most two bounded repair attempts.
-7. **Re-review independently.** A fixer-reported outcome is not confirmed until a later reliable review omits the same finding fingerprint.
-8. **Require clean evidence.** The aggregated panel must have no qualifying actionable findings, configured verification must pass, the target must remain unchanged, and the configured count of clean panel runs must be reached.
+4. **Aggregate candidate findings.** Union and deduplicate panel findings without majority-voting away single-reviewer reports.
+5. **Verify candidate findings independently.** Start a separate fresh read-only session that checks every candidate against the actual code. Confirmed findings continue, concretely disproved findings are retained as invalid, and uncertain findings block rather than disappearing or reaching the fixer.
+6. **Prioritize.** P0–P2 confirmed findings are actionable and confirmed P3 follows the `fixP3Findings` setting.
+7. **Guarded repair.** Give only confirmed actionable findings to the fixer without generic shell access.
+8. **Run deterministic verification.** Run the configured host command after changes. A failure gets at most two bounded repair attempts.
+9. **Re-review independently.** A fixer-reported outcome is not confirmed until a later reliable review omits the same finding fingerprint.
+10. **Require clean evidence.** The aggregated panel must have no confirmed actionable findings, candidate verification must have no uncertainty, configured deterministic verification must pass, the target must remain unchanged, and the configured count of clean panel runs must be reached.
 
-The loop blocks on recurring findings, target mutation during review, branch/HEAD changes, out-of-folder edits, deferred actionable findings, reviewer protocol failure, or exhausted repair limits.
+The loop blocks on recurring findings, uncertain candidate verification, target mutation during review or verification, branch/HEAD changes, out-of-folder edits, deferred actionable findings, reviewer/verifier protocol failure, or exhausted repair limits.
 
 ## Finding priorities
 
@@ -192,8 +194,10 @@ Settings persist globally in `~/.pi/agent/review-loop.json` by default.
 | -------------------- | ---------------- | ------------------------------------------------------------ |
 | Review mode          | `standard`       | Select reviewer specialization and strategy                  |
 | Review agents        | `1`              | Independent reviewer sessions launched concurrently; 1–8     |
-| Reviewer model       | Current Pi model | Model used by every independent panel member                 |
+| Reviewer model       | Current Pi model | Model used by every independent review-panel member          |
 | Reviewer thinking    | Current Pi level | Reasoning used by fresh reviewer sessions                    |
+| Verifier model       | Current Pi model | Independent candidate-finding verification role              |
+| Verifier thinking    | Current Pi level | Reasoning used by fresh verifier sessions                    |
 | Fixer model          | Current Pi model | Guarded implementation role                                  |
 | Fixer thinking       | Current Pi level | Reasoning used for repairs                                   |
 | Maximum passes       | `4`              | Review-pass cap; 1–20 or `unlimited`                         |
@@ -203,15 +207,15 @@ Settings persist globally in `~/.pi/agent/review-loop.json` by default.
 | Verification command | unset            | Deterministic host command run at baseline and after changes |
 | Review instructions  | unset            | Global rubric appended to reviewer prompts                   |
 
-`current model` and `current level` are dynamic references: they resolve from the outer Pi session at run start. Explicit model settings store only `provider/model-id`, never credentials. Unsupported reasoning levels are resolved safely against the chosen model.
+`current model` and `current level` are dynamic references: they resolve from the outer Pi session at run start. Explicit model settings store only `provider/model-id`, never credentials. When a selected model does not support the configured reasoning level, the settings UI immediately lowers it to that model's highest supported level; run-time resolution applies the same safe clamp for dynamic current-model references.
 
-Settings schema version 2 introduced `reviewMode` and `reviewerCount`. Version 1 and pre-versioned files are migrated on load and written back as version 2. Older extension releases that only understand version 1 cannot consume a version 2 file; downgrade by moving `review-loop.json` aside and letting that release regenerate its defaults.
+Settings schema version 3 introduced independent verifier model and thinking settings. Version 2 files migrate by copying their reviewer role into the verifier role, preserving previous behavior; version 1 and pre-versioned files migrate through the same path. Older extension releases cannot consume a version 3 file; downgrade by moving `review-loop.json` aside and letting that release regenerate its defaults.
 
 Example persisted configuration:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "reviewMode": "adversarial",
   "reviewerCount": 4,
   "reviewerModel": {
@@ -219,6 +223,11 @@ Example persisted configuration:
     "modelId": "grok-4.5"
   },
   "reviewerThinking": "high",
+  "verifierModel": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-4-6"
+  },
+  "verifierThinking": "high",
   "fixerModel": {
     "provider": "openai-codex",
     "modelId": "gpt-5.6-luna"
@@ -256,9 +265,11 @@ If no command is configured, a clean result means **review-clean**, not test-ver
 
 - Every panel member gets a fresh in-memory session and its review assignment.
 - Parallel reviewers inspect the same frozen fingerprint without seeing each other's output.
-- Reviewers inherit the outer session's active tools and normal user-level extensions (including FFF when installed). Project extensions remain disabled.
-- Only `edit` and `write` are removed from the inherited active set. Reviewers still receive unrestricted general Bash for inspection, tests, and Git history. Their prompt forbids mutations; the host rejects convergence if the target changes during review.
-- All panel members currently use the configured reviewer model; role-specific reviewer models are not yet configurable.
+- Every non-empty candidate set gets a separate fresh finding-verifier session. It sees structured candidates but not panel transcripts, hidden reasoning, prior outcomes, fixer context, or reviewer-count provenance.
+- The verifier must concretely establish a finding to confirm it and concretely disprove it to reject it; uncertainty blocks the loop.
+- Reviewers and finding verifiers inherit the outer session's active tools and normal user-level extensions (including FFF when installed). Project extensions remain disabled.
+- Only `edit` and `write` are removed from the inherited active set. Reviewers and finding verifiers still receive unrestricted general Bash for inspection, tests, and Git history. Their prompts forbid mutations; the host rejects convergence if the target changes during either stage.
+- Review-panel members use the configured reviewer model, the finding verifier uses its separately configured verifier model, and repairs use the fixer model.
 - The fixer is persistent by default so it can retain implementation context; `fresh` resets it each pass.
 - Child sessions do not recursively load project extensions.
 - Provider definitions and effective authentication are transferred from the already-resolved outer runtime.
@@ -269,7 +280,7 @@ This separation prevents a fixer from grading its own work and keeps the outer c
 
 ## Safety guarantees
 
-Reviewer Bash and inherited user extensions run with the user's permissions. Reviewers are instructed to use Bash only for inspection, tests, and read-only Git history; Bash is not technically read-only. A target fingerprint change blocks convergence but cannot undo shell or extension side effects.
+Reviewer/verifier Bash and inherited user extensions run with the user's permissions. These roles are instructed to use Bash only for inspection, tests, and read-only Git history; Bash is not technically read-only. A target fingerprint change blocks convergence but cannot undo shell or extension side effects.
 
 The fixer can inspect and mutate files through guarded tools, but it has no generic shell. It cannot:
 
@@ -285,7 +296,7 @@ Additional invariants:
 - HEAD and active branch must remain frozen after target resolution.
 - Folder targets cannot mutate outside selected paths.
 - Paths resolving through symlinks into `.git` or outside the repository are rejected.
-- A reviewer changing the target blocks the run.
+- A reviewer or finding verifier changing the target blocks the run.
 - Aborting preserves completed edits and reports that edits may remain.
 - Only one review loop runs per Pi session.
 - Repository fingerprints include ignored worktree files. When an ignored tree exceeds the descendant safety cap (for example a large `node_modules`), the host falls back to collapsed ignored directory roots instead of aborting.
@@ -294,13 +305,13 @@ Review Loop improves confidence; it does not replace human review for security-c
 
 ## Terminal statuses
 
-| Status      | Meaning                                                                                            |
-| ----------- | -------------------------------------------------------------------------------------------------- |
-| `clean`     | The panel had no qualifying actionable findings and verification succeeded on an unchanged target  |
-| `blocked`   | A safety invariant, recurring issue, protocol problem, or verification bound prevented convergence |
-| `exhausted` | Maximum passes ended before fresh clean evidence was available                                     |
-| `aborted`   | User/session cancellation; completed edits were preserved                                          |
-| `failed`    | Unexpected failure prevented a reliable result                                                     |
+| Status      | Meaning                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `clean`     | No candidate survived independent finding verification as actionable, and deterministic verification succeeded on an unchanged target |
+| `blocked`   | A safety invariant, recurring issue, protocol problem, or verification bound prevented convergence                                    |
+| `exhausted` | Maximum passes ended before fresh clean evidence was available                                                                        |
+| `aborted`   | User/session cancellation; completed edits were preserved                                                                             |
+| `failed`    | Unexpected failure prevented a reliable result                                                                                        |
 
 Expand the final custom message in Pi to inspect per-pass verdicts, finding ledger state, fixer summaries, verification output, model choices, usage, and cost.
 
@@ -378,7 +389,7 @@ pnpm --filter pi-review check
 pnpm --filter pi-review format
 ```
 
-After local changes, run `/reload` in Pi. Tests cover argument parsing, target safety, symlink/Git-metadata confinement, model resolution, reviewer prompting/protocols, fixer restrictions, verification cancellation, convergence, and custom rendering.
+After local changes, run `/reload` in Pi. Tests cover argument parsing, target safety, symlink/Git-metadata confinement, model resolution, reviewer and finding-verifier prompting/protocols, fixer restrictions, verification cancellation, convergence, and custom rendering.
 
 ## Attribution
 

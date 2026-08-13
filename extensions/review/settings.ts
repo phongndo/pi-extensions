@@ -7,7 +7,7 @@ import { REVIEW_MODES, type ModelReference, type ReviewLoopSettings } from "./mo
 import { reviewerCountForMode } from "./review-modes.ts";
 
 export const REVIEW_LOOP_SETTINGS_PATH = join(getAgentDir(), "review-loop.json");
-export const REVIEW_LOOP_SETTINGS_VERSION = 2;
+export const REVIEW_LOOP_SETTINGS_VERSION = 3;
 export const MAX_REVIEWER_COUNT = 8;
 export const THINKING_LEVELS = [
   "off",
@@ -26,6 +26,8 @@ const SETTINGS_KEYS = new Set([
   "reviewerCount",
   "reviewerModel",
   "reviewerThinking",
+  "verifierModel",
+  "verifierThinking",
   "fixerModel",
   "fixerThinking",
   "maximumPasses",
@@ -136,13 +138,14 @@ function parseReviewMode(value: unknown): ReviewLoopSettings["reviewMode"] {
   return value as ReviewLoopSettings["reviewMode"];
 }
 
-/** Migrate version 1 and pre-versioned settings into the current panel-aware schema. */
+/** Migrate version 1, version 2, and pre-versioned settings into the current schema. */
 export function normalizeSettings(value: unknown): ReviewLoopSettings {
   if (!isRecord(value)) throw new Error("Review-loop settings must contain a JSON object.");
   assertKnownKeys(value, SETTINGS_KEYS, "Review-loop settings");
   if (
     value.version !== undefined &&
     value.version !== 1 &&
+    value.version !== 2 &&
     value.version !== REVIEW_LOOP_SETTINGS_VERSION
   ) {
     throw new Error(`Unsupported review-loop settings version: ${String(value.version)}.`);
@@ -192,6 +195,16 @@ export function normalizeSettings(value: unknown): ReviewLoopSettings {
 
   const reviewerModel = parseModelReference(value.reviewerModel, "reviewerModel");
   const reviewerThinking = parseThinkingLevel(value.reviewerThinking, "reviewerThinking");
+  const configuredVerifierModel = parseModelReference(value.verifierModel, "verifierModel");
+  const configuredVerifierThinking = parseThinkingLevel(value.verifierThinking, "verifierThinking");
+  // Version 2 used the reviewer role for candidate verification. Preserve that behavior when
+  // migrating, while version 3 can intentionally leave the verifier on the current model/level.
+  const legacyVerifierDefaults =
+    value.version === undefined || value.version === 1 || value.version === 2;
+  const verifierModel =
+    configuredVerifierModel ?? (legacyVerifierDefaults ? reviewerModel : undefined);
+  const verifierThinking =
+    configuredVerifierThinking ?? (legacyVerifierDefaults ? reviewerThinking : undefined);
   const fixerModel = parseModelReference(value.fixerModel, "fixerModel");
   const fixerThinking = parseThinkingLevel(value.fixerThinking, "fixerThinking");
   const verificationCommand = optionalTrimmedString(
@@ -203,6 +216,8 @@ export function normalizeSettings(value: unknown): ReviewLoopSettings {
 
   if (reviewerModel) settings.reviewerModel = reviewerModel;
   if (reviewerThinking) settings.reviewerThinking = reviewerThinking;
+  if (verifierModel) settings.verifierModel = verifierModel;
+  if (verifierThinking) settings.verifierThinking = verifierThinking;
   if (fixerModel) settings.fixerModel = fixerModel;
   if (fixerThinking) settings.fixerThinking = fixerThinking;
   if (verificationCommand) settings.verificationCommand = verificationCommand;

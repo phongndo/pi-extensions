@@ -26,6 +26,11 @@ function result(reason: string): ReviewLoopResult {
       thinkingLevel: "off",
       displayName: "Reviewer",
     },
+    verifier: {
+      reference: { provider: "test", modelId: "verifier" },
+      thinkingLevel: "off",
+      displayName: "Verifier",
+    },
     fixer: {
       reference: { provider: "test", modelId: "fixer" },
       thinkingLevel: "off",
@@ -72,5 +77,6 @@ test("sanitizes all dynamic result context fields", () => {
 test("renders persisted pre-mode results as standard review", () => {
   const legacy: Partial<ReviewLoopResult> = result("legacy");
   delete legacy.reviewMode;
+  delete legacy.verifier;
   assert.match(resultContextContent(legacy as ReviewLoopResult), /Review mode: standard/);
 });
