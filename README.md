@@ -18,9 +18,11 @@ The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches 
 
 Also included:
 
-- [`/skill:huh`](skills/huh/SKILL.md), restates the previous response more simply, concisely, and without jargon
-- [`/skill:visualize`](skills/visualize/SKILL.md), explains a topic with a compact diagram, call tree, or code-shape sketch
+- [`/skill:bro`](skills/bro/SKILL.md), restates the previous response more simply, concisely, and without jargon
+- [`/skill:show-me`](skills/show-me/SKILL.md), explains a topic with a compact diagram, call tree, or code-shape sketch
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
+
+`bro` and `show-me` are manual-only skills; Pi does not expose them to the model until you invoke their commands.
 
 ## Quick start
 
@@ -77,15 +79,15 @@ Add a Firecrawl key, inspect credits, choose context/cost limits, and decide whi
 ### 3. Ask for a simpler explanation
 
 ```text
-/skill:huh
+/skill:bro
 ```
 
 The agent restates its previous response in plain, concise language.
 
-### 4. Visualize a topic
+### 4. Show a topic
 
 ```text
-/skill:visualize the review loop
+/skill:show-me the review loop
 ```
 
 The agent uses the smallest useful diagram, call tree, formula, or code-shape sketch instead of explaining the topic in prose.
@@ -127,8 +129,8 @@ The loop uses a fresh blind reviewer panel each pass, independently verifies can
 | Rigorous multi-source report                | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations   |
 | One interactive review with a handoff       | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes       |
 | Independent review, repair, and convergence | `/loop-review`                       | Purpose-built convergence and Git safety                      |
-| The last answer was confusing or too wordy  | `/skill:huh`                         | A simpler, concise restatement without jargon                 |
-| A concept would be clearer as a visual      | `/skill:visualize`                   | A compact diagram, call tree, formula, or code-shape sketch   |
+| The last answer was confusing or too wordy  | `/skill:bro`                         | A simpler, concise restatement without jargon                 |
+| A concept would be clearer as a visual      | `/skill:show-me`                     | A compact diagram, call tree, formula, or code-shape sketch   |
 | Finished changes ready for GitHub           | `/yeet`                              | Repo-native verification and PR-template workflow             |
 
 A useful sequence for larger changes is:
@@ -148,8 +150,8 @@ Each stage has a different trust boundary: external evidence, independent verifi
 | `/web-tools`                 | Open Firecrawl configuration                                      |
 | `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
 | `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
-| `/skill:huh`                 | Restate the previous response simply, concisely, and coherently   |
-| `/skill:visualize [topic]`   | Explain a topic with the smallest useful visual                   |
+| `/skill:bro`                 | Restate the previous response simply, concisely, and coherently   |
+| `/skill:show-me [topic]`     | Explain a topic with the smallest useful visual                   |
 | `/review [target]`           | Start an interactive review in an empty branch or current session |
 | `/settings-review`           | Configure Review Loop mode, models, and convergence               |
 | `/end-review`                | Return from an isolated review, optionally summarize or fix       |
@@ -197,8 +199,8 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── web-tools/                  # web_* tools and research skill
 │   └── review/                     # /review, /end-review, /loop-review
 ├── skills/
-│   ├── huh/                        # /skill:huh plain-language restatements
-│   └── visualize/                  # /skill:visualize compact visual explanations
+│   ├── bro/                        # /skill:bro plain-language restatements
+│   └── show-me/                    # /skill:show-me compact visual explanations
 ├── prompt/yeet.md                  # /yeet prompt template
 ├── package.json                    # root Pi package manifest
 └── pnpm-workspace.yaml             # extension workspace packages
@@ -272,8 +274,8 @@ hk run pre-commit
 - [Web Tools](extensions/web-tools/README.md)
 - [Web Tools evaluations](extensions/web-tools/evals/README.md)
 - [Research skill](extensions/web-tools/skills/research/SKILL.md)
-- [Huh skill](skills/huh/SKILL.md)
-- [Visualize skill](skills/visualize/SKILL.md)
+- [Bro skill](skills/bro/SKILL.md)
+- [Show Me skill](skills/show-me/SKILL.md)
 - [Review](extensions/review/README.md)
 - [Review Loop design plan](extensions/review/PLAN.md)
 - [`/yeet` prompt](prompt/yeet.md)

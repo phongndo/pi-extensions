@@ -1,9 +1,10 @@
 ---
-name: visualize
-description: Call when the user asks to see a concept visually; when explaining program design, diffs, architecture, control flow, UI, math, or relationships; or when a diagram would be clearer than prose.
+name: show-me
+description: Explains a topic with a compact diagram, call tree, formula, or code-shape sketch.
+disable-model-invocation: true
 ---
 
-# Visualize
+# Show Me
 
 Use the smallest useful visual and almost no prose. Prefer one shape; use at most two. Do not narrate the visual. Inspect named files first.
 
@@ -30,7 +31,7 @@ Bad: long node text or a diagram type Pi cannot draw.
 
 ```mermaid
 sequenceDiagram
-  User->>Pi: /skill:visualize
+  User->>Pi: /skill:show-me
   Pi->>Model: SKILL.md
   Model-->>User: diagram
 ```
@@ -59,8 +60,8 @@ submitForm
 ```
 
 ```text
-skills/visualize/SKILL.md  # this skill
-package.json               # pi.skills += ./skills
+skills/show-me/SKILL.md  # this skill
+package.json             # pi.skills += ./skills
 ```
 
 ```diff
@@ -78,8 +79,8 @@ Do not dump the repository, implement an API merely to show it, or restate a dif
 
 ## HTML last resort
 
-Use HTML only for a layout or mockup that simpler shapes cannot express. Create one self-contained file at `/tmp/visualize/<slug>.html`, never in the repository. Use inline CSS and JavaScript with no external scripts, fonts, images, fetch, or XHR. Open it, then link it:
+Use HTML only for a layout or mockup that simpler shapes cannot express. Create one self-contained file at `/tmp/show-me/<slug>.html`, never in the repository. Use inline CSS and JavaScript with no external scripts, fonts, images, fetch, or XHR. Open it, then link it:
 
-`[open preview](file:///tmp/visualize/<slug>.html)`
+`[open preview](file:///tmp/show-me/<slug>.html)`
 
 `open … || xdg-open …`
