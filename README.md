@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, independent review/fix loops, and a safe PR-publishing prompt.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, plan stress-testing, independent review/fix loops, and a safe PR-publishing prompt.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, and prompt templates together.
 
@@ -18,11 +18,12 @@ The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches 
 
 Also included:
 
-- [`/skill:bro`](skills/bro/SKILL.md), restates the previous response more simply, concisely, and without jargon
-- [`/skill:show-me`](skills/show-me/SKILL.md), explains a topic with a compact diagram, call tree, or code-shape sketch
+- [Dillon Mulroy's `/skill:bro`](skills/bro/SKILL.md), restates the last message in plain human language, with no jargon
+- [Matt Pocock's `/skill:grill-me`](skills/grill-me/SKILL.md), stress-tests a plan or design through the bundled [`grilling`](skills/grilling/SKILL.md) workflow
+- [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`bro` and `show-me` are manual-only skills; Pi does not expose them to the model until you invoke their commands.
+`bro` and `grill-me` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The bundled third-party `SKILL.md` files are unmodified upstream copies; see their [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -90,9 +91,17 @@ The agent restates its previous response in plain, concise language.
 /skill:show-me the review loop
 ```
 
-The agent uses the smallest useful diagram, call tree, formula, or code-shape sketch instead of explaining the topic in prose.
+The agent picks the smallest useful view, using pseudocode, trees, Mermaid, diffs, code, or a focused HTML artifact.
 
-### 5. Review changes
+### 5. Stress-test a plan
+
+```text
+/skill:grill-me
+```
+
+The agent interviews you in rounds until every branch of the plan's design tree is resolved and you confirm the shared understanding.
+
+### 6. Review changes
 
 Start a one-pass review in an empty branch of the current Pi session, then return with a structured handoff:
 
@@ -110,7 +119,7 @@ For automatic repair and independent convergence checking, use the bounded loop.
 
 The loop uses a fresh blind reviewer panel each pass, independently verifies candidate findings before repair, applies confirmed findings through a guarded fixer, and optionally runs deterministic checks.
 
-### 6. Publish finished work
+### 7. Publish finished work
 
 ```text
 /yeet
@@ -120,18 +129,19 @@ The loop uses a fresh blind reviewer panel each pass, independently verifies can
 
 ## Choosing the right primitive
 
-| Need                                        | Prefer                               | Why                                                           |
-| ------------------------------------------- | ------------------------------------ | ------------------------------------------------------------- |
-| Material ambiguity during an active run     | `question`                           | Pauses in place and resumes with a compact answer map         |
-| One known page                              | `web_fetch`                          | Smallest live-web operation                                   |
-| Missing specialized capability              | `tool_search`                        | Loads the smallest matching namespaced tool bundle additively |
-| Unknown source                              | `web_search`, then selective fetches | Bounded discovery before extraction                           |
-| Rigorous multi-source report                | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations   |
-| One interactive review with a handoff       | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes       |
-| Independent review, repair, and convergence | `/loop-review`                       | Purpose-built convergence and Git safety                      |
-| The last answer was confusing or too wordy  | `/skill:bro`                         | A simpler, concise restatement without jargon                 |
-| A concept would be clearer as a visual      | `/skill:show-me`                     | A compact diagram, call tree, formula, or code-shape sketch   |
-| Finished changes ready for GitHub           | `/yeet`                              | Repo-native verification and PR-template workflow             |
+| Need                                          | Prefer                               | Why                                                           |
+| --------------------------------------------- | ------------------------------------ | ------------------------------------------------------------- |
+| Material ambiguity during an active run       | `question`                           | Pauses in place and resumes with a compact answer map         |
+| One known page                                | `web_fetch`                          | Smallest live-web operation                                   |
+| Missing specialized capability                | `tool_search`                        | Loads the smallest matching namespaced tool bundle additively |
+| Unknown source                                | `web_search`, then selective fetches | Bounded discovery before extraction                           |
+| Rigorous multi-source report                  | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations   |
+| One interactive review with a handoff         | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes       |
+| Independent review, repair, and convergence   | `/loop-review`                       | Purpose-built convergence and Git safety                      |
+| The last answer was confusing or too wordy    | `/skill:bro`                         | A simpler, concise restatement without jargon                 |
+| A concept would be clearer as a visual        | `/skill:show-me`                     | Concise diagrams, code-shape sketches, or focused HTML        |
+| A plan or design needs every assumption aired | `/skill:grill-me`                    | Relentless design-tree interview in dependency-aware rounds   |
+| Finished changes ready for GitHub             | `/yeet`                              | Repo-native verification and PR-template workflow             |
 
 A useful sequence for larger changes is:
 
@@ -151,7 +161,8 @@ Each stage has a different trust boundary: external evidence, independent verifi
 | `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
 | `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
 | `/skill:bro`                 | Restate the previous response simply, concisely, and coherently   |
-| `/skill:show-me [topic]`     | Explain a topic with the smallest useful visual                   |
+| `/skill:grill-me`            | Stress-test a plan through a relentless design-tree interview     |
+| `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML       |
 | `/review [target]`           | Start an interactive review in an empty branch or current session |
 | `/settings-review`           | Configure Review Loop mode, models, and convergence               |
 | `/end-review`                | Return from an isolated review, optionally summarize or fix       |
@@ -199,8 +210,11 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── web-tools/                  # web_* tools and research skill
 │   └── review/                     # /review, /end-review, /loop-review
 ├── skills/
-│   ├── bro/                        # /skill:bro plain-language restatements
-│   └── show-me/                    # /skill:show-me compact visual explanations
+│   ├── bro/                        # Dillon Mulroy's /skill:bro
+│   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
+│   ├── grilling/                   # Matt Pocock's supporting interview workflow
+│   └── show-me/                    # HumanLayer's /skill:show-me
+├── THIRD_PARTY_NOTICES.md          # Skill provenance and licenses
 ├── prompt/yeet.md                  # /yeet prompt template
 ├── package.json                    # root Pi package manifest
 └── pnpm-workspace.yaml             # extension workspace packages
@@ -275,7 +289,10 @@ hk run pre-commit
 - [Web Tools evaluations](extensions/web-tools/evals/README.md)
 - [Research skill](extensions/web-tools/skills/research/SKILL.md)
 - [Bro skill](skills/bro/SKILL.md)
+- [Grill Me skill](skills/grill-me/SKILL.md)
+- [Grilling workflow](skills/grilling/SKILL.md)
 - [Show Me skill](skills/show-me/SKILL.md)
+- [Bundled skill third-party notices](THIRD_PARTY_NOTICES.md)
 - [Review](extensions/review/README.md)
 - [Review Loop design plan](extensions/review/PLAN.md)
 - [`/yeet` prompt](prompt/yeet.md)
