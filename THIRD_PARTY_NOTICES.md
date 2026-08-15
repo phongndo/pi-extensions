@@ -6,7 +6,7 @@
 
 ## grill-me and grilling
 
-[`skills/grill-me/SKILL.md`](skills/grill-me/SKILL.md) and its [`skills/grilling/SKILL.md`](skills/grilling/SKILL.md) dependency are copied from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`8b78b531ab965735c5dc74f6f7a219e1e37326df`](https://github.com/mattpocock/skills/commit/8b78b531ab965735c5dc74f6f7a219e1e37326df).
+[`skills/grill-me/SKILL.md`](skills/grill-me/SKILL.md) is copied from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`8b78b531ab965735c5dc74f6f7a219e1e37326df`](https://github.com/mattpocock/skills/commit/8b78b531ab965735c5dc74f6f7a219e1e37326df). Its [`skills/grilling/SKILL.md`](skills/grilling/SKILL.md) dependency is adapted from the same commit to route interview rounds through Pi's native `question` tool.
 
 ## Matt Pocock MIT license
 

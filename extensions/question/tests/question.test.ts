@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import questionExtension, { normalizeQuestions } from "../index.ts";
 import { NumberedSelectList, QuestionDialog, type DialogAnswers } from "../ui.ts";
 
@@ -48,8 +48,9 @@ test("registers a compact sequential question tool", () => {
   assert.equal(tool.label, "question");
   assert.equal(tool.executionMode, "sequential");
   assert.deepEqual(tool.promptGuidelines, [
-    "Use the question tool proactively whenever you need clarification about the user's intent, scope, preferences, constraints, or tradeoffs; prefer one brief question over guessing at a consequential assumption. Do not use question for information discoverable with available tools or for trivial, low-impact choices. Batch related questions in one call.",
+    "With the question tool, prefer one brief clarification over guessing at a consequential assumption, and batch related questions in one call. Do not use question for information discoverable with available tools or for trivial, low-impact choices.",
   ]);
+  assert.match(tool.description, /do not ask those questions in prose/);
   assert.match(tool.description, /batch related questions/);
 });
 
@@ -64,7 +65,7 @@ test("keeps the provider-visible tool contract cache-stable", () => {
     executionMode: tool.executionMode,
   };
   const fingerprint = createHash("sha256").update(JSON.stringify(contract)).digest("hex");
-  assert.equal(fingerprint, "2bf4f78e8243becca421c3cca08df8f0ab3a28d826c06e27b23919552092aa86");
+  assert.equal(fingerprint, "2058567d1c83a9d6d5337dabae14ae77b9cf5037cf215ce7ed2166f529966068");
 });
 
 test("number keys immediately select the matching native list item", () => {
@@ -109,6 +110,49 @@ test("uses available width instead of cutting option labels off at 32 columns", 
   const rendered = list.render(120).join("\n");
   assert.match(rendered, new RegExp(label));
   assert.match(rendered, /Keep the current schema/);
+});
+
+test("wraps the full selected description in a responsive detail pane", () => {
+  const plain = (text: string) => text;
+  const firstDescription =
+    "Use this option when the initial migration must preserve existing clients while ending with a meaningful final consequence.";
+  const secondDescription =
+    "Use this alternative when a clean break matters more than compatibility and operators accept a separate final consequence.";
+  const list = new NumberedSelectList(
+    [
+      { value: "first", label: "Compatible migration", description: firstDescription },
+      { value: "second", label: "Clean break", description: secondDescription },
+    ],
+    2,
+    {
+      selectedPrefix: plain,
+      selectedText: plain,
+      description: plain,
+      scrollInfo: plain,
+      noMatch: plain,
+    },
+  );
+
+  const narrowLines = list.render(36);
+  const narrowView = narrowLines.join(" ").replace(/\s+/g, " ");
+  assert.match(narrowView, new RegExp(firstDescription));
+  assert.doesNotMatch(narrowView, new RegExp(secondDescription));
+  assert.ok(narrowLines.every((line) => visibleWidth(line) <= 36));
+  assert.ok(narrowLines.every((line) => !line.includes("│")));
+
+  const wideLines = list.render(120);
+  const wideDetailView = wideLines
+    .map((line) => line.split("│")[1] ?? "")
+    .join(" ")
+    .replace(/\s+/g, " ");
+  assert.match(wideDetailView, new RegExp(firstDescription));
+  assert.ok(wideLines.some((line) => line.includes("│")));
+  assert.ok(wideLines.every((line) => visibleWidth(line) <= 120));
+
+  list.handleInput("j");
+  const secondView = list.render(36).join(" ").replace(/\s+/g, " ");
+  assert.match(secondView, new RegExp(secondDescription));
+  assert.doesNotMatch(secondView, new RegExp(firstDescription));
 });
 
 test("j/k and tab/shift-tab navigate the option list", () => {
@@ -188,7 +232,9 @@ test("matches Codex's layered option-and-notes flow", () => {
   assert.doesNotMatch(selectedView, /○|Continue/);
 
   dialog.handleInput("\t");
-  assert.match(dialog.render(80).join("\n"), /Question 1\/2/);
+  const notesView = dialog.render(80).join("\n");
+  assert.match(notesView, /Question 1\/2/);
+  assert.match(notesView, /Your note/);
   const note = "Something else that is long enough to wrap onto another line";
   for (const character of note) dialog.handleInput(character);
   const wrappedNotesView = dialog.render(30);

@@ -19,11 +19,11 @@ The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches 
 Also included:
 
 - [Dillon Mulroy's `/skill:bro`](skills/bro/SKILL.md), restates the last message in plain human language, with no jargon
-- [Matt Pocock's `/skill:grill-me`](skills/grill-me/SKILL.md), stress-tests a plan or design through the bundled [`grilling`](skills/grilling/SKILL.md) workflow
+- [Matt Pocock's `/skill:grill-me`](skills/grill-me/SKILL.md), stress-tests a plan through a [`grilling`](skills/grilling/SKILL.md) workflow adapted to use Pi's native `question` tool
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`bro` and `grill-me` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The bundled third-party `SKILL.md` files are unmodified upstream copies; see their [third-party notices](THIRD_PARTY_NOTICES.md).
+`bro` and `grill-me` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `grill-me`, and `show-me` files are unmodified upstream copies; `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -99,7 +99,7 @@ The agent picks the smallest useful view, using pseudocode, trees, Mermaid, diff
 /skill:grill-me
 ```
 
-The agent interviews you in rounds until every branch of the plan's design tree is resolved and you confirm the shared understanding.
+The agent interviews you through the native layered question dialog, asking up to four current design-tree decisions per round until every branch is resolved and you confirm the shared understanding.
 
 ### 6. Review changes
 
@@ -140,7 +140,7 @@ The loop uses a fresh blind reviewer panel each pass, independently verifies can
 | Independent review, repair, and convergence   | `/loop-review`                       | Purpose-built convergence and Git safety                      |
 | The last answer was confusing or too wordy    | `/skill:bro`                         | A simpler, concise restatement without jargon                 |
 | A concept would be clearer as a visual        | `/skill:show-me`                     | Concise diagrams, code-shape sketches, or focused HTML        |
-| A plan or design needs every assumption aired | `/skill:grill-me`                    | Relentless design-tree interview in dependency-aware rounds   |
+| A plan or design needs every assumption aired | `/skill:grill-me`                    | Native question dialogs over the design-tree frontier         |
 | Finished changes ready for GitHub             | `/yeet`                              | Repo-native verification and PR-template workflow             |
 
 A useful sequence for larger changes is:
@@ -161,7 +161,7 @@ Each stage has a different trust boundary: external evidence, independent verifi
 | `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
 | `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
 | `/skill:bro`                 | Restate the previous response simply, concisely, and coherently   |
-| `/skill:grill-me`            | Stress-test a plan through a relentless design-tree interview     |
+| `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds          |
 | `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML       |
 | `/review [target]`           | Start an interactive review in an empty branch or current session |
 | `/settings-review`           | Configure Review Loop mode, models, and convergence               |
@@ -212,7 +212,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 ├── skills/
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
 │   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
-│   ├── grilling/                   # Matt Pocock's supporting interview workflow
+│   ├── grilling/                   # Interview workflow adapted for question
 │   └── show-me/                    # HumanLayer's /skill:show-me
 ├── THIRD_PARTY_NOTICES.md          # Skill provenance and licenses
 ├── prompt/yeet.md                  # /yeet prompt template

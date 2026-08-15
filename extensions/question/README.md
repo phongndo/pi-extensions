@@ -14,6 +14,8 @@ A small, native interactive clarification tool for Pi. The model can call `quest
 - Lets notes supplement any selected option and wraps them below the option list without extra indentation or another pane.
 - Shows no empty circle markers; marked answers receive a trailing `✓`.
 - Expands the option-label column to avoid cutting readable choices off at the native 32-column default.
+- Keeps option rows compact and wraps the highlighted option's complete description in a right-hand detail pane on wide terminals, falling back below the list on narrow terminals.
+- Labels supplemental editor input as “Your note” so it cannot be mistaken for option details.
 - Uses a compact native chat editor without the stock shortcut footer.
 - Supports `j`/`k` option navigation and `h`/`l` or left/right question-layer navigation.
 - Uses Ctrl+P/Ctrl+N to switch question layers while editing free text or notes.
@@ -57,7 +59,7 @@ Pi RPC mode uses the same dialog calls through Pi's extension UI protocol.
 }
 ```
 
-Omit `options` for free text. Use two to four choices normally; the hard cap is six. Batch related questions in one call when multiple answers are needed. The TUI adds “None of the above” automatically, so models should not add an `Other` option. Enter or a displayed number submits a single choice immediately. Press Space first to mark a choice without advancing, then Tab to add notes; Enter submits the choice and note together. Notes attached to “None of the above” become a standalone answer. Navigate question layers with `h`/`l` or left/right while choosing, and Ctrl+P/Ctrl+N while editing.
+Omit `options` for free text. Use two to four choices normally; the hard cap is six. When user input is needed before continuing, call `question` instead of printing questions in assistant prose. Batch up to four related questions in one call. The TUI adds “None of the above” automatically, so models should not add an `Other` option. Enter or a displayed number submits a single choice immediately. Press Space first to mark a choice without advancing, then Tab to add notes; Enter submits the choice and note together. Notes attached to “None of the above” become a standalone answer. Navigate question layers with `h`/`l` or left/right while choosing, and Ctrl+P/Ctrl+N while editing.
 
 ## Tool result
 
@@ -84,14 +86,14 @@ Cancellation is represented as:
 The tool keeps its recurring prompt cost small:
 
 - One short tool description, one-line tool snippet, and focused system-prompt guideline
-- The guideline encourages proactive clarification while discouraging questions about discoverable facts or trivial choices
+- The description routes user-input decisions through `question` instead of assistant prose; the guideline keeps the discoverable-fact and trivial-choice exceptions
 - A six-option ceiling for flexibility, while prompting models to prefer two to four
 - No duplicated headers or option values
 - Short answer IDs rather than question text as result keys
 - No prose wrapper around answers
 - Full display state kept in `details`, not model-facing `content`
 
-The model is instructed to use `question` proactively when clarification would improve the result, prefer a brief question over a consequential assumption, and batch related questions in one call.
+The model is instructed to call `question` whenever it needs user input about intent, scope, preferences, constraints, decisions, or tradeoffs before continuing, rather than printing those questions in prose. It still avoids asking about discoverable facts or trivial choices.
 
 ## Prompt caching
 

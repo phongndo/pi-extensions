@@ -21,6 +21,9 @@ import {
 const NUMBER_SHORTCUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 const MIN_OPTION_COLUMN_WIDTH = 32;
 const MAX_OPTION_COLUMN_WIDTH = 90;
+const MIN_SIDE_BY_SIDE_WIDTH = 96;
+const MIN_DETAIL_COLUMN_WIDTH = 36;
+const PANE_SEPARATOR = " │ ";
 export const OTHER_CHOICE = "None of the above";
 const OTHER_DESCRIPTION = "Optionally, add details in notes (tab).";
 const MAX_CUSTOM_ANSWER_LENGTH = 4_000;
@@ -67,17 +70,64 @@ function selectTheme(theme: Theme): SelectListTheme {
 /** Pi's native SelectList with immediate 1–9 shortcuts and Vim/Tab navigation. */
 export class NumberedSelectList extends SelectList {
   private readonly shortcutItems: SelectItem[];
+  private readonly descriptionsByValue: ReadonlyMap<string, string>;
+  private readonly preferredOptionPaneWidth: number;
+  private readonly styleDescription: SelectListTheme["description"];
 
   constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme) {
     const count = Math.min(items.length, NUMBER_SHORTCUTS.length);
     const numberedItems = items.map((item, index) =>
       index < count ? { ...item, label: `${index + 1}. ${item.label}` } : item,
     );
-    super(numberedItems, maxVisible, theme, {
+    const compactItems = numberedItems.map(({ description: _description, ...item }) => item);
+    const descriptionsByValue = new Map<string, string>();
+    for (const item of numberedItems) {
+      if (item.description) descriptionsByValue.set(item.value, item.description);
+    }
+    super(compactItems, maxVisible, theme, {
       minPrimaryColumnWidth: MIN_OPTION_COLUMN_WIDTH,
       maxPrimaryColumnWidth: MAX_OPTION_COLUMN_WIDTH,
     });
-    this.shortcutItems = numberedItems.slice(0, count);
+    this.shortcutItems = compactItems.slice(0, count);
+    this.descriptionsByValue = descriptionsByValue;
+    this.preferredOptionPaneWidth = Math.min(
+      MAX_OPTION_COLUMN_WIDTH,
+      Math.max(
+        MIN_OPTION_COLUMN_WIDTH,
+        ...compactItems.map((item) => visibleWidth(item.label) + 4),
+      ),
+    );
+    this.styleDescription = theme.description;
+  }
+
+  private renderDetails(description: string, width: number, paddingX: number): string[] {
+    return new Text(this.styleDescription(description), paddingX, 0).render(width);
+  }
+
+  override render(width: number): string[] {
+    const selected = this.getSelectedItem();
+    if (!selected || this.descriptionsByValue.size === 0) return super.render(width);
+
+    const description = this.descriptionsByValue.get(selected.value) ?? "No additional details.";
+    const separatorWidth = visibleWidth(PANE_SEPARATOR);
+    const maxOptionPaneWidth = width - separatorWidth - MIN_DETAIL_COLUMN_WIDTH;
+    if (width < MIN_SIDE_BY_SIDE_WIDTH || maxOptionPaneWidth < MIN_OPTION_COLUMN_WIDTH) {
+      return [...super.render(width), ...this.renderDetails(description, width, 2)];
+    }
+
+    const optionPaneWidth = Math.min(this.preferredOptionPaneWidth, maxOptionPaneWidth);
+    const detailPaneWidth = width - optionPaneWidth - separatorWidth;
+    const optionLines = super.render(optionPaneWidth);
+    const detailLines = this.renderDetails(description, detailPaneWidth, 0);
+    const separator = this.styleDescription(PANE_SEPARATOR);
+    const lineCount = Math.max(optionLines.length, detailLines.length);
+    const lines: string[] = [];
+    for (let index = 0; index < lineCount; index++) {
+      const optionLine = optionLines[index] ?? "";
+      const optionPadding = " ".repeat(Math.max(0, optionPaneWidth - visibleWidth(optionLine)));
+      lines.push(`${optionLine}${optionPadding}${separator}${detailLines[index] ?? ""}`);
+    }
+    return lines;
   }
 
   override handleInput(data: string): void {
@@ -429,7 +479,12 @@ export class QuestionDialog extends Container implements Focusable {
 
     const rendered = container.render(width);
     if (question.options.length > 0) rendered.push(...state.list!.render(width));
-    if (this.focus === "editor") rendered.push(...this.editorLines(width));
+    if (this.focus === "editor") {
+      const editorHeading = question.options.length > 0 ? "Your note" : "Your answer";
+      rendered.push("");
+      rendered.push(...new Text(this.theme.fg("accent", editorHeading), 1, 0).render(width));
+      rendered.push(...this.editorLines(width));
+    }
 
     const questionNavigation = this.questions.length > 1 ? " · h/l or ←/→ questions" : "";
     const editorQuestionNavigation = this.questions.length > 1 ? " · ctrl+p/n questions" : "";
