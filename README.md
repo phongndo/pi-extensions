@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, plan stress-testing, independent review/fix loops, and a safe PR-publishing prompt.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, plan stress-testing, session handoffs, independent review/fix loops, and a safe PR-publishing prompt.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, and prompt templates together.
 
@@ -20,10 +20,11 @@ Also included:
 
 - [Dillon Mulroy's `/skill:bro`](skills/bro/SKILL.md), restates the last message in plain human language, with no jargon
 - [Matt Pocock's `/skill:grill-me`](skills/grill-me/SKILL.md), stress-tests a plan through a [`grilling`](skills/grilling/SKILL.md) workflow adapted to use Pi's native `question` tool
+- [Matt Pocock's `/skill:handoff`](skills/handoff/SKILL.md), compacts the current conversation into a temporary handoff document for a fresh agent
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`bro` and `grill-me` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `grill-me`, and `show-me` files are unmodified upstream copies; `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`bro`, `grill-me`, and `handoff` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `grill-me`, and `show-me` files are unmodified upstream copies; `grilling` is adapted to use the native question dialog, and `handoff` is adapted to name Pi skill commands. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -101,7 +102,15 @@ The agent picks the smallest useful view, using pseudocode, trees, Mermaid, diff
 
 The agent interviews you through the native layered question dialog, asking up to four current design-tree decisions per round until every branch is resolved and you confirm the shared understanding.
 
-### 6. Review changes
+### 6. Hand off work to a fresh session
+
+```text
+/skill:handoff focus next on the authentication tests
+```
+
+The agent writes a compact, redacted continuation document to the OS temporary directory. It references existing artifacts instead of duplicating them and suggests relevant skills for the next agent.
+
+### 7. Review changes
 
 Start a one-pass review in an empty branch of the current Pi session, then return with a structured handoff:
 
@@ -119,7 +128,7 @@ For automatic repair and independent convergence checking, use the bounded loop.
 
 The loop uses a fresh blind reviewer panel each pass, independently verifies candidate findings before repair, applies confirmed findings through a guarded fixer, and optionally runs deterministic checks.
 
-### 7. Publish finished work
+### 8. Publish finished work
 
 ```text
 /yeet
@@ -141,6 +150,7 @@ The loop uses a fresh blind reviewer panel each pass, independently verifies can
 | The last answer was confusing or too wordy    | `/skill:bro`                         | A simpler, concise restatement without jargon                 |
 | A concept would be clearer as a visual        | `/skill:show-me`                     | Concise diagrams, code-shape sketches, or focused HTML        |
 | A plan or design needs every assumption aired | `/skill:grill-me`                    | Native question dialogs over the design-tree frontier         |
+| A fresh session should continue current work  | `/skill:handoff [focus]`             | Compact, redacted context saved outside the repository        |
 | Finished changes ready for GitHub             | `/yeet`                              | Repo-native verification and PR-template workflow             |
 
 A useful sequence for larger changes is:
@@ -162,6 +172,7 @@ Each stage has a different trust boundary: external evidence, independent verifi
 | `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
 | `/skill:bro`                 | Restate the previous response simply, concisely, and coherently   |
 | `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds          |
+| `/skill:handoff [focus]`     | Write a compact continuation document for a fresh agent           |
 | `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML       |
 | `/review [target]`           | Start an interactive review in an empty branch or current session |
 | `/settings-review`           | Configure Review Loop mode, models, and convergence               |
@@ -213,6 +224,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
 │   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
 │   ├── grilling/                   # Interview workflow adapted for question
+│   ├── handoff/                    # Matt Pocock's /skill:handoff
 │   └── show-me/                    # HumanLayer's /skill:show-me
 ├── THIRD_PARTY_NOTICES.md          # Skill provenance and licenses
 ├── prompt/yeet.md                  # /yeet prompt template
@@ -291,6 +303,7 @@ hk run pre-commit
 - [Bro skill](skills/bro/SKILL.md)
 - [Grill Me skill](skills/grill-me/SKILL.md)
 - [Grilling workflow](skills/grilling/SKILL.md)
+- [Handoff skill](skills/handoff/SKILL.md)
 - [Show Me skill](skills/show-me/SKILL.md)
 - [Bundled skill third-party notices](THIRD_PARTY_NOTICES.md)
 - [Review](extensions/review/README.md)
