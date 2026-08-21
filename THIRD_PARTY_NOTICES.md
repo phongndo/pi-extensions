@@ -6,11 +6,11 @@
 
 ## grill-me and grilling
 
-[`skills/grill-me/SKILL.md`](skills/grill-me/SKILL.md) is copied from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`8b78b531ab965735c5dc74f6f7a219e1e37326df`](https://github.com/mattpocock/skills/commit/8b78b531ab965735c5dc74f6f7a219e1e37326df). Its [`skills/grilling/SKILL.md`](skills/grilling/SKILL.md) dependency is adapted from the same commit to route interview rounds through Pi's native `question` tool.
+[`skills/grill-me/SKILL.md`](skills/grill-me/SKILL.md) is adapted from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`85f83d3fde1d3a90d5c9a657f6998c79a6c37308`](https://github.com/mattpocock/skills/commit/85f83d3fde1d3a90d5c9a657f6998c79a6c37308). The adaptation replaces the upstream agent's Skill-tool terminology with Pi's `/skill:name` commands. Its [`skills/grilling/SKILL.md`](skills/grilling/SKILL.md) dependency is adapted from the same commit to route interview rounds through Pi's native `question` tool.
 
 ## handoff
 
-[`skills/handoff/SKILL.md`](skills/handoff/SKILL.md) is adapted from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`068b6e0c62393147daf03530149cdce209c93da8`](https://github.com/mattpocock/skills/commit/068b6e0c62393147daf03530149cdce209c93da8). The adaptation replaces the upstream agent's Skill-tool terminology with Pi's `/skill:name` commands.
+[`skills/handoff/SKILL.md`](skills/handoff/SKILL.md) is adapted from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`d28dfdc39beadc3142a33359b5cfa4765dcbd0bc`](https://github.com/mattpocock/skills/commit/d28dfdc39beadc3142a33359b5cfa4765dcbd0bc). The adaptation replaces the upstream agent's Skill-tool terminology with Pi's `/skill:name` commands.
 
 ## Matt Pocock MIT license
 

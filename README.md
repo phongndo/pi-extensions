@@ -24,7 +24,7 @@ Also included:
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`bro`, `grill-me`, and `handoff` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `grill-me`, and `show-me` files are unmodified upstream copies; `grilling` is adapted to use the native question dialog, and `handoff` is adapted to name Pi skill commands. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`bro`, `grill-me`, and `handoff` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro` and `show-me` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
