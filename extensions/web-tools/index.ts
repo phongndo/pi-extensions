@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
@@ -67,6 +67,7 @@ const execFileAsync = promisify(execFile);
 const KEYCHAIN_SERVICE = "pi-firecrawl-web";
 const LEGACY_KEYCHAIN_SERVICE = "pi-firecrawl-search";
 const CONFIG_PATH = join(getAgentDir(), "web.json");
+const SECRET_FILE_PATH = join(getAgentDir(), "web.key");
 
 export interface SearchConfig {
   version: 3;
@@ -326,6 +327,57 @@ async function saveConfig(config: SearchConfig): Promise<void> {
   }
 }
 
+function persistedSecretStoreLabel(): string {
+  return process.platform === "darwin"
+    ? "macOS Keychain"
+    : "the local Pi agent directory";
+}
+
+export async function storeSecretFile(
+  path: string,
+  key: string,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${key}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    await rename(temporaryPath, path);
+    await chmod(path, 0o600);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => {});
+  }
+}
+
+export async function readSecretFile(
+  path: string,
+): Promise<string | undefined> {
+  try {
+    const key = (await readFile(path, "utf8")).trim();
+    return key || undefined;
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return undefined;
+    throw new Error(`Could not read Firecrawl key from ${path}.`, {
+      cause: error,
+    });
+  }
+}
+
+export async function deleteSecretFile(path: string): Promise<boolean> {
+  try {
+    await rm(path);
+    return true;
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return false;
+    throw new Error(`Could not remove Firecrawl key from ${path}.`, {
+      cause: error,
+    });
+  }
+}
+
 function keychainAccount(): string {
   return process.env.USER || "pi";
 }
@@ -338,7 +390,7 @@ export function isKeychainItemNotFound(error: unknown): boolean {
 }
 
 async function readKeychainKey(): Promise<string | undefined> {
-  if (process.platform !== "darwin") return undefined;
+  if (process.platform !== "darwin") return readSecretFile(SECRET_FILE_PATH);
   for (const service of [KEYCHAIN_SERVICE, LEGACY_KEYCHAIN_SERVICE]) {
     try {
       // Preserve Keychain priority and stop after the first match.
@@ -563,11 +615,15 @@ export async function storeKeychainPassword(
 }
 
 async function storeKeychainKey(key: string): Promise<void> {
+  if (process.platform !== "darwin") {
+    await storeSecretFile(SECRET_FILE_PATH, key);
+    return;
+  }
   await storeKeychainPassword(keychainAccount(), KEYCHAIN_SERVICE, key);
 }
 
 async function deleteKeychainKey(): Promise<boolean> {
-  if (process.platform !== "darwin") return false;
+  if (process.platform !== "darwin") return deleteSecretFile(SECRET_FILE_PATH);
   let removed = false;
   for (const service of [KEYCHAIN_SERVICE, LEGACY_KEYCHAIN_SERVICE]) {
     try {
@@ -594,12 +650,16 @@ async function deleteKeychainKey(): Promise<boolean> {
 
 async function resolveApiKey(): Promise<{
   key?: string;
-  source: "environment" | "keychain" | "keyless";
+  source: "environment" | "keychain" | "file" | "keyless";
 }> {
   const environmentKey = process.env.FIRECRAWL_API_KEY?.trim();
   if (environmentKey) return { key: environmentKey, source: "environment" };
-  const keychainKey = await readKeychainKey();
-  if (keychainKey) return { key: keychainKey, source: "keychain" };
+  const storedKey = await readKeychainKey();
+  if (storedKey)
+    return {
+      key: storedKey,
+      source: process.platform === "darwin" ? "keychain" : "file",
+    };
   return { source: "keyless" };
 }
 
@@ -1745,7 +1805,7 @@ async function promptApiKey(
           truncateToWidth(
             theme.fg(
               "dim",
-              "Paste your key, then press Enter. Esc cancels. The key is stored in macOS Keychain.",
+              `Paste your key, then press Enter. Esc cancels. The key is stored in ${persistedSecretStoreLabel()}.`,
             ),
             width,
           ),
@@ -1819,6 +1879,7 @@ function configSummary(
     `Guards: max ${config.maxLimit} search results, ${config.maxFetchUrls} batch URLs, ${config.maxCrawlPages} crawl pages, ${config.maxAgentCredits} agent credits, ${config.maxSessionCredits} session credits`,
     `Session telemetry: ${stats.calls} calls, ${stats.resultCharacters.toLocaleString()} result chars, ${stats.creditsUsed} reported credits, ${stats.budgetUsedCredits} budgeted, ${stats.budgetReservedCredits} reserved, ${stats.errors} errors, ${stats.averageDurationMs}ms average`,
     `Recent operations: ${recent || "none"}`,
+    `Secret store: ${process.platform === "darwin" ? "macOS Keychain" : SECRET_FILE_PATH}`,
     `Expensive features: ${config.allowExpensiveFeatures ? "enabled" : "disabled"} · proxy: ${config.defaultProxy}`,
     `Config: ${CONFIG_PATH}`,
   ].join("\n");
@@ -1858,7 +1919,10 @@ function createApiKeySubmenu(
             "warning",
           );
         } else {
-          ctx.ui.notify("Firecrawl API key saved in macOS Keychain.", "info");
+          ctx.ui.notify(
+            `Firecrawl API key saved in ${persistedSecretStoreLabel()}.`,
+            "info",
+          );
         }
         done(effectiveStatus);
       } catch (error) {
@@ -1934,8 +1998,7 @@ async function openConfigPage(
         {
           id: "apiKey",
           label: "API key",
-          description:
-            "Set or replace the Firecrawl API key. The key is validated and stored in macOS Keychain.",
+          description: `Set or replace the Firecrawl API key. The key is validated and stored in ${persistedSecretStoreLabel()}.`,
           currentValue: keyStatus,
           submenu: (_currentValue, submenuDone) =>
             createApiKeySubmenu(
@@ -1965,8 +2028,7 @@ async function openConfigPage(
         {
           id: "removeKey",
           label: "Remove saved key",
-          description:
-            "Delete the key stored by this extension from macOS Keychain. An environment key is unaffected.",
+          description: `Delete the key stored by this extension from ${persistedSecretStoreLabel()}. An environment key is unaffected.`,
           currentValue: "remove",
           values: ["remove"],
         },
@@ -2187,8 +2249,8 @@ async function openConfigPage(
                   settingsList.updateValue("credits", creditStatus);
                   ctx.ui.notify(
                     removed
-                      ? "Removed Firecrawl key from macOS Keychain."
-                      : "No Keychain key was found.",
+                      ? `Removed Firecrawl key from ${persistedSecretStoreLabel()}.`
+                      : "No saved Firecrawl key was found.",
                     "info",
                   );
                   tui.requestRender();
@@ -2414,12 +2476,12 @@ export default function (pi: ExtensionAPI) {
               ? usage.remainingCredits.toLocaleString()
               : "unknown";
           ctx.ui.notify(
-            `Firecrawl key saved in macOS Keychain · ${remaining} credits remaining`,
+            `Firecrawl key saved in ${persistedSecretStoreLabel()} · ${remaining} credits remaining`,
             "info",
           );
           if (process.env.FIRECRAWL_API_KEY)
             ctx.ui.notify(
-              "FIRECRAWL_API_KEY is set and takes precedence over the Keychain key.",
+              "FIRECRAWL_API_KEY is set and takes precedence over the saved key.",
               "warning",
             );
         } catch (error) {
@@ -2435,8 +2497,8 @@ export default function (pi: ExtensionAPI) {
         const removed = await deleteKeychainKey();
         ctx.ui.notify(
           removed
-            ? "Removed Firecrawl key from macOS Keychain."
-            : "No Keychain key was found.",
+            ? `Removed Firecrawl key from ${persistedSecretStoreLabel()}.`
+            : "No saved Firecrawl key was found.",
           "info",
         );
         if (process.env.FIRECRAWL_API_KEY)

@@ -6,17 +6,17 @@ Web Tools gives Pi a deliberately small default surface (`web_search`, `web_fetc
 
 ## At a glance
 
-|                          |                                                     |
-| ------------------------ | --------------------------------------------------- |
-| Configuration            | `/web-tools`                                        |
-| Status                   | `/web-tools status`                                 |
-| Research workflow        | `/skill:research <question>`                        |
-| Provider                 | Firecrawl                                           |
-| Default tools            | `web_search`, `web_fetch`, `web_map`, `tool_search` |
-| Default specialized mode | Deferred and additive                               |
-| Config                   | `~/.pi/agent/web.json`                              |
-| Telemetry                | `~/.pi/agent/web-telemetry.jsonl`                   |
-| API key                  | `FIRECRAWL_API_KEY` or macOS Keychain               |
+|                          |                                                               |
+| ------------------------ | ------------------------------------------------------------- |
+| Configuration            | `/web-tools`                                                  |
+| Status                   | `/web-tools status`                                           |
+| Research workflow        | `/skill:research <question>`                                  |
+| Provider                 | Firecrawl                                                     |
+| Default tools            | `web_search`, `web_fetch`, `web_map`, `tool_search`           |
+| Default specialized mode | Deferred and additive                                         |
+| Config                   | `~/.pi/agent/web.json`                                        |
+| Telemetry                | `~/.pi/agent/web-telemetry.jsonl`                             |
+| API key                  | `FIRECRAWL_API_KEY`, macOS Keychain, or `~/.pi/agent/web.key` |
 
 ## Quick start
 
@@ -28,7 +28,7 @@ Open the TUI settings page:
 /web-tools
 ```
 
-Select **API key**, paste a Firecrawl key, and press Enter. The key is validated before being stored in macOS Keychain.
+Select **API key**, paste a Firecrawl key, and press Enter. The key is validated before being stored in macOS Keychain, or in `~/.pi/agent/web.key` on other platforms.
 
 Non-interactive/key-management commands:
 
@@ -39,7 +39,7 @@ Non-interactive/key-management commands:
 /web-tools reset
 ```
 
-`FIRECRAWL_API_KEY` takes precedence over a Keychain key.
+`FIRECRAWL_API_KEY` takes precedence over a saved Keychain or file key.
 
 ### 2. Ask for live information
 
@@ -173,7 +173,7 @@ With `research_state` loaded, ledger operations stay inside a native deferred to
 
 ## Configuration
 
-Run `/web-tools` in TUI mode to edit settings. The page opens immediately; Keychain and credit-status checks refresh in the background.
+Run `/web-tools` in TUI mode to edit settings. The page opens immediately; saved-key and credit-status checks refresh in the background.
 
 ### Default context and cost guards
 
@@ -238,7 +238,7 @@ Use the TUI instead of hand-editing whenever possible. Reset to safe defaults wi
 Credential precedence:
 
 1. `FIRECRAWL_API_KEY`
-2. macOS Keychain service `pi-firecrawl-web`
+2. macOS Keychain service `pi-firecrawl-web`, or `~/.pi/agent/web.key` on other platforms
 3. no credential
 
 Environment setup:

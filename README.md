@@ -191,7 +191,7 @@ Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 | Theme              | `themes/origin.json`                  | Packaged TUI theme; select with `"theme": "origin"` in settings     |
 | Fast Mode          | `~/.pi/agent/fast-mode.json`          | Global on/off state                                                 |
 | Web Tools          | `~/.pi/agent/web.json`                | Tool toggles, context limits, and credit guards                     |
-| Firecrawl key      | macOS Keychain or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                        |
+| Firecrawl key      | macOS Keychain, `~/.pi/agent/web.key`, or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                        |
 | Web telemetry      | `~/.pi/agent/web-telemetry.jsonl`     | Rotating privacy-safe operation metrics and input fingerprints      |
 | Interactive review | Current Pi session                    | Review-branch origin and custom instructions                        |
 | Review loop        | `~/.pi/agent/review-loop.json`        | Role model references, reasoning, convergence, verification command |

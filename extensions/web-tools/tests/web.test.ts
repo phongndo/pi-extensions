@@ -42,10 +42,13 @@ import webExtension, {
   buildRequest,
   formatResponse,
   importFirecrawlSdk,
+  deleteSecretFile,
   isKeychainItemNotFound,
   loadConfig,
   normalizeConfig,
+  readSecretFile,
   storeKeychainPassword,
+  storeSecretFile,
 } from "../index.ts";
 import toolSearchExtension from "pi-tool-search";
 import { registerFirecrawlTools } from "../tools.ts";
@@ -857,6 +860,29 @@ test("Keychain not-found detection does not hide other failures", () => {
   assert.equal(isKeychainItemNotFound({ status: 44 }), true);
   assert.equal(isKeychainItemNotFound({ code: 36 }), false);
   assert.equal(isKeychainItemNotFound(new Error("item not found")), false);
+});
+
+test("Linux secret file storage is private, replaceable, and removable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-web-key-"));
+  temporaryPaths.add(directory);
+  const path = join(directory, "web.key");
+  const first = "fc-first-key";
+  const second = "fc-second-key";
+
+  assert.equal(await readSecretFile(path), undefined);
+  assert.equal(await deleteSecretFile(path), false);
+
+  await storeSecretFile(path, first);
+  assert.equal(await readSecretFile(path), first);
+  assert.equal((await stat(path)).mode & 0o777, 0o600);
+
+  await storeSecretFile(path, second);
+  assert.equal(await readSecretFile(path), second);
+  assert.equal((await stat(path)).mode & 0o777, 0o600);
+
+  assert.equal(await deleteSecretFile(path), true);
+  assert.equal(await readSecretFile(path), undefined);
+  assert.equal(await deleteSecretFile(path), false);
 });
 
 test("404 errors distinguish jobs from ordinary resources", () => {
