@@ -2,7 +2,7 @@
 
 A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, plan stress-testing, session handoffs, independent review/fix loops, and a safe PR-publishing prompt.
 
-The workspace is one Pi package, so installation exposes every extension, the bundled skills, and prompt templates together.
+The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
 ## Extension suite
 
@@ -188,6 +188,7 @@ Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 
 | Feature            | Location                              | Contains                                                            |
 | ------------------ | ------------------------------------- | ------------------------------------------------------------------- |
+| Theme              | `themes/origin.json`                  | Packaged TUI theme; select with `"theme": "origin"` in settings     |
 | Fast Mode          | `~/.pi/agent/fast-mode.json`          | Global on/off state                                                 |
 | Web Tools          | `~/.pi/agent/web.json`                | Tool toggles, context limits, and credit guards                     |
 | Firecrawl key      | macOS Keychain or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                        |
@@ -228,6 +229,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   └── show-me/                    # HumanLayer's /skill:show-me
 ├── THIRD_PARTY_NOTICES.md          # Skill provenance and licenses
 ├── prompt/yeet.md                  # /yeet prompt template
+├── themes/origin.json               # origin TUI theme
 ├── package.json                    # root Pi package manifest
 └── pnpm-workspace.yaml             # extension workspace packages
 ```
