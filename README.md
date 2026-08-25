@@ -6,12 +6,12 @@ The workspace is one Pi package, so installation exposes every extension, the bu
 
 ## Extension suite
 
-| Extension                                       | Use it when…                                                                                              | Main entry point                | Side effects                                                               |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| [Question](extensions/question/README.md)       | The agent needs a material clarification without ending its current run                                   | `question`                      | Pauses the active tool call until the user answers or cancels              |
-| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                              | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
-| [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand            | `tool_search`, `/tool-search`   | Additively activates registered Pi tools                                   |
-| [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research          | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
+| Extension                                       | Use it when…                                                                                     | Main entry point                | Side effects                                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------- | -------------------------------------------------------------------------- |
+| [Question](extensions/question/README.md)       | The agent needs a material clarification without ending its current run                          | `question`                      | Pauses the active tool call until the user answers or cancels              |
+| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                     | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
+| [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand   | `tool_search`, `/tool-search`   | Additively activates registered Pi tools                                   |
+| [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
 
 The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 
@@ -142,18 +142,18 @@ Each stage has a different trust boundary: external evidence, then publication.
 
 ## Command reference
 
-| Command                      | Description                                                       |
-| ---------------------------- | ----------------------------------------------------------------- |
-| `/fast`                      | Toggle global Codex Fast Mode                                     |
-| `/tool-search`               | Show available namespaced deferred-tool capabilities              |
-| `/web-tools`                 | Open Firecrawl configuration                                      |
-| `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
-| `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
-| `/skill:bro`                 | Restate the previous response simply, concisely, and coherently   |
-| `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds          |
-| `/skill:handoff [focus]`     | Write a compact continuation document for a fresh agent           |
-| `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML       |
-| `/yeet [instructions]`       | Publish appropriate work as one ready PR                          |
+| Command                      | Description                                                     |
+| ---------------------------- | --------------------------------------------------------------- |
+| `/fast`                      | Toggle global Codex Fast Mode                                   |
+| `/tool-search`               | Show available namespaced deferred-tool capabilities            |
+| `/web-tools`                 | Open Firecrawl configuration                                    |
+| `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry  |
+| `/skill:research <question>` | Run the bundled evidence-grounded research workflow             |
+| `/skill:bro`                 | Restate the previous response simply, concisely, and coherently |
+| `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds        |
+| `/skill:handoff [focus]`     | Write a compact continuation document for a fresh agent         |
+| `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML     |
+| `/yeet [instructions]`       | Publish appropriate work as one ready PR                        |
 
 See each extension README for complete syntax, safety constraints, and troubleshooting.
 
@@ -161,13 +161,13 @@ See each extension README for complete syntax, safety constraints, and troublesh
 
 Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature            | Location                              | Contains                                                            |
-| ------------------ | ------------------------------------- | ------------------------------------------------------------------- |
-| Theme              | `themes/origin.json`                  | Packaged TUI theme; select with `"theme": "origin"` in settings     |
-| Fast Mode          | `~/.pi/agent/fast-mode.json`          | Global on/off state                                                 |
-| Web Tools          | `~/.pi/agent/web.json`                | Tool toggles, context limits, and credit guards                     |
-| Firecrawl key      | macOS Keychain, `~/.pi/agent/web.key`, or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                        |
-| Web telemetry      | `~/.pi/agent/web-telemetry.jsonl`     | Rotating privacy-safe operation metrics and input fingerprints      |
+| Feature       | Location                                                      | Contains                                                        |
+| ------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
+| Theme         | `themes/origin.json`                                          | Packaged TUI theme; select with `"theme": "origin"` in settings |
+| Fast Mode     | `~/.pi/agent/fast-mode.json`                                  | Global on/off state                                             |
+| Web Tools     | `~/.pi/agent/web.json`                                        | Tool toggles, context limits, and credit guards                 |
+| Firecrawl key | macOS Keychain, `~/.pi/agent/web.key`, or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                    |
+| Web telemetry | `~/.pi/agent/web-telemetry.jsonl`                             | Rotating privacy-safe operation metrics and input fingerprints  |
 
 ## Security model
 
