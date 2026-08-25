@@ -1,18 +1,17 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, plan stress-testing, session handoffs, independent review/fix loops, and a safe PR-publishing prompt.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, bounded web research, plain-language restatements, visual explanations, plan stress-testing, session handoffs, and a safe PR-publishing prompt.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
 ## Extension suite
 
-| Extension                                       | Use it when…                                                                                              | Main entry point                | Side effects                                                               |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| [Question](extensions/question/README.md)       | The agent needs a material clarification without ending its current run                                   | `question`                      | Pauses the active tool call until the user answers or cancels              |
-| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                              | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
-| [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand            | `tool_search`, `/tool-search`   | Additively activates registered Pi tools                                   |
-| [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research          | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
-| [Review](extensions/review/README.md)           | You want either an interactive review handoff or an independent review/fix loop that verifies convergence | `/review`, `/loop-review`       | `/review` may check out a PR; `/loop-review` may edit its target           |
+| Extension                                       | Use it when…                                                                                     | Main entry point                | Side effects                                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------- | -------------------------------------------------------------------------- |
+| [Question](extensions/question/README.md)       | The agent needs a material clarification without ending its current run                          | `question`                      | Pauses the active tool call until the user answers or cancels              |
+| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                     | `/fast`                         | Changes global Fast Mode state; may affect provider billing                |
+| [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand   | `tool_search`, `/tool-search`   | Additively activates registered Pi tools                                   |
+| [Web Tools](extensions/web-tools/README.md)     | You need live search, page extraction, site mapping, browser work, or evidence-grounded research | `/web-tools`, `/skill:research` | Calls Firecrawl; selected capabilities spend credits or mutate remote jobs |
 
 The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 
@@ -35,7 +34,7 @@ Also included:
 - pnpm 11
 - Provider credentials for the models you use
 - A Firecrawl API key only if using Web Tools
-- GitHub CLI (`gh`) only for Review Loop PR targets or `/yeet`
+- GitHub CLI (`gh`) only for `/yeet`
 
 ### Install this checkout
 
@@ -89,7 +88,7 @@ The agent restates its previous response in plain, concise language.
 ### 4. Show a topic
 
 ```text
-/skill:show-me the review loop
+/skill:show-me the research workflow
 ```
 
 The agent picks the smallest useful view, using pseudocode, trees, Mermaid, diffs, code, or a focused HTML artifact.
@@ -110,25 +109,7 @@ The agent interviews you through the native layered question dialog, asking up t
 
 The agent writes a compact, redacted continuation document to the OS temporary directory. It references existing artifacts instead of duplicating them and suggests relevant skills for the next agent.
 
-### 7. Review changes
-
-Start a one-pass review in an empty branch of the current Pi session, then return with a structured handoff:
-
-```text
-/review uncommitted
-/end-review
-```
-
-For automatic repair and independent convergence checking, use the bounded loop. Configure 1–8 blind review agents plus separate reviewer, finding-verifier, and fixer models in `/settings-review`; reviewers run concurrently on each pass:
-
-```text
-/loop-review uncommitted --mode adversarial
-/loop-review uncommitted --mode adversarial --extra "Prioritize auth boundaries and regression coverage"
-```
-
-The loop uses a fresh blind reviewer panel each pass, independently verifies candidate findings before repair, applies confirmed findings through a guarded fixer, and optionally runs deterministic checks.
-
-### 8. Publish finished work
+### 7. Publish finished work
 
 ```text
 /yeet
@@ -145,8 +126,6 @@ The loop uses a fresh blind reviewer panel each pass, independently verifies can
 | Missing specialized capability                | `tool_search`                        | Loads the smallest matching namespaced tool bundle additively |
 | Unknown source                                | `web_search`, then selective fetches | Bounded discovery before extraction                           |
 | Rigorous multi-source report                  | `/skill:research`                    | Evidence ledger, contradiction tracking, verified citations   |
-| One interactive review with a handoff         | `/review`, then `/end-review`        | Isolates review on a session branch and can queue fixes       |
-| Independent review, repair, and convergence   | `/loop-review`                       | Purpose-built convergence and Git safety                      |
 | The last answer was confusing or too wordy    | `/skill:bro`                         | A simpler, concise restatement without jargon                 |
 | A concept would be clearer as a visual        | `/skill:show-me`                     | Concise diagrams, code-shape sketches, or focused HTML        |
 | A plan or design needs every assumption aired | `/skill:grill-me`                    | Native question dialogs over the design-tree frontier         |
@@ -156,29 +135,25 @@ The loop uses a fresh blind reviewer panel each pass, independently verifies can
 A useful sequence for larger changes is:
 
 ```text
-research → review loop → yeet
+research → yeet
 ```
 
-Each stage has a different trust boundary: external evidence, independent verification, then publication.
+Each stage has a different trust boundary: external evidence, then publication.
 
 ## Command reference
 
-| Command                      | Description                                                       |
-| ---------------------------- | ----------------------------------------------------------------- |
-| `/fast`                      | Toggle global Codex Fast Mode                                     |
-| `/tool-search`               | Show available namespaced deferred-tool capabilities              |
-| `/web-tools`                 | Open Firecrawl configuration                                      |
-| `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry    |
-| `/skill:research <question>` | Run the bundled evidence-grounded research workflow               |
-| `/skill:bro`                 | Restate the previous response simply, concisely, and coherently   |
-| `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds          |
-| `/skill:handoff [focus]`     | Write a compact continuation document for a fresh agent           |
-| `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML       |
-| `/review [target]`           | Start an interactive review in an empty branch or current session |
-| `/settings-review`           | Configure Review Loop mode, models, and convergence               |
-| `/end-review`                | Return from an isolated review, optionally summarize or fix       |
-| `/loop-review [target]`      | Run standard or parallel specialized review/fix loops             |
-| `/yeet [instructions]`       | Publish appropriate work as one ready PR                          |
+| Command                      | Description                                                     |
+| ---------------------------- | --------------------------------------------------------------- |
+| `/fast`                      | Toggle global Codex Fast Mode                                   |
+| `/tool-search`               | Show available namespaced deferred-tool capabilities            |
+| `/web-tools`                 | Open Firecrawl configuration                                    |
+| `/web-tools status`          | Show key source, credits, active tools, budgets, and telemetry  |
+| `/skill:research <question>` | Run the bundled evidence-grounded research workflow             |
+| `/skill:bro`                 | Restate the previous response simply, concisely, and coherently |
+| `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds        |
+| `/skill:handoff [focus]`     | Write a compact continuation document for a fresh agent         |
+| `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML     |
+| `/yeet [instructions]`       | Publish appropriate work as one ready PR                        |
 
 See each extension README for complete syntax, safety constraints, and troubleshooting.
 
@@ -186,17 +161,13 @@ See each extension README for complete syntax, safety constraints, and troublesh
 
 Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature            | Location                              | Contains                                                            |
-| ------------------ | ------------------------------------- | ------------------------------------------------------------------- |
-| Theme              | `themes/origin.json`                  | Packaged TUI theme; select with `"theme": "origin"` in settings     |
-| Fast Mode          | `~/.pi/agent/fast-mode.json`          | Global on/off state                                                 |
-| Web Tools          | `~/.pi/agent/web.json`                | Tool toggles, context limits, and credit guards                     |
-| Firecrawl key      | macOS Keychain, `~/.pi/agent/web.key`, or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                        |
-| Web telemetry      | `~/.pi/agent/web-telemetry.jsonl`     | Rotating privacy-safe operation metrics and input fingerprints      |
-| Interactive review | Current Pi session                    | Review-branch origin and custom instructions                        |
-| Review loop        | `~/.pi/agent/review-loop.json`        | Role model references, reasoning, convergence, verification command |
-
-Provider credentials are not written into Review Loop settings.
+| Feature       | Location                                                      | Contains                                                        |
+| ------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
+| Theme         | `themes/origin.json`                                          | Packaged TUI theme; select with `"theme": "origin"` in settings |
+| Fast Mode     | `~/.pi/agent/fast-mode.json`                                  | Global on/off state                                             |
+| Web Tools     | `~/.pi/agent/web.json`                                        | Tool toggles, context limits, and credit guards                 |
+| Firecrawl key | macOS Keychain, `~/.pi/agent/web.key`, or `FIRECRAWL_API_KEY` | API credential; environment takes precedence                    |
+| Web telemetry | `~/.pi/agent/web-telemetry.jsonl`                             | Rotating privacy-safe operation metrics and input fingerprints  |
 
 ## Security model
 
@@ -205,7 +176,6 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Pi extensions run with the user's process permissions.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
-- `/review pr` checks out a GitHub PR locally; `/loop-review` gives trusted reviewer models the user's active tools and general Bash while keeping fixer mutations guarded.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 
 Read the extension-specific safety section before enabling mutating or billed capabilities.
@@ -219,8 +189,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── question/                   # question
 │   ├── fast-mode/                  # /fast
 │   ├── tool-search/                # tool_search and capability registry
-│   ├── web-tools/                  # web_* tools and research skill
-│   └── review/                     # /review, /end-review, /loop-review
+│   └── web-tools/                  # web_* tools and research skill
 ├── skills/
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
 │   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
@@ -262,7 +231,6 @@ pnpm --filter pi-question check
 pnpm --filter pi-fast-mode check
 pnpm --filter pi-tool-search check
 pnpm --filter pi-web-tools check
-pnpm --filter pi-review check
 pnpm format
 pnpm lint
 pnpm lint:fix
@@ -308,6 +276,4 @@ hk run pre-commit
 - [Handoff skill](skills/handoff/SKILL.md)
 - [Show Me skill](skills/show-me/SKILL.md)
 - [Bundled skill third-party notices](THIRD_PARTY_NOTICES.md)
-- [Review](extensions/review/README.md)
-- [Review Loop design plan](extensions/review/PLAN.md)
 - [`/yeet` prompt](prompt/yeet.md)
