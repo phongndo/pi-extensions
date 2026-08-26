@@ -183,6 +183,30 @@ test("Firecrawl requests require the environment key", async () => {
   );
 });
 
+test("classifies cancellation while reading a response body", async () => {
+  process.env.FIRECRAWL_API_KEY = "fc-test-key";
+  const controller = new AbortController();
+  globalThis.fetch = async () =>
+    ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      async text() {
+        controller.abort();
+        throw new DOMException("The operation was aborted.", "AbortError");
+      },
+    }) as unknown as Response;
+
+  await assert.rejects(
+    firecrawlRequest(
+      "/scrape",
+      { url: "https://example.com" },
+      controller.signal,
+    ),
+    /Web request was cancelled/,
+  );
+});
+
 test("Firecrawl requests use the v2 endpoint and surface provider errors", async () => {
   process.env.FIRECRAWL_API_KEY = "fc-test-key";
   let requestUrl = "";

@@ -319,6 +319,7 @@ export async function firecrawlRequest(
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response: Response;
+  let raw: string;
   try {
     response = await fetch(`${FIRECRAWL_BASE_URL}${path}`, {
       method: "POST",
@@ -330,6 +331,7 @@ export async function firecrawlRequest(
       body: JSON.stringify(body),
       signal: requestSignal,
     });
+    raw = await response.text();
   } catch (error) {
     if (signal?.aborted)
       throw new Error("Web request was cancelled.", { cause: error });
@@ -337,8 +339,6 @@ export async function firecrawlRequest(
       throw new Error("Firecrawl request timed out.", { cause: error });
     throw new Error("Could not reach Firecrawl.", { cause: error });
   }
-
-  const raw = await response.text();
   let payload: unknown;
   try {
     payload = raw ? JSON.parse(raw) : {};
