@@ -40,7 +40,6 @@
       "./extensions/web-tools/index.ts"
     ],
     "skills": [
-      "./extensions/web-tools/skills",
       "./skills"
     ],
     "prompts": [
