@@ -132,14 +132,73 @@ function isPrivateIpv4(hostname: string): boolean {
   );
 }
 
+function parseIpv6Half(half: string): number[] | undefined {
+  if (!half) return [];
+  const output: number[] = [];
+  for (const part of half.split(":")) {
+    if (part.includes(".")) {
+      const octets = part.split(".").map(Number);
+      if (
+        octets.length !== 4 ||
+        octets.some(
+          (octet) => !Number.isInteger(octet) || octet < 0 || octet > 255,
+        )
+      )
+        return undefined;
+      const [first, second, third, fourth] = octets as [
+        number,
+        number,
+        number,
+        number,
+      ];
+      output.push((first << 8) | second, (third << 8) | fourth);
+    } else {
+      if (!/^[0-9a-f]{1,4}$/.test(part)) return undefined;
+      output.push(Number.parseInt(part, 16));
+    }
+  }
+  return output;
+}
+
+function parseIpv6(hostname: string): number[] | undefined {
+  const halves = hostname.toLowerCase().split("::");
+  if (halves.length > 2) return undefined;
+  const left = parseIpv6Half(halves[0] ?? "");
+  const right = parseIpv6Half(halves[1] ?? "");
+  if (!left || !right) return undefined;
+  const missing = 8 - left.length - right.length;
+  if ((halves.length === 1 && missing !== 0) || missing < 0) return undefined;
+  return [...left, ...Array(missing).fill(0), ...right];
+}
+
 function isPrivateIpv6(hostname: string): boolean {
-  const value = hostname.toLowerCase();
+  const parts = parseIpv6(hostname);
+  if (!parts || parts.length !== 8) return true;
+  const [first, second, , , , sixth, seventh, eighth] = parts as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const mappedIpv4 =
+    parts.slice(0, 5).every((part) => part === 0) && sixth === 0xffff;
+  if (mappedIpv4) {
+    const ipv4 = `${seventh >> 8}.${seventh & 0xff}.${eighth >> 8}.${eighth & 0xff}`;
+    return isPrivateIpv4(ipv4);
+  }
   return (
-    value === "::" ||
-    value === "::1" ||
-    value.startsWith("fc") ||
-    value.startsWith("fd") ||
-    /^fe[89ab]/.test(value)
+    parts.every((part) => part === 0) ||
+    (parts.slice(0, 7).every((part) => part === 0) && eighth === 1) ||
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xffc0) === 0xfec0 ||
+    (first & 0xff00) === 0xff00 ||
+    (first === 0x2001 && second === 0x0db8) ||
+    parts.slice(0, 6).every((part) => part === 0)
   );
 }
 

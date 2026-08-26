@@ -72,11 +72,19 @@ test("validates map inputs and public URLs", () => {
     validatePublicUrl("https://example.com/docs"),
     "https://example.com/docs",
   );
+  assert.equal(
+    validatePublicUrl("https://[2606:4700:4700::1111]"),
+    "https://[2606:4700:4700::1111]/",
+  );
   for (const value of [
     "file:///tmp/private",
     "http://localhost:3000",
     "http://127.0.0.1",
     "http://192.168.1.2",
+    "http://[::ffff:127.0.0.1]",
+    "http://[::7f00:1]",
+    "http://[fc00::1]",
+    "http://[fe80::1]",
     "https://user:pass@example.com",
   ]) {
     assert.throws(() => validatePublicUrl(value));
