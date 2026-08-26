@@ -2,35 +2,28 @@
   "name": "pi-web-tools",
   "version": "0.1.0",
   "private": true,
-  "description": "Firecrawl-powered web tools and evidence-grounded research for Pi",
+  "description": "Minimal Firecrawl search, map, and fetch tools for Pi",
   "keywords": [
     "firecrawl",
     "pi-extension",
     "pi-package",
-    "research",
     "web"
   ],
   "type": "module",
   "scripts": {
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint --deny-warnings --tsconfig tsconfig.json index.ts tools.ts compact.ts tests evals skills",
+    "lint": "oxlint --deny-warnings --tsconfig tsconfig.json index.ts tests",
     "lint:fix": "pnpm lint --fix",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lsp": "typescript-language-server --stdio",
     "lsp:oxformat": "oxfmt --lsp",
     "lsp:oxlint": "oxlint --lsp",
-    "test": "node --test tests/*.test.ts skills/research/tests/*.test.mjs"
-  },
-  "dependencies": {
-    "firecrawl": "4.30.1",
-    "pi-tool-search": "workspace:*"
+    "test": "node --test tests/*.test.ts"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.82.1",
     "@earendil-works/pi-coding-agent": "0.82.1",
-    "@earendil-works/pi-tui": "0.82.1",
     "@types/node": "^26.1.1",
     "oxfmt": "0.60.0",
     "oxlint": "1.75.0",
@@ -39,9 +32,7 @@
     "typescript-language-server": "5.3.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
   "engines": {
@@ -51,9 +42,6 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ],
-    "skills": [
-      "./skills"
     ]
   }
 }
