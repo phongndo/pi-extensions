@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, session handoffs, safe PR publishing, and human-invoked PR autopilot.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
@@ -19,11 +19,12 @@ Also included:
 - [Dillon Mulroy's `/skill:bro`](skills/bro/SKILL.md), restates the last message in plain human language, with no jargon
 - [Matt Pocock's `/skill:grill-me`](skills/grill-me/SKILL.md), stress-tests a plan through a [`grilling`](skills/grilling/SKILL.md) workflow adapted to use Pi's native `question` tool
 - [Matt Pocock's `/skill:handoff`](skills/handoff/SKILL.md), compacts the current conversation into a temporary handoff document for a fresh agent
+- [Matt Pocock's `/skill:teach`](skills/teach/SKILL.md), builds a stateful teaching workspace with sourced lessons, reference materials, and learning records
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
 - [`/skill:autopilot`](skills/autopilot/SKILL.md), drives an existing GitHub PR to merge readiness in the current agent session
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`autopilot`, `bro`, `grill-me`, and `handoff` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro` and `show-me` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`autopilot`, `bro`, `grill-me`, `handoff`, and `teach` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -109,7 +110,17 @@ The agent interviews you through the native layered question dialog, asking up t
 
 The agent writes a compact, redacted continuation document to the OS temporary directory. It references existing artifacts instead of duplicating them and suggests relevant skills for the next agent.
 
-### 7. Publish finished work
+### 7. Start a stateful learning workspace
+
+Run Pi from a directory dedicated to one learning goal, then invoke:
+
+```text
+/skill:teach learn Rust well enough to ship a CLI for my team
+```
+
+The agent clarifies your mission, curates trusted resources, and builds short HTML lessons, reference material, and learning records in that directory.
+
+### 8. Publish finished work
 
 ```text
 /yeet
@@ -117,7 +128,7 @@ The agent writes a compact, redacted continuation document to the OS temporary d
 
 `/yeet` inspects the repository, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template.
 
-### 8. Keep an existing PR merge-ready
+### 9. Keep an existing PR merge-ready
 
 Start a fresh agent on the PR branch, then invoke:
 
@@ -139,6 +150,7 @@ You can also pass a PR number, URL, or branch. The current agent—not a subagen
 | A concept would be clearer as a visual        | `/skill:show-me`                 | Concise diagrams, code-shape sketches, or focused HTML |
 | A plan or design needs every assumption aired | `/skill:grill-me`                | Native question dialogs over the design-tree frontier  |
 | A fresh session should continue current work  | `/skill:handoff [focus]`         | Compact, redacted context saved outside the repository |
+| You want a multi-session personalized course  | `/skill:teach [topic]`           | Stateful lessons grounded in one learning mission      |
 | Finished changes ready for GitHub             | `/yeet`                          | Repo-native verification and PR-template workflow      |
 | An existing PR should be kept merge-ready     | `/skill:autopilot [PR]`          | Human-started conflict, review, and CI reconciliation  |
 
@@ -162,6 +174,7 @@ Each stage has a different trust boundary: external evidence, publication, then 
 | `/skill:grill-me`        | Stress-test a plan through native question-dialog rounds        |
 | `/skill:handoff [focus]` | Write a compact continuation document for a fresh agent         |
 | `/skill:show-me [topic]` | Explain a topic with concise diagrams, code shapes, or HTML     |
+| `/skill:teach [topic]`   | Build a stateful, sourced course in the current directory       |
 | `/yeet [instructions]`   | Publish appropriate work as one ready PR                        |
 
 See each extension README for complete syntax, safety constraints, and troubleshooting.
@@ -204,7 +217,8 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
 │   ├── grilling/                   # Interview workflow adapted for question
 │   ├── handoff/                    # Matt Pocock's /skill:handoff
-│   └── show-me/                    # HumanLayer's /skill:show-me
+│   ├── show-me/                    # HumanLayer's /skill:show-me
+│   └── teach/                      # Matt Pocock's /skill:teach
 ├── THIRD_PARTY_NOTICES.md          # Skill provenance and licenses
 ├── prompt/yeet.md                  # /yeet prompt template
 ├── themes/origin.json               # origin TUI theme
@@ -281,5 +295,6 @@ hk run pre-commit
 - [Grilling workflow](skills/grilling/SKILL.md)
 - [Handoff skill](skills/handoff/SKILL.md)
 - [Show Me skill](skills/show-me/SKILL.md)
+- [Teach skill](skills/teach/SKILL.md)
 - [Bundled skill third-party notices](THIRD_PARTY_NOTICES.md)
 - [`/yeet` prompt](prompt/yeet.md)

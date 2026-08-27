@@ -12,6 +12,10 @@
 
 [`skills/handoff/SKILL.md`](skills/handoff/SKILL.md) is adapted from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`d28dfdc39beadc3142a33359b5cfa4765dcbd0bc`](https://github.com/mattpocock/skills/commit/d28dfdc39beadc3142a33359b5cfa4765dcbd0bc). The adaptation replaces the upstream agent's Skill-tool terminology with Pi's `/skill:name` commands.
 
+## teach
+
+[`skills/teach/`](skills/teach/) is copied from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`6654f6b60cd9d5be8b54c6fafe44346dabeb3b76`](https://github.com/mattpocock/skills/commit/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76), including the skill and its supporting workspace-format documents.
+
 ## Matt Pocock MIT license
 
 MIT License
