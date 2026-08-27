@@ -1,17 +1,16 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, deferred tool discovery, minimal web access, plain-language restatements, visual explanations, plan stress-testing, session handoffs, and a safe PR-publishing prompt.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, session handoffs, and a safe PR-publishing prompt.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
 ## Extension suite
 
-| Extension                                       | Use it when…                                                                                   | Main entry point              | Side effects                                                  |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------- |
-| [Question](extensions/question/README.md)       | The agent needs a material clarification without ending its current run                        | `question`                    | Pauses the active tool call until the user answers or cancels |
-| [Fast Mode](extensions/fast-mode/README.md)     | You want eligible Codex requests to ask for priority service                                   | `/fast`                       | Changes global Fast Mode state; may affect provider billing   |
-| [Tool Search](extensions/tool-search/README.md) | The active tools cannot perform a task and a specialized capability should be loaded on demand | `tool_search`, `/tool-search` | Additively activates registered Pi tools                      |
-| [Web Tools](extensions/web-tools/README.md)     | You need live search, site mapping, or page extraction                                         | `search`, `map`, `fetch`      | Calls Firecrawl and spends provider credits                   |
+| Extension                                   | Use it when…                                                            | Main entry point         | Side effects                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------- |
+| [Question](extensions/question/README.md)   | The agent needs a material clarification without ending its current run | `question`               | Pauses the active tool call until the user answers or cancels |
+| [Fast Mode](extensions/fast-mode/README.md) | You want eligible Codex requests to ask for priority service            | `/fast`                  | Changes global Fast Mode state; may affect provider billing   |
+| [Web Tools](extensions/web-tools/README.md) | You need live search, site mapping, or page extraction                  | `search`, `map`, `fetch` | Calls Firecrawl and spends provider credits                   |
 
 The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 
@@ -117,18 +116,17 @@ The agent writes a compact, redacted continuation document to the OS temporary d
 
 ## Choosing the right primitive
 
-| Need                                          | Prefer                           | Why                                                           |
-| --------------------------------------------- | -------------------------------- | ------------------------------------------------------------- |
-| Material ambiguity during an active run       | `question`                       | Pauses in place and resumes with a compact answer map         |
-| One known page                                | `fetch`                          | Smallest live-web operation                                   |
-| One known site, but not the exact page        | `map`, then `fetch`              | Discovers site URLs without crawling every page               |
-| Missing specialized capability                | `tool_search`                    | Loads the smallest matching namespaced tool bundle additively |
-| Unknown source                                | `search`, then selective fetches | Bounded discovery before extraction                           |
-| The last answer was confusing or too wordy    | `/skill:bro`                     | A simpler, concise restatement without jargon                 |
-| A concept would be clearer as a visual        | `/skill:show-me`                 | Concise diagrams, code-shape sketches, or focused HTML        |
-| A plan or design needs every assumption aired | `/skill:grill-me`                | Native question dialogs over the design-tree frontier         |
-| A fresh session should continue current work  | `/skill:handoff [focus]`         | Compact, redacted context saved outside the repository        |
-| Finished changes ready for GitHub             | `/yeet`                          | Repo-native verification and PR-template workflow             |
+| Need                                          | Prefer                           | Why                                                    |
+| --------------------------------------------- | -------------------------------- | ------------------------------------------------------ |
+| Material ambiguity during an active run       | `question`                       | Pauses in place and resumes with a compact answer map  |
+| One known page                                | `fetch`                          | Smallest live-web operation                            |
+| One known site, but not the exact page        | `map`, then `fetch`              | Discovers site URLs without crawling every page        |
+| Unknown source                                | `search`, then selective fetches | Bounded discovery before extraction                    |
+| The last answer was confusing or too wordy    | `/skill:bro`                     | A simpler, concise restatement without jargon          |
+| A concept would be clearer as a visual        | `/skill:show-me`                 | Concise diagrams, code-shape sketches, or focused HTML |
+| A plan or design needs every assumption aired | `/skill:grill-me`                | Native question dialogs over the design-tree frontier  |
+| A fresh session should continue current work  | `/skill:handoff [focus]`         | Compact, redacted context saved outside the repository |
+| Finished changes ready for GitHub             | `/yeet`                          | Repo-native verification and PR-template workflow      |
 
 A useful sequence for larger changes is:
 
@@ -143,7 +141,6 @@ Each stage has a different trust boundary: external evidence, then publication.
 | Command                  | Description                                                     |
 | ------------------------ | --------------------------------------------------------------- |
 | `/fast`                  | Toggle global Codex Fast Mode                                   |
-| `/tool-search`           | Show available namespaced deferred-tool capabilities            |
 | `/skill:bro`             | Restate the previous response simply, concisely, and coherently |
 | `/skill:grill-me`        | Stress-test a plan through native question-dialog rounds        |
 | `/skill:handoff [focus]` | Write a compact continuation document for a fresh agent         |
@@ -181,7 +178,6 @@ Read the extension-specific safety section before enabling mutating or billed ca
 ├── extensions/
 │   ├── question/                   # question
 │   ├── fast-mode/                  # /fast
-│   ├── tool-search/                # tool_search and capability registry
 │   └── web-tools/                  # search, map, and fetch
 ├── skills/
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
@@ -222,7 +218,6 @@ Common focused commands:
 pnpm check:root
 pnpm --filter pi-question check
 pnpm --filter pi-fast-mode check
-pnpm --filter pi-tool-search check
 pnpm --filter pi-web-tools check
 pnpm format
 pnpm lint
@@ -259,7 +254,6 @@ hk run pre-commit
 
 - [Question](extensions/question/README.md)
 - [Fast Mode](extensions/fast-mode/README.md)
-- [Tool Search](extensions/tool-search/README.md)
 - [Web Tools](extensions/web-tools/README.md)
 - [Bro skill](skills/bro/SKILL.md)
 - [Grill Me skill](skills/grill-me/SKILL.md)
