@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and PR babysitting.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and Cursor's PR babysit and autopilot skills.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
@@ -21,10 +21,11 @@ Also included:
 - [Matt Pocock's `/skill:handoff`](skills/handoff/SKILL.md), compacts the current conversation into a temporary handoff document for a fresh agent
 - [Matt Pocock's `/skill:teach`](skills/teach/SKILL.md), builds a stateful teaching workspace with sourced lessons, reference materials, and learning records
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
-- [`/skill:babysit`](skills/babysit/SKILL.md), Cursor's built-in PR babysit skill: keep an existing GitHub PR merge-ready
+- [`/skill:babysit`](skills/babysit/SKILL.md), Cursor's short PR babysit skill: keep an existing GitHub PR merge-ready
+- [`/skill:autopilot`](skills/autopilot/SKILL.md), Cursor's longer PR autopilot skill: the same job with an explicit loop, triage policy, and no-merge rules
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`bro`, `grill-me`, `handoff`, and `teach` are manual-only. `babysit`, `show-me`, and `grilling` can also be selected by the model when their descriptions match the task. The `babysit`, `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`bro`, `grill-me`, `handoff`, and `teach` are manual-only. `babysit`, `autopilot`, `show-me`, and `grilling` can also be selected by the model when their descriptions match the task. The `babysit`, `autopilot`, `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -35,7 +36,7 @@ Also included:
 - pnpm 11
 - Provider credentials for the models you use
 - A Firecrawl API key only if using Web Tools
-- GitHub CLI (`gh`) only for `/skill:babysit` and `/yeet`
+- GitHub CLI (`gh`) only for `/skill:babysit`, `/skill:autopilot`, and `/yeet`
 
 ### Install this checkout
 
@@ -126,17 +127,18 @@ The agent clarifies your mission, curates trusted resources, and builds short HT
 /yeet
 ```
 
-`/yeet` inspects the repository, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template.
+`/yeet` inspects the repository, confirms `gh` is authenticated, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template. It publishes only; merge-readiness is `/skill:babysit` or `/skill:autopilot`.
 
 ### 9. Keep an existing PR merge-ready
 
-Start a fresh agent on the PR branch, then invoke:
+Start a fresh agent on the PR branch, then invoke either Cursor PR skill:
 
 ```text
 /skill:babysit
+/skill:autopilot
 ```
 
-The agent checks PR status, unresolved comments, and latest CI, then resolves merge conflicts, valid review feedback, and in-scope CI failures until the PR is merge-ready.
+`/skill:babysit` is the short loop: check status, comments, and CI, then fix conflicts, valid feedback, and in-scope failures. `/skill:autopilot` is the same job with a required refresh-every-pass loop, fix/dismiss/ask triage, local verify-before-push, and a ban on merging, auto-merge, force-push, or marking a draft ready.
 
 ## Choosing the right primitive
 
@@ -152,12 +154,13 @@ The agent checks PR status, unresolved comments, and latest CI, then resolves me
 | A fresh session should continue current work  | `/skill:handoff [focus]`         | Compact, redacted context saved outside the repository |
 | You want a multi-session personalized course  | `/skill:teach [topic]`           | Stateful lessons grounded in one learning mission      |
 | Finished changes ready for GitHub             | `/yeet`                          | Repo-native verification and PR-template workflow      |
-| An existing PR should be kept merge-ready     | `/skill:babysit`                 | Conflict, review, and CI reconciliation                |
+| An existing PR should be kept merge-ready     | `/skill:babysit`                 | Short conflict, review, and CI loop                    |
+| The same job, with explicit no-merge rules    | `/skill:autopilot`               | Cursor's longer refresh, triage, and verify procedure  |
 
 A useful sequence for larger changes is:
 
 ```text
-web evidence → yeet → babysit
+web evidence → yeet → babysit or autopilot
 ```
 
 Each stage has a different trust boundary: external evidence, publication, then ongoing PR maintenance.
@@ -169,7 +172,8 @@ Each stage has a different trust boundary: external evidence, publication, then 
 | `/login firecrawl`       | Store a Firecrawl key in Pi's cross-platform credential file    |
 | `/logout firecrawl`      | Remove the Firecrawl key stored by Pi                           |
 | `/fast`                  | Toggle global Codex Fast Mode                                   |
-| `/skill:babysit`         | Keep an existing GitHub PR merge-ready                          |
+| `/skill:autopilot`       | Keep a PR merge-ready with Cursor's longer operating rules      |
+| `/skill:babysit`         | Keep a PR merge-ready with Cursor's short loop                  |
 | `/skill:bro`             | Restate the previous response simply, concisely, and coherently |
 | `/skill:grill-me`        | Stress-test a plan through native question-dialog rounds        |
 | `/skill:handoff [focus]` | Write a compact continuation document for a fresh agent         |
@@ -199,6 +203,7 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 - `/skill:babysit` can merge the PR's base, create commits, push scoped fixes, and address review comments until the PR is mergeable with green CI and triaged comments.
+- `/skill:autopilot` does the same work under stricter rules: it must refresh live PR state every pass, triage comments as fix/dismiss/ask, verify before push, and it must not merge, enable auto-merge, mark a draft ready, or force-push.
 
 Read the extension-specific safety section before enabling mutating or billed capabilities.
 
@@ -212,7 +217,8 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── fast-mode/                  # /fast
 │   └── web-tools/                  # search, map, and fetch
 ├── skills/
-│   ├── babysit/                    # Cursor's built-in PR reconciliation skill
+│   ├── autopilot/                  # Cursor's longer PR reconciliation skill
+│   ├── babysit/                    # Cursor's short PR reconciliation skill
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
 │   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
 │   ├── grilling/                   # Interview workflow adapted for question
@@ -289,6 +295,7 @@ hk run pre-commit
 - [Question](extensions/question/README.md)
 - [Fast Mode](extensions/fast-mode/README.md)
 - [Web Tools](extensions/web-tools/README.md)
+- [Autopilot skill](skills/autopilot/SKILL.md)
 - [Babysit skill](skills/babysit/SKILL.md)
 - [Bro skill](skills/bro/SKILL.md)
 - [Grill Me skill](skills/grill-me/SKILL.md)
