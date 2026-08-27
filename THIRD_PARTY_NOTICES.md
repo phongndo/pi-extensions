@@ -1,5 +1,9 @@
 # Third-party notices
 
+## babysit
+
+[`skills/babysit/SKILL.md`](skills/babysit/SKILL.md) is Cursor's built-in `/babysit` skill text, copied unchanged aside from YAML frontmatter required by the Agent Skills format.
+
 ## bro
 
 [`skills/bro/SKILL.md`](skills/bro/SKILL.md) is copied from [Dillon Mulroy's `dmmulroy/skills`](https://github.com/dmmulroy/skills) at commit [`8603380821fee6a77c82639f364ce8fe4f5a92be`](https://github.com/dmmulroy/skills/commit/8603380821fee6a77c82639f364ce8fe4f5a92be). The source repository distributes it under the Matt Pocock MIT license reproduced below.
