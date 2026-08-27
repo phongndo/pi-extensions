@@ -6,17 +6,25 @@ Three small Firecrawl-powered tools for live web access:
 - `map` — discover pages when the website is known but the exact page is not
 - `fetch` — read one exact URL as bounded Markdown
 
-All three tools are always active. There is no tool loader, settings page, persistent configuration, telemetry, browser automation, research ledger, or asynchronous job state.
+All three tools are always active. There is no tool loader, extension-specific configuration file, telemetry, browser automation, research ledger, or asynchronous job state. Credentials use Pi's native auth store.
 
 ## Setup
 
-Set a Firecrawl API key before starting Pi:
+Store the Firecrawl key through Pi's cross-platform credential flow:
+
+```text
+/login firecrawl
+```
+
+Pi uses a masked secret prompt and saves the credential in `~/.pi/agent/auth.json`, which it creates with user-only (`0600`) permissions. This works the same way on Linux and macOS, takes effect immediately, and avoids shell profiles and repeated exports. Use `/logout firecrawl` to remove it.
+
+For CI or other non-interactive use, the environment variable remains supported:
 
 ```bash
 export FIRECRAWL_API_KEY="fc-..."
 ```
 
-After changing the environment, restart Pi. During local extension development, use `/reload` after editing code.
+A key stored by `/login` takes precedence over `FIRECRAWL_API_KEY`. After changing the environment, restart Pi. During local extension development, use `/reload` after editing code.
 
 ## Routing
 
@@ -89,7 +97,7 @@ This extension intentionally does not provide:
 - scheduled monitors
 - academic or GitHub-specific research
 - dynamic tool activation
-- key storage or configuration UI
+- a separate credential store or configuration UI beyond Pi's native `/login` flow
 
 Requests have a 60-second timeout and bounded outputs. Basic client-side URL validation rejects credentials, local hostnames, and direct private IP addresses. Firecrawl still controls the actual network connection and must enforce private-network and redirect protections at provider egress.
 

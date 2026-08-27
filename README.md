@@ -66,11 +66,13 @@ Eligible `openai-codex` requests gain `service_tier: "priority"`; the built-in f
 
 ### 2. Configure minimal web access
 
-Set the Firecrawl key before starting Pi:
+Store the Firecrawl key through Pi's masked, cross-platform login flow:
 
-```bash
-export FIRECRAWL_API_KEY="fc-..."
+```text
+/login firecrawl
 ```
+
+Pi saves it in the user-only credential file at `~/.pi/agent/auth.json`; no shell export or restart is required. `FIRECRAWL_API_KEY` remains available for CI and other non-interactive use.
 
 Web Tools exposes three always-active tools: `search`, `map`, and `fetch`.
 
@@ -140,6 +142,8 @@ Each stage has a different trust boundary: external evidence, then publication.
 
 | Command                  | Description                                                     |
 | ------------------------ | --------------------------------------------------------------- |
+| `/login firecrawl`       | Store a Firecrawl key in Pi's cross-platform credential file    |
+| `/logout firecrawl`      | Remove the Firecrawl key stored by Pi                           |
 | `/fast`                  | Toggle global Codex Fast Mode                                   |
 | `/skill:bro`             | Restate the previous response simply, concisely, and coherently |
 | `/skill:grill-me`        | Stress-test a plan through native question-dialog rounds        |
@@ -153,17 +157,18 @@ See each extension README for complete syntax, safety constraints, and troublesh
 
 Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature       | Location                     | Contains                                                        |
-| ------------- | ---------------------------- | --------------------------------------------------------------- |
-| Theme         | `themes/origin.json`         | Packaged TUI theme; select with `"theme": "origin"` in settings |
-| Fast Mode     | `~/.pi/agent/fast-mode.json` | Global on/off state                                             |
-| Firecrawl key | `FIRECRAWL_API_KEY`          | API credential provided through the process environment         |
+| Feature       | Location                     | Contains                                                            |
+| ------------- | ---------------------------- | ------------------------------------------------------------------- |
+| Theme         | `themes/origin.json`         | Packaged TUI theme; select with `"theme": "origin"` in settings     |
+| Fast Mode     | `~/.pi/agent/fast-mode.json` | Global on/off state                                                 |
+| Firecrawl key | `~/.pi/agent/auth.json`      | API credential stored by `/login firecrawl` with `0600` permissions |
 
 ## Security model
 
 These are trusted local extensions, not sandboxes around Pi itself.
 
 - Pi extensions run with the user's process permissions.
+- Pi's `auth.json` credential store is user-readable plaintext protected by filesystem permissions, not an encrypted OS keychain.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
