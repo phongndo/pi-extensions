@@ -5,7 +5,9 @@ import webTools, {
   buildMapRequest,
   buildSearchRequest,
   clipText,
+  createFirecrawlProvider,
   firecrawlRequest,
+  resolveFirecrawlApiKey,
   shapeFetchResponse,
   shapeMapResponse,
   shapeSearchResponse,
@@ -21,17 +23,63 @@ afterEach(() => {
   else process.env.FIRECRAWL_API_KEY = originalApiKey;
 });
 
-test("registers only the three flat web tools", () => {
-  const names: string[] = [];
+test("registers Firecrawl auth and the three flat web tools", () => {
+  const providers: string[] = [];
+  const tools: string[] = [];
   const pi = {
+    registerProvider(provider: { id: string }) {
+      providers.push(provider.id);
+    },
     registerTool(tool: { name: string }) {
-      names.push(tool.name);
+      tools.push(tool.name);
     },
   } as unknown as ExtensionAPI;
 
   webTools(pi);
 
-  assert.deepEqual(names, ["search", "map", "fetch"]);
+  assert.deepEqual(providers, ["firecrawl"]);
+  assert.deepEqual(tools, ["search", "map", "fetch"]);
+});
+
+test("Firecrawl auth uses Pi's secret prompt and stored credential", async () => {
+  const provider = createFirecrawlProvider();
+  const auth = provider.auth.apiKey;
+  if (!auth?.login) throw new Error("Firecrawl API-key login is missing");
+
+  const credential = await auth.login({
+    async prompt(prompt) {
+      assert.equal(prompt.type, "secret");
+      assert.equal(prompt.message, "Enter Firecrawl API key");
+      return "fc-stored-key";
+    },
+    notify() {},
+  });
+  assert.deepEqual(credential, { type: "api_key", key: "fc-stored-key" });
+
+  const resolved = await auth.resolve({
+    credential,
+    ctx: {
+      async env() {
+        return "fc-environment-key";
+      },
+      async fileExists() {
+        return false;
+      },
+    },
+  });
+  assert.equal(resolved?.auth.apiKey, "fc-stored-key");
+});
+
+test("resolves Firecrawl credentials from Pi before the process environment", async () => {
+  process.env.FIRECRAWL_API_KEY = "fc-environment-key";
+  const key = await resolveFirecrawlApiKey(async (providerId) => {
+    assert.equal(providerId, "firecrawl");
+    return {
+      auth: { apiKey: "fc-stored-key" },
+      source: "stored credential",
+    };
+  });
+  assert.equal(key, "fc-stored-key");
 });
 
 test("builds a small deterministic search request", () => {
@@ -175,11 +223,11 @@ test("fetch shaping returns bounded Markdown and provenance", () => {
   assert.equal(clipText("short", 10), "short");
 });
 
-test("Firecrawl requests require the environment key", async () => {
+test("Firecrawl requests explain both credential setup paths", async () => {
   delete process.env.FIRECRAWL_API_KEY;
   await assert.rejects(
     firecrawlRequest("/search", { query: "test" }),
-    /FIRECRAWL_API_KEY is required/,
+    /Run \/login firecrawl.*FIRECRAWL_API_KEY/,
   );
 });
 

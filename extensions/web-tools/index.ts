@@ -1,7 +1,18 @@
 import { isIP } from "node:net";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  createProvider,
+  envApiKeyAuth,
+  lazyApi,
+  type AuthResult,
+  type Provider,
+} from "@earendil-works/pi-ai";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
+export const FIRECRAWL_PROVIDER_ID = "firecrawl";
 const FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v2";
 const REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_SEARCH_LIMIT = 5;
@@ -291,13 +302,50 @@ export function buildMapRequest(params: MapParams): JsonRecord {
   };
 }
 
-function apiKey(): string {
-  const key = process.env.FIRECRAWL_API_KEY?.trim();
+export function createFirecrawlProvider(): Provider {
+  return createProvider({
+    id: FIRECRAWL_PROVIDER_ID,
+    name: "Firecrawl",
+    baseUrl: FIRECRAWL_BASE_URL,
+    auth: {
+      apiKey: envApiKeyAuth("Firecrawl API key", ["FIRECRAWL_API_KEY"]),
+    },
+    models: [],
+    api: lazyApi(async () => {
+      throw new Error("Firecrawl does not provide language models.");
+    }),
+  });
+}
+
+function requiredApiKey(value: string | undefined): string {
+  const key = value?.trim();
   if (!key)
     throw new Error(
-      "FIRECRAWL_API_KEY is required. Set it in the environment and reload Pi.",
+      "A Firecrawl API key is required. Run /login firecrawl to store one in Pi, or set FIRECRAWL_API_KEY before starting Pi.",
     );
   return key;
+}
+
+export async function resolveFirecrawlApiKey(
+  getProviderAuth?: (providerId: string) => Promise<AuthResult | undefined>,
+): Promise<string> {
+  if (getProviderAuth) {
+    const result = await getProviderAuth(FIRECRAWL_PROVIDER_ID);
+    if (result?.auth.apiKey) return requiredApiKey(result.auth.apiKey);
+  }
+  return requiredApiKey(process.env.FIRECRAWL_API_KEY);
+}
+
+async function firecrawlRequestForContext(
+  ctx: ExtensionContext,
+  path: "/search" | "/map" | "/scrape",
+  body: JsonRecord,
+  signal?: AbortSignal,
+): Promise<JsonRecord> {
+  const key = await resolveFirecrawlApiKey(
+    ctx.modelRegistry.getProviderAuth.bind(ctx.modelRegistry),
+  );
+  return firecrawlRequest(path, body, signal, key);
 }
 
 function providerMessage(payload: unknown): string | undefined {
@@ -314,8 +362,9 @@ export async function firecrawlRequest(
   path: "/search" | "/map" | "/scrape",
   body: JsonRecord,
   signal?: AbortSignal,
+  apiKeyOverride?: string,
 ): Promise<JsonRecord> {
-  const key = apiKey();
+  const key = requiredApiKey(apiKeyOverride ?? process.env.FIRECRAWL_API_KEY);
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response: Response;
@@ -531,6 +580,8 @@ function renderMap(url: string, links: JsonRecord[]): string {
 }
 
 export default function webTools(pi: ExtensionAPI): void {
+  pi.registerProvider(createFirecrawlProvider());
+
   pi.registerTool({
     name: "search",
     label: "Web Search",
@@ -544,9 +595,14 @@ export default function webTools(pi: ExtensionAPI): void {
     ],
     parameters: searchParameters,
     executionMode: "parallel",
-    async execute(_id, params, signal) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
       const request = buildSearchRequest(params);
-      const payload = await firecrawlRequest("/search", request, signal);
+      const payload = await firecrawlRequestForContext(
+        ctx,
+        "/search",
+        request,
+        signal,
+      );
       const results = shapeSearchResponse(payload);
       return toolResult(renderSearch(request.query as string, results), {
         query: request.query,
@@ -563,9 +619,14 @@ export default function webTools(pi: ExtensionAPI): void {
     promptSnippet: "Discover relevant URLs within a known website",
     parameters: mapParameters,
     executionMode: "parallel",
-    async execute(_id, params, signal) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
       const request = buildMapRequest(params);
-      const payload = await firecrawlRequest("/map", request, signal);
+      const payload = await firecrawlRequestForContext(
+        ctx,
+        "/map",
+        request,
+        signal,
+      );
       const links = shapeMapResponse(payload, request.limit as number);
       return toolResult(renderMap(request.url as string, links), {
         url: request.url,
@@ -582,7 +643,7 @@ export default function webTools(pi: ExtensionAPI): void {
     promptSnippet: "Fetch one known web page as bounded Markdown",
     parameters: fetchParameters,
     executionMode: "parallel",
-    async execute(_id, params, signal) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
       const url = validatePublicUrl(params.url);
       const maximumChars = boundedInteger(
         params.max_chars,
@@ -590,7 +651,8 @@ export default function webTools(pi: ExtensionAPI): void {
         MAX_FETCH_CHARS,
         "max_chars",
       );
-      const payload = await firecrawlRequest(
+      const payload = await firecrawlRequestForContext(
+        ctx,
         "/scrape",
         {
           url,
