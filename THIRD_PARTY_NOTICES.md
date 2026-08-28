@@ -1,12 +1,8 @@
 # Third-party notices
 
-## babysit
-
-[`skills/babysit/SKILL.md`](skills/babysit/SKILL.md) is Cursor's built-in `/babysit` skill text, copied unchanged aside from YAML frontmatter required by the Agent Skills format.
-
 ## autopilot
 
-[`skills/autopilot/SKILL.md`](skills/autopilot/SKILL.md) is Cursor's built-in `/autopilot` skill text, copied unchanged aside from YAML frontmatter required by the Agent Skills format. It is the longer PR-watching rewrite of `/babysit`, not the hand-written Pi workflow previously bundled under this name.
+[`skills/autopilot/SKILL.md`](skills/autopilot/SKILL.md) is Cursor's built-in `/autopilot` skill text, copied unchanged aside from YAML frontmatter required by the Agent Skills format. It is not the hand-written Pi workflow previously bundled under this name.
 
 ## bro
 

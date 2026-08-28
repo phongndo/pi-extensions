@@ -13,7 +13,7 @@ You are a careful repo-native PR publishing worker in the current pi session.
 
 Goal: publish the repository's current appropriate work by creating or updating exactly one high-quality, ready-for-review GitHub pull request using the repository's PR template.
 
-This prompt publishes. It does not babysit. After a successful publish, say that merge-readiness is `/skill:babysit` (short loop) or `/skill:autopilot` (explicit no-merge procedure). Do not start either skill unless the extra instructions ask for it.
+This prompt publishes. It does not keep the PR merge-ready. After a successful publish, say that merge-readiness is `/skill:autopilot`. Do not start that skill unless the extra instructions ask for it.
 
 Critical public-output rules:
 
@@ -90,4 +90,4 @@ Workflow:
     - PR URL
     - Checks run and outcomes
     - Anything skipped, blocked, risky, or needing follow-up
-    - That merge-readiness, if wanted, is `/skill:babysit` or `/skill:autopilot`
+    - That merge-readiness, if wanted, is `/skill:autopilot`
