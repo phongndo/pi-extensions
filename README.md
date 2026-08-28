@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and Cursor's PR autopilot skill.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
@@ -21,10 +21,10 @@ Also included:
 - [Matt Pocock's `/skill:handoff`](skills/handoff/SKILL.md), compacts the current conversation into a temporary handoff document for a fresh agent
 - [Matt Pocock's `/skill:teach`](skills/teach/SKILL.md), builds a stateful teaching workspace with sourced lessons, reference materials, and learning records
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
-- [`/skill:autopilot`](skills/autopilot/SKILL.md), Cursor's PR autopilot skill: keep an existing GitHub PR merge-ready with an explicit loop, triage policy, and no-merge rules
+- [`/skill:autopilot`](skills/autopilot/SKILL.md), drives an existing GitHub PR to merge readiness in the current agent session
 - [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`bro`, `grill-me`, `handoff`, and `teach` are manual-only. `autopilot`, `show-me`, and `grilling` can also be selected by the model when their descriptions match the task. The `autopilot`, `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`autopilot`, `bro`, `grill-me`, `handoff`, and `teach` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -126,7 +126,7 @@ The agent clarifies your mission, curates trusted resources, and builds short HT
 /yeet
 ```
 
-`/yeet` inspects the repository, confirms `gh` is authenticated, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template. It publishes only; merge-readiness is `/skill:autopilot`.
+`/yeet` inspects the repository, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template.
 
 ### 9. Keep an existing PR merge-ready
 
@@ -136,7 +136,7 @@ Start a fresh agent on the PR branch, then invoke:
 /skill:autopilot
 ```
 
-The agent refreshes PR status every pass, resolves merge conflicts, triages review comments as fix/dismiss/ask, and fixes in-scope CI failures after a local verify. It does not merge, enable auto-merge, mark a draft ready, or force-push.
+You can also pass a PR number, URL, or branch. The current agent—not a subagent—repeatedly refreshes the PR, resolves safe conflicts, triages review threads, fixes in-scope CI failures, and waits for checks. It reports readiness but never merges, enables auto-merge, or marks a draft ready.
 
 ## Choosing the right primitive
 
@@ -152,7 +152,7 @@ The agent refreshes PR status every pass, resolves merge conflicts, triages revi
 | A fresh session should continue current work  | `/skill:handoff [focus]`         | Compact, redacted context saved outside the repository |
 | You want a multi-session personalized course  | `/skill:teach [topic]`           | Stateful lessons grounded in one learning mission      |
 | Finished changes ready for GitHub             | `/yeet`                          | Repo-native verification and PR-template workflow      |
-| An existing PR should be kept merge-ready     | `/skill:autopilot`               | Conflict, review, and CI reconciliation with no-merge rules |
+| An existing PR should be kept merge-ready     | `/skill:autopilot [PR]`          | Human-started conflict, review, and CI reconciliation  |
 
 A useful sequence for larger changes is:
 
@@ -169,7 +169,7 @@ Each stage has a different trust boundary: external evidence, publication, then 
 | `/login firecrawl`       | Store a Firecrawl key in Pi's cross-platform credential file    |
 | `/logout firecrawl`      | Remove the Firecrawl key stored by Pi                           |
 | `/fast`                  | Toggle global Codex Fast Mode                                   |
-| `/skill:autopilot`       | Keep an existing GitHub PR merge-ready                          |
+| `/skill:autopilot [PR]`  | Keep an existing GitHub PR merge-ready in the current agent     |
 | `/skill:bro`             | Restate the previous response simply, concisely, and coherently |
 | `/skill:grill-me`        | Stress-test a plan through native question-dialog rounds        |
 | `/skill:handoff [focus]` | Write a compact continuation document for a fresh agent         |
@@ -198,7 +198,7 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
-- `/skill:autopilot` can merge the PR's base, create commits, push scoped fixes, and address review comments. It must refresh live PR state every pass, triage comments as fix/dismiss/ask, verify before push, and it must not merge, enable auto-merge, mark a draft ready, or force-push.
+- `/skill:autopilot` can check out a PR branch, merge its base, create commits, push, reply to reviews, and resolve threads. It never merges the PR, enables auto-merge, marks a draft ready, force-pushes, or rewrites history.
 
 Read the extension-specific safety section before enabling mutating or billed capabilities.
 
@@ -212,7 +212,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── fast-mode/                  # /fast
 │   └── web-tools/                  # search, map, and fetch
 ├── skills/
-│   ├── autopilot/                  # Cursor's PR reconciliation skill
+│   ├── autopilot/                  # Human-invoked PR reconciliation loop
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
 │   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
 │   ├── grilling/                   # Interview workflow adapted for question
