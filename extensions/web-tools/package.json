@@ -2,7 +2,7 @@
   "name": "pi-web-tools",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal Firecrawl search, map, and fetch tools for Pi",
+  "description": "Bounded Firecrawl search, map, fetch, crawl, and extract tools for Pi",
   "keywords": [
     "firecrawl",
     "pi-extension",

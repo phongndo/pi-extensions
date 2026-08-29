@@ -1,16 +1,16 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, minimal web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
 ## Extension suite
 
-| Extension                                   | Use it when…                                                            | Main entry point         | Side effects                                                  |
-| ------------------------------------------- | ----------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------- |
-| [Question](extensions/question/README.md)   | The agent needs a material clarification without ending its current run | `question`               | Pauses the active tool call until the user answers or cancels |
-| [Fast Mode](extensions/fast-mode/README.md) | You want eligible Codex requests to ask for priority service            | `/fast`                  | Changes global Fast Mode state; may affect provider billing   |
-| [Web Tools](extensions/web-tools/README.md) | You need live search, site mapping, or page extraction                  | `search`, `map`, `fetch` | Calls Firecrawl and spends provider credits                   |
+| Extension                                   | Use it when…                                                            | Main entry point                             | Side effects                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------- |
+| [Question](extensions/question/README.md)   | The agent needs a material clarification without ending its current run | `question`                                   | Pauses the active tool call until the user answers or cancels |
+| [Fast Mode](extensions/fast-mode/README.md) | You want eligible Codex requests to ask for priority service            | `/fast`                                      | Changes global Fast Mode state; may affect provider billing   |
+| [Web Tools](extensions/web-tools/README.md) | You need live search, mapping, linked-page crawling, or extraction      | `search`, `map`, `fetch`, `crawl`, `extract` | Calls Firecrawl and spends provider credits                   |
 
 The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 
@@ -76,7 +76,7 @@ Store the Firecrawl key through Pi's masked, cross-platform login flow:
 
 Pi saves it in the user-only credential file at `~/.pi/agent/auth.json`; no shell export or restart is required. `FIRECRAWL_API_KEY` remains available for CI and other non-interactive use.
 
-Web Tools exposes three always-active tools: `search`, `map`, and `fetch`.
+Web Tools exposes five always-active tools: `search`, `map`, `fetch`, `crawl`, and `extract`. Crawl and structured extraction can spend substantially more Firecrawl credits than ordinary search, map, or fetch calls.
 
 ### 3. Ask for a simpler explanation
 
@@ -143,9 +143,11 @@ You can also pass a PR number, URL, or branch. The current agent—not a subagen
 | Need                                          | Prefer                           | Why                                                    |
 | --------------------------------------------- | -------------------------------- | ------------------------------------------------------ |
 | Material ambiguity during an active run       | `question`                       | Pauses in place and resumes with a compact answer map  |
-| One known page                                | `fetch`                          | Smallest live-web operation                            |
+| One known page needing readable evidence      | `fetch`                          | Smallest live-web reading operation                    |
 | One known site, but not the exact page        | `map`, then `fetch`              | Discovers site URLs without crawling every page        |
-| Unknown source                                | `search`, then selective fetches | Bounded discovery before extraction                    |
+| Several linked pages in one section           | `crawl`                          | Bounded, resumable document windows                    |
+| Machine-readable fields from one exact page   | `extract`                        | JSON-mode extraction with prompt-injection checking    |
+| Unknown source                                | `search`, then selective fetches | Bounded discovery before reading primary sources       |
 | The last answer was confusing or too wordy    | `/skill:bro`                     | A simpler, concise restatement without jargon          |
 | A concept would be clearer as a visual        | `/skill:show-me`                 | Concise diagrams, code-shape sketches, or focused HTML |
 | A plan or design needs every assumption aired | `/skill:grill-me`                | Native question dialogs over the design-tree frontier  |
@@ -210,7 +212,7 @@ Read the extension-specific safety section before enabling mutating or billed ca
 ├── extensions/
 │   ├── question/                   # question
 │   ├── fast-mode/                  # /fast
-│   └── web-tools/                  # search, map, and fetch
+│   └── web-tools/                  # search, map, fetch, crawl, and extract
 ├── skills/
 │   ├── autopilot/                  # Human-invoked PR reconciliation loop
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
