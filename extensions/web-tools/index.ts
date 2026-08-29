@@ -611,6 +611,21 @@ export function buildCrawlRequest(params: CrawlParams): BuiltCrawlRequest {
   };
 }
 
+function normalizeSchemaForFirecrawl(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeSchemaForFirecrawl);
+  if (!isRecord(value)) return value;
+
+  const omitAdditionalProperties =
+    value.type === "object" &&
+    Object.prototype.hasOwnProperty.call(value, "properties");
+  const entries: Array<[string, unknown]> = [];
+  for (const [key, nested] of Object.entries(value)) {
+    if (omitAdditionalProperties && key === "additionalProperties") continue;
+    entries.push([key, normalizeSchemaForFirecrawl(nested)]);
+  }
+  return Object.fromEntries(entries);
+}
+
 function parseSchemaJson(value: string | undefined): JsonRecord | undefined {
   if (value === undefined) return undefined;
   if (value.length > MAX_SCHEMA_JSON_CHARS)
@@ -625,7 +640,7 @@ function parseSchemaJson(value: string | undefined): JsonRecord | undefined {
   }
   if (!isRecord(schema))
     throw new Error("schema_json must encode a JSON object.");
-  return schema;
+  return normalizeSchemaForFirecrawl(schema) as JsonRecord;
 }
 
 export interface BuiltExtractRequest {
@@ -643,6 +658,7 @@ export function buildExtractRequest(
   if (prompt.length > 10_000)
     throw new Error("prompt must not exceed 10,000 characters.");
   const schema = parseSchemaJson(params.schema_json);
+  const checkPromptInjection = params.check_prompt_injection ?? true;
   return {
     url,
     maximumChars: boundedInteger(
@@ -658,7 +674,7 @@ export function buildExtractRequest(
           type: "json",
           prompt,
           ...(schema ? { schema } : {}),
-          checkPromptInjection: params.check_prompt_injection ?? true,
+          ...(checkPromptInjection ? { checkPromptInjection: true } : {}),
         },
       ],
       onlyMainContent: params.only_main_content ?? true,

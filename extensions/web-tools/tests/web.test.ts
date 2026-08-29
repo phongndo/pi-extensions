@@ -262,7 +262,19 @@ test("builds safe single-page structured extraction requests", () => {
     prompt: " Extract the name and price. ",
     schema_json: JSON.stringify({
       type: "object",
-      properties: { price: { type: "string" } },
+      properties: {
+        price: { type: "string" },
+        offer: {
+          type: "object",
+          properties: { currency: { type: "string" } },
+          additionalProperties: false,
+        },
+        attributes: {
+          type: "object",
+          additionalProperties: { type: "string" },
+        },
+      },
+      additionalProperties: false,
     }),
   });
 
@@ -277,7 +289,17 @@ test("builds safe single-page structured extraction requests", () => {
           prompt: "Extract the name and price.",
           schema: {
             type: "object",
-            properties: { price: { type: "string" } },
+            properties: {
+              price: { type: "string" },
+              offer: {
+                type: "object",
+                properties: { currency: { type: "string" } },
+              },
+              attributes: {
+                type: "object",
+                additionalProperties: { type: "string" },
+              },
+            },
           },
           checkPromptInjection: true,
         },
@@ -285,6 +307,23 @@ test("builds safe single-page structured extraction requests", () => {
       onlyMainContent: true,
     },
   });
+
+  assert.deepEqual(
+    buildExtractRequest({
+      url: "https://example.com/product",
+      prompt: "Extract the name.",
+      check_prompt_injection: false,
+    }),
+    {
+      url: "https://example.com/product",
+      maximumChars: 12_000,
+      request: {
+        url: "https://example.com/product",
+        formats: [{ type: "json", prompt: "Extract the name." }],
+        onlyMainContent: true,
+      },
+    },
+  );
   assert.throws(
     () =>
       buildExtractRequest({

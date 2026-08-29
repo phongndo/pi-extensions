@@ -138,7 +138,9 @@ Uses Firecrawl's synchronous `/v2/scrape` JSON mode to extract fields from exact
 }
 ```
 
-The output remains valid JSON when compacted. JSON extraction costs at least five Firecrawl credits per page. The default prompt-injection classifier adds Firecrawl credits but protects the inner extraction model from hostile page content; set `check_prompt_injection: false` only when accepting that tradeoff.
+The output remains valid JSON when compacted. Before sending a caller-provided schema, the tool recursively removes `additionalProperties` from object nodes that define `properties`, matching Firecrawl's v2 schema normalization while leaving dictionary schemas unchanged.
+
+JSON extraction costs at least five Firecrawl credits per page. The default prompt-injection classifier adds Firecrawl credits but protects the inner extraction model from hostile page content. Guarded requests fail closed rather than retrying without the classifier. Set `check_prompt_injection: false` only when accepting that tradeoff; opt-out requests omit the optional provider field for compatibility.
 
 ## Boundaries
 
