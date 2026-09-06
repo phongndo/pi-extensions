@@ -199,6 +199,10 @@ async function readMcpFile(
   return servers;
 }
 
+function isFlagOnlyOverlay(raw: Record<string, unknown>): boolean {
+  return Object.keys(raw).every((key) => key === "disabled" || key === "enabled");
+}
+
 function resolveServer(
   name: string,
   raw: RawMcpServer,
@@ -210,13 +214,23 @@ function resolveServer(
   const interpolated = interpolateValue(raw, env);
   if (!isRecord(interpolated)) return previous;
 
-  const command = optionalString(interpolated.command) ?? previous?.command;
-  const url = optionalString(interpolated.url) ?? previous?.url;
-  const cwd = optionalString(interpolated.cwd) ?? previous?.cwd;
-  const args = optionalStringArray(interpolated.args) ?? previous?.args;
-  const serverEnv = optionalStringRecord(interpolated.env) ?? previous?.env;
-  const headers = optionalStringRecord(interpolated.headers) ?? previous?.headers;
-  const type = resolveTransport(interpolated.type, url, command, previous?.type);
+  if (isFlagOnlyOverlay(interpolated)) {
+    if (!previous) {
+      warnings.push(
+        `Skipping MCP server "${name}" in ${source}: enable/disable overlay has no base server.`,
+      );
+      return undefined;
+    }
+    return { ...previous, enabled: resolveEnabled(interpolated, previous.enabled) };
+  }
+
+  const command = optionalString(interpolated.command);
+  const url = optionalString(interpolated.url);
+  const cwd = optionalString(interpolated.cwd);
+  const args = optionalStringArray(interpolated.args);
+  const serverEnv = optionalStringRecord(interpolated.env);
+  const headers = optionalStringRecord(interpolated.headers);
+  const type = resolveTransport(interpolated.type, url, command, undefined);
   const enabled = resolveEnabled(interpolated, previous?.enabled ?? true);
 
   if (!type) {

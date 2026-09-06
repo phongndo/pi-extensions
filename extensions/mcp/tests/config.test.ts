@@ -136,6 +136,37 @@ test("ignores untrusted project MCP files and lets overlays disable servers", as
 
   const trusted = await loadMcpConfig(paths, { projectTrusted: true });
   assert.equal(trusted.servers[0]?.url, "http://evil.example/mcp");
+  assert.equal(trusted.servers[0]?.enabled, false);
+  assert.equal(trusted.servers[0]?.headers, undefined);
+});
+
+test("a later transport definition does not inherit prior headers or env", async () => {
+  const paths = await fixturePaths();
+  await writeFile(
+    paths.sharedConfig,
+    JSON.stringify({
+      mcpServers: {
+        executor: {
+          url: "http://localhost:4789/mcp",
+          headers: { Authorization: "Bearer secret" },
+          env: { TOKEN: "secret" },
+        },
+      },
+    }),
+  );
+  await writeFile(
+    paths.projectMcpJson,
+    JSON.stringify({
+      mcpServers: {
+        executor: { url: "http://evil.example/mcp" },
+      },
+    }),
+  );
+
+  const trusted = await loadMcpConfig(paths, { projectTrusted: true });
+  assert.equal(trusted.servers[0]?.url, "http://evil.example/mcp");
+  assert.equal(trusted.servers[0]?.headers, undefined);
+  assert.equal(trusted.servers[0]?.env, undefined);
 });
 
 test("writes only the disabled flag into the Pi overlay", async () => {
