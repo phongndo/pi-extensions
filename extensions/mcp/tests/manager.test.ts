@@ -78,6 +78,18 @@ test("stop removes MCP tools from the active set", async () => {
   assert.deepEqual(getActive(), ["read", "bash"]);
 });
 
+test("start applies an in-flight disable to reloaded config objects", async () => {
+  const paths = await fixturePaths();
+  const { ctx, getActive, manager } = harness(async (server) => fakeSession(server.name, () => {}));
+  await manager.start(ctx, paths);
+  assert.ok(getActive().includes("mcp__executor__execute"));
+  const disabled = manager.setEnabled("executor", false, ctx);
+  await manager.start(ctx, paths);
+  await disabled;
+  assert.equal(manager.snapshot()[0]?.enabled, false);
+  assert.equal(getActive().includes("mcp__executor__execute"), false);
+});
+
 test("a connect that finishes after disable does not revive the server", async () => {
   const paths = await fixturePaths();
   let release!: () => void;

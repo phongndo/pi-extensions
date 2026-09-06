@@ -17,12 +17,12 @@ RPC sessions can still use `/mcp`: pick a server, then enable or disable it. Pri
 
 ## Configuration
 
-Servers are merged in this order. Later files override earlier ones by server name, including a `{ "disabled": true }` overlay that keeps the original URL:
+Servers are merged in this order. Later files override earlier ones by server name. A `{ "disabled": true }` overlay keeps the original URL; a later definition that includes `url`, `command`, `headers`, or `env` replaces those fields instead of inheriting secrets.
 
 1. `~/.config/mcp/mcp.json` — shared user config used by other agents
-2. `~/.pi/agent/mcp.json` — Pi overlay (enable/disable)
-3. `<cwd>/.mcp.json` — project, only when trusted
-4. `<cwd>/.pi/mcp.json` — Pi project overlay, only when trusted
+2. `~/.pi/agent/mcp.json` — Pi overlay (enable/disable, or a full server replacement)
+
+Project `.mcp.json` and `.pi/mcp.json` files are not loaded. Pi's project-trust prompt does not run for those files alone, so auto-connecting them would spawn processes or send credentials before `/mcp`. Put servers in the shared user config instead.
 
 `${ENV_VAR}` is expanded in strings. A server is HTTP when it has `url` (or `"type": "http"`), SSE when `"type": "sse"` or the URL path ends in `/sse`, and stdio when it has `command`.
 

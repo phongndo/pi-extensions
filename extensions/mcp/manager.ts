@@ -29,6 +29,7 @@ export class McpManager {
   private readonly connecting = new Set<string>();
   private readonly registered = new Map<string, Set<string>>();
   private readonly queues = new Map<string, Promise<void>>();
+  private readonly desiredEnabled = new Map<string, boolean>();
   private readonly pi: ExtensionAPI;
   private readonly connectServer: (server: ResolvedMcpServer) => Promise<ConnectedMcpServer>;
 
@@ -69,10 +70,12 @@ export class McpManager {
   async start(ctx: ExtensionContext, paths?: McpConfigPaths): Promise<void> {
     await this.stop();
     const generation = this.generation;
-    const loaded = await loadMcpConfig(paths ?? defaultMcpConfigPaths(ctx.cwd), {
-      projectTrusted: ctx.isProjectTrusted(),
-    });
+    const loaded = await loadMcpConfig(paths ?? defaultMcpConfigPaths(ctx.cwd));
     this.config = loaded.servers;
+    for (const server of this.config) {
+      const desired = this.desiredEnabled.get(server.name);
+      if (desired !== undefined) server.enabled = desired;
+    }
     this.overlayPath = loaded.overlayPath;
     for (const warning of loaded.warnings) ctx.ui.notify(warning, "warning");
     await Promise.all(
@@ -93,12 +96,13 @@ export class McpManager {
   }
 
   async setEnabled(name: string, enabled: boolean, ctx: ExtensionContext): Promise<void> {
-    const server = this.config.find((candidate) => candidate.name === name);
-    if (!server) throw new Error(`Unknown MCP server: ${name}`);
+    this.desiredEnabled.set(name, enabled);
     await this.enqueue(name, async () => {
+      const server = this.config.find((candidate) => candidate.name === name);
+      if (!server) throw new Error(`Unknown MCP server: ${name}`);
       await setServerDisabled(this.overlayPath, name, !enabled);
-      server.enabled = enabled;
-      if (enabled) await this.connect(server, ctx, this.generation);
+      server.enabled = this.desiredEnabled.get(name) ?? enabled;
+      if (server.enabled) await this.connect(server, ctx, this.generation);
       else await this.disconnect(server);
     });
   }

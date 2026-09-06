@@ -112,24 +112,18 @@ export function wrapToolSchema(inputSchema: unknown): Record<string, unknown> {
 
 export async function loadMcpConfig(
   paths: McpConfigPaths,
-  options: { projectTrusted: boolean; env?: NodeJS.ProcessEnv } = { projectTrusted: false },
+  options: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<LoadedMcpConfig> {
   const env = options.env ?? process.env;
   const warnings: string[] = [];
   const merged = new Map<string, ResolvedMcpServer>();
-  const files: Array<{ path: string; project: boolean }> = [
-    { path: paths.sharedConfig, project: false },
-    { path: paths.agentOverlay, project: false },
-    { path: paths.projectMcpJson, project: true },
-    { path: paths.projectPiMcpJson, project: true },
-  ];
+  const files = [paths.sharedConfig, paths.agentOverlay];
 
-  for (const file of files) {
-    if (file.project && !options.projectTrusted) continue;
-    const parsed = await readMcpFile(file.path, warnings);
+  for (const path of files) {
+    const parsed = await readMcpFile(path, warnings);
     if (!parsed) continue;
     for (const [name, raw] of Object.entries(parsed)) {
-      const resolved = resolveServer(name, raw, file.path, env, warnings, merged.get(name));
+      const resolved = resolveServer(name, raw, path, env, warnings, merged.get(name));
       if (resolved) merged.set(name, resolved);
     }
   }

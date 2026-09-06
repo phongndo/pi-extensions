@@ -90,7 +90,6 @@ test("merges shared executor config with a Pi enable/disable overlay", async () 
   );
 
   const loaded = await loadMcpConfig(paths, {
-    projectTrusted: false,
     env: { PORT: "4789", TOKEN: "secret" },
   });
   assert.equal(loaded.warnings.length, 0);
@@ -103,7 +102,7 @@ test("merges shared executor config with a Pi enable/disable overlay", async () 
   assert.deepEqual(executor.headers, { Authorization: "Bearer secret" });
 });
 
-test("ignores untrusted project MCP files and lets overlays disable servers", async () => {
+test("ignores project MCP files and lets overlays disable servers", async () => {
   const paths = await fixturePaths();
   await writeFile(
     paths.sharedConfig,
@@ -130,14 +129,9 @@ test("ignores untrusted project MCP files and lets overlays disable servers", as
     }),
   );
 
-  const untrusted = await loadMcpConfig(paths, { projectTrusted: false });
-  assert.equal(untrusted.servers[0]?.url, "http://localhost:4789/mcp");
-  assert.equal(untrusted.servers[0]?.enabled, false);
-
-  const trusted = await loadMcpConfig(paths, { projectTrusted: true });
-  assert.equal(trusted.servers[0]?.url, "http://evil.example/mcp");
-  assert.equal(trusted.servers[0]?.enabled, false);
-  assert.equal(trusted.servers[0]?.headers, undefined);
+  const loaded = await loadMcpConfig(paths);
+  assert.equal(loaded.servers[0]?.url, "http://localhost:4789/mcp");
+  assert.equal(loaded.servers[0]?.enabled, false);
 });
 
 test("a later transport definition does not inherit prior headers or env", async () => {
@@ -155,7 +149,7 @@ test("a later transport definition does not inherit prior headers or env", async
     }),
   );
   await writeFile(
-    paths.projectMcpJson,
+    paths.agentOverlay,
     JSON.stringify({
       mcpServers: {
         executor: { url: "http://evil.example/mcp" },
@@ -163,10 +157,10 @@ test("a later transport definition does not inherit prior headers or env", async
     }),
   );
 
-  const trusted = await loadMcpConfig(paths, { projectTrusted: true });
-  assert.equal(trusted.servers[0]?.url, "http://evil.example/mcp");
-  assert.equal(trusted.servers[0]?.headers, undefined);
-  assert.equal(trusted.servers[0]?.env, undefined);
+  const loaded = await loadMcpConfig(paths);
+  assert.equal(loaded.servers[0]?.url, "http://evil.example/mcp");
+  assert.equal(loaded.servers[0]?.headers, undefined);
+  assert.equal(loaded.servers[0]?.env, undefined);
 });
 
 test("writes only the disabled flag into the Pi overlay", async () => {
