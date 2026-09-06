@@ -98,12 +98,15 @@ export class McpManager {
   async setEnabled(name: string, enabled: boolean, ctx: ExtensionContext): Promise<void> {
     this.desiredEnabled.set(name, enabled);
     await this.enqueue(name, async () => {
+      const desired = this.desiredEnabled.get(name);
+      if (desired === undefined) return;
       const server = this.config.find((candidate) => candidate.name === name);
       if (!server) throw new Error(`Unknown MCP server: ${name}`);
-      await setServerDisabled(this.overlayPath, name, !enabled);
-      server.enabled = this.desiredEnabled.get(name) ?? enabled;
-      if (server.enabled) await this.connect(server, ctx, this.generation);
+      await setServerDisabled(this.overlayPath, name, !desired);
+      server.enabled = desired;
+      if (desired) await this.connect(server, ctx, this.generation);
       else await this.disconnect(server);
+      if (this.desiredEnabled.get(name) === desired) this.desiredEnabled.delete(name);
     });
   }
 

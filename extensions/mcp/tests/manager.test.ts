@@ -90,6 +90,21 @@ test("start applies an in-flight disable to reloaded config objects", async () =
   assert.equal(getActive().includes("mcp__executor__execute"), false);
 });
 
+test("a completed toggle does not override a later overlay on start", async () => {
+  const paths = await fixturePaths();
+  const { ctx, getActive, manager } = harness(async (server) => fakeSession(server.name, () => {}));
+  await manager.start(ctx, paths);
+  await manager.setEnabled("executor", false, ctx);
+  assert.equal(getActive().includes("mcp__executor__execute"), false);
+  await writeFile(
+    paths.agentOverlay,
+    JSON.stringify({ mcpServers: { executor: { disabled: false } } }),
+  );
+  await manager.start(ctx, paths);
+  assert.equal(manager.snapshot()[0]?.enabled, true);
+  assert.ok(getActive().includes("mcp__executor__execute"));
+});
+
 test("a connect that finishes after disable does not revive the server", async () => {
   const paths = await fixturePaths();
   let release!: () => void;
