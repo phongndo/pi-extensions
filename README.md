@@ -2,7 +2,7 @@
 
 A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, a native MCP server menu, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
-The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
+The workspace is one Pi package, so installation exposes every extension, the bundled skills, and the `origin` theme together.
 
 ## Extension suite
 
@@ -23,9 +23,9 @@ Also included:
 - [Matt Pocock's `/skill:teach`](skills/teach/SKILL.md), builds a stateful teaching workspace with sourced lessons, reference materials, and learning records
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
 - [`/skill:autopilot`](skills/autopilot/SKILL.md), drives an existing GitHub PR to merge readiness in the current agent session
-- [`/yeet`](prompt/yeet.md), a prompt template that verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
+- [`/skill:yeet`](skills/yeet/SKILL.md), verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`autopilot`, `bro`, `grill-me`, `handoff`, and `teach` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`autopilot`, `bro`, `grill-me`, `handoff`, `teach`, and `yeet` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -36,7 +36,7 @@ Also included:
 - pnpm 11
 - Provider credentials for the models you use
 - A Firecrawl API key only if using Web Tools
-- GitHub CLI (`gh`) only for `/skill:autopilot` and `/yeet`
+- GitHub CLI (`gh`) only for `/skill:autopilot` and `/skill:yeet`
 
 ### Install this checkout
 
@@ -132,10 +132,10 @@ The agent clarifies your mission, curates trusted resources, and builds short HT
 ### 9. Publish finished work
 
 ```text
-/yeet
+/skill:yeet
 ```
 
-`/yeet` inspects the repository, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template.
+`/skill:yeet` inspects the repository, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template.
 
 ### 10. Keep an existing PR merge-ready
 
@@ -162,7 +162,7 @@ You can also pass a PR number, URL, or branch. The current agent—not a subagen
 | A plan or design needs every assumption aired | `/skill:grill-me`                | Native question dialogs over the design-tree frontier  |
 | A fresh session should continue current work  | `/skill:handoff [focus]`         | Compact, redacted context saved outside the repository |
 | You want a multi-session personalized course  | `/skill:teach [topic]`           | Stateful lessons grounded in one learning mission      |
-| Finished changes ready for GitHub             | `/yeet`                          | Repo-native verification and PR-template workflow      |
+| Finished changes ready for GitHub             | `/skill:yeet`                    | Repo-native verification and PR-template workflow      |
 | An existing PR should be kept merge-ready     | `/skill:autopilot [PR]`          | Human-started conflict, review, and CI reconciliation  |
 | MCP servers already set up for other agents   | `/mcp`                           | Native enable/disable menu over shared MCP config      |
 
@@ -176,19 +176,19 @@ Each stage has a different trust boundary: external evidence, publication, then 
 
 ## Command reference
 
-| Command                  | Description                                                     |
-| ------------------------ | --------------------------------------------------------------- |
-| `/login firecrawl`       | Store a Firecrawl key in Pi's cross-platform credential file    |
-| `/logout firecrawl`      | Remove the Firecrawl key stored by Pi                           |
-| `/fast`                  | Toggle global Codex Fast Mode                                   |
-| `/mcp`                   | Enable or disable configured MCP servers                        |
-| `/skill:autopilot [PR]`  | Keep an existing GitHub PR merge-ready in the current agent     |
-| `/skill:bro`             | Restate the previous response simply, concisely, and coherently |
-| `/skill:grill-me`        | Stress-test a plan through native question-dialog rounds        |
-| `/skill:handoff [focus]` | Write a compact continuation document for a fresh agent         |
-| `/skill:show-me [topic]` | Explain a topic with concise diagrams, code shapes, or HTML     |
-| `/skill:teach [topic]`   | Build a stateful, sourced course in the current directory       |
-| `/yeet [instructions]`   | Publish appropriate work as one ready PR                        |
+| Command                      | Description                                                     |
+| ---------------------------- | --------------------------------------------------------------- |
+| `/login firecrawl`           | Store a Firecrawl key in Pi's cross-platform credential file    |
+| `/logout firecrawl`          | Remove the Firecrawl key stored by Pi                           |
+| `/fast`                      | Toggle global Codex Fast Mode                                   |
+| `/mcp`                       | Enable or disable configured MCP servers                        |
+| `/skill:autopilot [PR]`      | Keep an existing GitHub PR merge-ready in the current agent     |
+| `/skill:bro`                 | Restate the previous response simply, concisely, and coherently |
+| `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds        |
+| `/skill:handoff [focus]`     | Write a compact continuation document for a fresh agent         |
+| `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML     |
+| `/skill:teach [topic]`       | Build a stateful, sourced course in the current directory       |
+| `/skill:yeet [instructions]` | Publish appropriate work as one ready PR                        |
 
 See each extension README for complete syntax, safety constraints, and troubleshooting.
 
@@ -213,7 +213,7 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - MCP servers run with the user's process permissions. `/mcp` persists enable/disable flags in `~/.pi/agent/mcp.json` and does not copy shared-config secrets into that overlay.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
-- `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
+- `/skill:yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 - `/skill:autopilot` can check out a PR branch, merge its base, create commits, push, reply to reviews, and resolve threads. It never merges the PR, enables auto-merge, marks a draft ready, force-pushes, or rewrites history.
 
 Read the extension-specific safety section before enabling mutating or billed capabilities.
@@ -235,9 +235,9 @@ Read the extension-specific safety section before enabling mutating or billed ca
 │   ├── grilling/                   # Interview workflow adapted for question
 │   ├── handoff/                    # Matt Pocock's /skill:handoff
 │   ├── show-me/                    # HumanLayer's /skill:show-me
-│   └── teach/                      # Matt Pocock's /skill:teach
+│   ├── teach/                      # Matt Pocock's /skill:teach
+│   └── yeet/                       # Human-invoked PR publishing
 ├── THIRD_PARTY_NOTICES.md          # Skill provenance and licenses
-├── prompt/yeet.md                  # /yeet prompt template
 ├── themes/origin.json               # origin TUI theme
 ├── package.json                    # root Pi package manifest
 └── pnpm-workspace.yaml             # extension workspace packages
@@ -315,5 +315,5 @@ hk run pre-commit
 - [Handoff skill](skills/handoff/SKILL.md)
 - [Show Me skill](skills/show-me/SKILL.md)
 - [Teach skill](skills/teach/SKILL.md)
+- [Yeet skill](skills/yeet/SKILL.md)
 - [Bundled skill third-party notices](THIRD_PARTY_NOTICES.md)
-- [`/yeet` prompt](prompt/yeet.md)

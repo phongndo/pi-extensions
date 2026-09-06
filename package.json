@@ -42,9 +42,6 @@
     "skills": [
       "./skills"
     ],
-    "prompts": [
-      "./prompt"
-    ],
     "themes": [
       "./themes"
     ]
