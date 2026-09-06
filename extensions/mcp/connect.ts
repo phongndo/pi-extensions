@@ -137,7 +137,7 @@ function createTransport(server: ResolvedMcpServer) {
   return new StreamableHTTPClientTransport(url, requestInit ? { requestInit } : undefined);
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+export async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -147,6 +147,12 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
         timer.unref();
       }),
     ]);
+  } catch (error) {
+    void promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
   }

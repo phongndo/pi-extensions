@@ -23,15 +23,21 @@ export interface McpServerStatus {
 export class McpManager {
   private config: ResolvedMcpServer[] = [];
   private overlayPath = "";
+  private generation = 0;
   private readonly sessions = new Map<string, ConnectedMcpServer>();
   private readonly errors = new Map<string, string>();
   private readonly connecting = new Set<string>();
   private readonly registered = new Map<string, Set<string>>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly pi: ExtensionAPI;
+  private readonly connectServer: (server: ResolvedMcpServer) => Promise<ConnectedMcpServer>;
 
-  constructor(pi: ExtensionAPI) {
+  constructor(
+    pi: ExtensionAPI,
+    connectServer: (server: ResolvedMcpServer) => Promise<ConnectedMcpServer> = connectMcpServer,
+  ) {
     this.pi = pi;
+    this.connectServer = connectServer;
   }
 
   snapshot(): McpServerStatus[] {
@@ -62,6 +68,7 @@ export class McpManager {
 
   async start(ctx: ExtensionContext, paths?: McpConfigPaths): Promise<void> {
     await this.stop();
+    const generation = this.generation;
     const loaded = await loadMcpConfig(paths ?? defaultMcpConfigPaths(ctx.cwd), {
       projectTrusted: ctx.isProjectTrusted(),
     });
@@ -69,11 +76,15 @@ export class McpManager {
     this.overlayPath = loaded.overlayPath;
     for (const warning of loaded.warnings) ctx.ui.notify(warning, "warning");
     await Promise.all(
-      this.config.filter((server) => server.enabled).map((server) => this.connect(server, ctx)),
+      this.config
+        .filter((server) => server.enabled)
+        .map((server) => this.enqueue(server.name, () => this.connect(server, ctx, generation))),
     );
   }
 
   async stop(): Promise<void> {
+    this.generation += 1;
+    for (const name of this.registered.keys()) this.deactivateTools(name);
     const sessions = [...this.sessions.values()];
     this.sessions.clear();
     this.errors.clear();
@@ -87,7 +98,7 @@ export class McpManager {
     await this.enqueue(name, async () => {
       await setServerDisabled(this.overlayPath, name, !enabled);
       server.enabled = enabled;
-      if (enabled) await this.connect(server, ctx);
+      if (enabled) await this.connect(server, ctx, this.generation);
       else await this.disconnect(server);
     });
   }
@@ -102,12 +113,22 @@ export class McpManager {
     return next;
   }
 
-  private async connect(server: ResolvedMcpServer, ctx: ExtensionContext): Promise<void> {
+  private async connect(
+    server: ResolvedMcpServer,
+    ctx: ExtensionContext,
+    generation: number,
+  ): Promise<void> {
+    if (this.generation !== generation || !server.enabled) return;
     this.connecting.add(server.name);
     this.errors.delete(server.name);
     try {
       await this.disconnect(server);
-      const session = await connectMcpServer(server);
+      if (this.generation !== generation || !server.enabled) return;
+      const session = await this.connectServer(server);
+      if (this.generation !== generation || !server.enabled) {
+        await session.close();
+        return;
+      }
       this.sessions.set(server.name, session);
       this.registerTools(server.name, session);
     } catch (error) {
