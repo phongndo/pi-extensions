@@ -6,11 +6,10 @@ Pi does not ship MCP in core. This extension is the missing command: one slash c
 
 ## Behavior
 
-- `/mcp` replaces the editor with a native settings list, matching `/settings`: accent title, dynamic borders, `→` cursor, Enter/Space to change, Esc to close.
-- Each configured server is a row. The value is `enabled` or `disabled`. The selected row's description shows `connected`, `connecting`, `failed`, or `disconnected`, plus tool count or the connection error.
+- `/mcp` replaces the editor with the same bordered settings list as `/settings`: a `>` search field, `→` cursor, Enter/Space to change, Esc to close.
+- Each configured server is a row. The value is `enabled` or `disabled`. The selected row's description shows connection state, tool count, and an estimate of tool-definition tokens (~4 characters per token) that those MCP tools add to context. When more than one server is enabled, it also shows the combined enabled total.
 - Enabling a server connects it immediately and adds its tools to the current session. Disabling disconnects it and removes those tools from the active set.
 - Enabled servers also connect on `session_start`, so executor is available without opening the menu.
-- Project MCP files load only after the project is trusted.
 - The menu writes enable/disable state to Pi's overlay file. It does not copy URLs, headers, or other secrets out of the shared config.
 
 RPC sessions can still use `/mcp`: pick a server, then enable or disable it. Print and JSON modes print a one-line status list.

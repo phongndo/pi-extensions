@@ -1,16 +1,13 @@
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   Container,
   type SettingItem,
   SettingsList,
   type SettingsListTheme,
-  Spacer,
-  Text,
 } from "@earendil-works/pi-tui";
-import type { McpServerStatus } from "./manager.ts";
+import type { McpServerStatus, McpToolSummary } from "./manager.ts";
 
-type Theme = ExtensionContext["ui"]["theme"];
+type Theme = ExtensionCommandContext["ui"]["theme"];
 
 export function settingsListTheme(theme: Theme): SettingsListTheme {
   return {
@@ -20,6 +17,34 @@ export function settingsListTheme(theme: Theme): SettingsListTheme {
     cursor: theme.fg("accent", "→ "),
     hint: (text) => theme.fg("dim", text),
   };
+}
+
+export function estimateToolTokens(tool: McpToolSummary): number {
+  const serialized = JSON.stringify({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema ?? { type: "object" },
+  });
+  return Math.max(1, Math.ceil(serialized.length / 4));
+}
+
+export function estimateServerTokens(server: Pick<McpServerStatus, "tools">): number {
+  return server.tools.reduce((sum, tool) => sum + estimateToolTokens(tool), 0);
+}
+
+export function estimateEnabledMcpTokens(servers: McpServerStatus[]): number {
+  return servers
+    .filter((server) => server.enabled)
+    .reduce((sum, server) => sum + estimateServerTokens(server), 0);
+}
+
+export function formatTokenCount(tokens: number): string {
+  if (tokens < 1000) return `${tokens}`;
+  if (tokens < 10_000) {
+    const tenths = Math.round(tokens / 100) / 10;
+    return `${tenths}k`;
+  }
+  return `${Math.round(tokens / 1000)}k`;
 }
 
 export function statusLabel(status: McpServerStatus["status"]): string {
@@ -35,24 +60,34 @@ export function statusLabel(status: McpServerStatus["status"]): string {
   }
 }
 
-export function serverDescription(server: McpServerStatus): string {
+export function serverDescription(
+  server: McpServerStatus,
+  enabledTotalTokens = estimateEnabledMcpTokens([server]),
+): string {
   const status = statusLabel(server.status);
-  const tools =
-    server.tools.length > 0
-      ? `${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`
-      : "no tools";
-  if (server.status === "failed" && server.error) return `${status} · ${server.error}`;
-  if (server.status === "connected") return `${status} · ${tools}`;
-  return status;
+  const parts = [status];
+  if (server.status === "failed" && server.error) parts.push(server.error);
+  if (server.tools.length > 0) {
+    parts.push(`${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`);
+    const serverTokens = estimateServerTokens(server);
+    parts.push(`~${formatTokenCount(serverTokens)} tokens`);
+    if (server.enabled && enabledTotalTokens > serverTokens) {
+      parts.push(`~${formatTokenCount(enabledTotalTokens)} enabled`);
+    }
+  } else if (server.status === "connected") {
+    parts.push("no tools");
+  }
+  return parts.join(" · ");
 }
 
 export function buildMcpSettingItems(servers: McpServerStatus[]): SettingItem[] {
+  const enabledTotalTokens = estimateEnabledMcpTokens(servers);
   return servers.map((server) => ({
     id: server.name,
     label: server.name,
     currentValue: server.enabled ? "enabled" : "disabled",
     values: ["enabled", "disabled"],
-    description: serverDescription(server),
+    description: serverDescription(server, enabledTotalTokens),
   }));
 }
 
@@ -62,38 +97,15 @@ export async function showMcpPanel(
   onToggle: (name: string, enabled: boolean) => Promise<void>,
 ): Promise<void> {
   if (ctx.mode === "tui") {
-    await ctx.ui.custom((tui, theme, keybindings, done) => {
+    await ctx.ui.custom((tui, theme, _keybindings, done) => {
       const container = new Container();
       const border = (text: string) => theme.fg("border", text);
       container.addChild(new DynamicBorder(border));
-      container.addChild(new Text(theme.fg("accent", theme.bold("MCP")), 1, 0));
-      container.addChild(new Spacer(1));
 
       const items = buildMcpSettingItems(readServers());
-      if (items.length === 0) {
-        container.addChild(new Text(theme.fg("muted", "No MCP servers configured."), 1, 0));
-        container.addChild(
-          new Text(
-            theme.fg("dim", "Add servers to ~/.config/mcp/mcp.json or ~/.pi/agent/mcp.json"),
-            1,
-            0,
-          ),
-        );
-        container.addChild(new Spacer(1));
-        container.addChild(new Text(theme.fg("dim", "  Esc to close"), 1, 0));
-        container.addChild(new DynamicBorder(border));
-        return {
-          render: (width: number) => container.render(width),
-          invalidate: () => container.invalidate(),
-          handleInput(data: string) {
-            if (keybindings.matches(data, "tui.select.cancel")) done(undefined);
-          },
-        };
-      }
-
       const settingsList = new SettingsList(
         items,
-        Math.min(Math.max(items.length, 1), 12),
+        10,
         settingsListTheme(theme),
         (id, newValue) => {
           void onToggle(id, newValue === "enabled")
@@ -108,11 +120,13 @@ export async function showMcpPanel(
                 item.currentValue = next.currentValue;
                 if (next.description) item.description = next.description;
                 else delete item.description;
+                settingsList.updateValue(item.id, item.currentValue);
               }
               tui.requestRender();
             });
         },
         () => done(undefined),
+        { enableSearch: true },
       );
       container.addChild(settingsList);
       container.addChild(new DynamicBorder(border));
@@ -143,10 +157,11 @@ export async function showMcpPanel(
 
   const selected = await ctx.ui.select(
     "MCP",
-    servers.map(
-      (server) =>
-        `${server.name}  ${server.enabled ? "enabled" : "disabled"}  ${statusLabel(server.status)}`,
-    ),
+    servers.map((server) => {
+      const tokens = estimateServerTokens(server);
+      const tokenLabel = server.tools.length > 0 ? `  ~${formatTokenCount(tokens)} tokens` : "";
+      return `${server.name}  ${server.enabled ? "enabled" : "disabled"}  ${statusLabel(server.status)}${tokenLabel}`;
+    }),
   );
   if (!selected) return;
   const name = selected.split(/\s+/, 1)[0];
@@ -162,10 +177,14 @@ export async function showMcpPanel(
 
 export function formatStatusText(servers: McpServerStatus[]): string {
   if (servers.length === 0) return "No MCP servers configured.";
-  return servers
-    .map(
-      (server) =>
-        `${server.name}: ${server.enabled ? "enabled" : "disabled"} (${statusLabel(server.status)})`,
-    )
-    .join("\n");
+  const enabledTokens = estimateEnabledMcpTokens(servers);
+  const tokenLine = enabledTokens > 0 ? `\n~${formatTokenCount(enabledTokens)} tokens enabled` : "";
+  return (
+    servers
+      .map(
+        (server) =>
+          `${server.name}: ${server.enabled ? "enabled" : "disabled"} (${statusLabel(server.status)})`,
+      )
+      .join("\n") + tokenLine
+  );
 }

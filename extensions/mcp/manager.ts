@@ -10,12 +10,18 @@ import {
 } from "./config.ts";
 import { connectMcpServer, mcpPromptSnippet, type ConnectedMcpServer } from "./connect.ts";
 
+export interface McpToolSummary {
+  name: string;
+  description: string;
+  inputSchema?: unknown;
+}
+
 export interface McpServerStatus {
   name: string;
   enabled: boolean;
   status: "connected" | "connecting" | "failed" | "disconnected";
   error?: string;
-  tools: Array<{ name: string; description: string }>;
+  tools: McpToolSummary[];
   source: string;
   type: ResolvedMcpServer["type"];
 }
@@ -30,6 +36,7 @@ export class McpManager {
   private readonly registered = new Map<string, Set<string>>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly desiredEnabled = new Map<string, boolean>();
+  private readonly lastTools = new Map<string, McpToolSummary[]>();
   private readonly pi: ExtensionAPI;
   private readonly connectServer: (server: ResolvedMcpServer) => Promise<ConnectedMcpServer>;
 
@@ -52,8 +59,9 @@ export class McpManager {
           : error
             ? "failed"
             : "disconnected";
-      const tools =
-        session?.tools.map((tool) => ({ name: tool.name, description: tool.description })) ?? [];
+      const tools = session
+        ? session.tools.map((tool) => summarizeTool(tool))
+        : (this.lastTools.get(server.name) ?? []);
       const item: McpServerStatus = {
         name: server.name,
         enabled: server.enabled,
@@ -191,6 +199,10 @@ export class McpManager {
       });
     }
     this.registered.set(serverName, names);
+    this.lastTools.set(
+      serverName,
+      session.tools.map((tool) => summarizeTool(tool)),
+    );
     this.setToolsActive(serverName, true);
   }
 
@@ -207,4 +219,14 @@ export class McpManager {
       : active.filter((name) => !names.has(name));
     this.pi.setActiveTools(next);
   }
+}
+
+function summarizeTool(tool: {
+  name: string;
+  description: string;
+  inputSchema?: unknown;
+}): McpToolSummary {
+  const summary: McpToolSummary = { name: tool.name, description: tool.description };
+  if (tool.inputSchema !== undefined) summary.inputSchema = tool.inputSchema;
+  return summary;
 }
