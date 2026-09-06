@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, a native MCP server menu, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, prompt templates, and the `origin` theme together.
 
@@ -11,6 +11,7 @@ The workspace is one Pi package, so installation exposes every extension, the bu
 | [Question](extensions/question/README.md)   | The agent needs a material clarification without ending its current run | `question`                                   | Pauses the active tool call until the user answers or cancels |
 | [Fast Mode](extensions/fast-mode/README.md) | You want eligible Codex requests to ask for priority service            | `/fast`                                      | Changes global Fast Mode state; may affect provider billing   |
 | [Web Tools](extensions/web-tools/README.md) | You need live search, mapping, linked-page crawling, or extraction      | `search`, `map`, `fetch`, `crawl`, `extract` | Calls Firecrawl and spends provider credits                   |
+| [MCP](extensions/mcp/README.md)             | You want Pi to use MCP servers already configured for other agents      | `/mcp`                                       | Connects enabled servers and registers their tools            |
 
 The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 
@@ -66,7 +67,15 @@ To remove the package later, use `pi remove` with the same package source shown 
 
 Eligible `openai-codex` requests gain `service_tier: "priority"`; the built-in footer shows `ϟ` while the selected model is eligible.
 
-### 2. Configure minimal web access
+### 2. Enable MCP servers
+
+```text
+/mcp
+```
+
+The menu lists servers from `~/.config/mcp/mcp.json`, including executor if you already configured it for other agents. Enter toggles a server on or off. Enabled servers register tools such as `mcp__executor__execute` in the current session.
+
+### 3. Configure minimal web access
 
 Store the Firecrawl key through Pi's masked, cross-platform login flow:
 
@@ -78,7 +87,7 @@ Pi saves it in the user-only credential file at `~/.pi/agent/auth.json`; no shel
 
 Web Tools exposes five always-active tools: `search`, `map`, `fetch`, `crawl`, and `extract`. Crawl and structured extraction can spend substantially more Firecrawl credits than ordinary search, map, or fetch calls.
 
-### 3. Ask for a simpler explanation
+### 4. Ask for a simpler explanation
 
 ```text
 /skill:bro
@@ -86,7 +95,7 @@ Web Tools exposes five always-active tools: `search`, `map`, `fetch`, `crawl`, a
 
 The agent restates its previous response in plain, concise language.
 
-### 4. Show a topic
+### 5. Show a topic
 
 ```text
 /skill:show-me the research workflow
@@ -94,7 +103,7 @@ The agent restates its previous response in plain, concise language.
 
 The agent picks the smallest useful view, using pseudocode, trees, Mermaid, diffs, code, or a focused HTML artifact.
 
-### 5. Stress-test a plan
+### 6. Stress-test a plan
 
 ```text
 /skill:grill-me
@@ -102,7 +111,7 @@ The agent picks the smallest useful view, using pseudocode, trees, Mermaid, diff
 
 The agent interviews you through the native layered question dialog, asking up to four current design-tree decisions per round until every branch is resolved and you confirm the shared understanding.
 
-### 6. Hand off work to a fresh session
+### 7. Hand off work to a fresh session
 
 ```text
 /skill:handoff focus next on the authentication tests
@@ -110,7 +119,7 @@ The agent interviews you through the native layered question dialog, asking up t
 
 The agent writes a compact, redacted continuation document to the OS temporary directory. It references existing artifacts instead of duplicating them and suggests relevant skills for the next agent.
 
-### 7. Start a stateful learning workspace
+### 8. Start a stateful learning workspace
 
 Run Pi from a directory dedicated to one learning goal, then invoke:
 
@@ -120,7 +129,7 @@ Run Pi from a directory dedicated to one learning goal, then invoke:
 
 The agent clarifies your mission, curates trusted resources, and builds short HTML lessons, reference material, and learning records in that directory.
 
-### 8. Publish finished work
+### 9. Publish finished work
 
 ```text
 /yeet
@@ -128,7 +137,7 @@ The agent clarifies your mission, curates trusted resources, and builds short HT
 
 `/yeet` inspects the repository, runs appropriate checks, creates one commit when needed, pushes without force, and creates or updates a non-draft PR using the repository template.
 
-### 9. Keep an existing PR merge-ready
+### 10. Keep an existing PR merge-ready
 
 Start a fresh agent on the PR branch, then invoke:
 
@@ -155,6 +164,7 @@ You can also pass a PR number, URL, or branch. The current agent—not a subagen
 | You want a multi-session personalized course  | `/skill:teach [topic]`           | Stateful lessons grounded in one learning mission      |
 | Finished changes ready for GitHub             | `/yeet`                          | Repo-native verification and PR-template workflow      |
 | An existing PR should be kept merge-ready     | `/skill:autopilot [PR]`          | Human-started conflict, review, and CI reconciliation  |
+| MCP servers already set up for other agents   | `/mcp`                           | Native enable/disable menu over shared MCP config      |
 
 A useful sequence for larger changes is:
 
@@ -171,6 +181,7 @@ Each stage has a different trust boundary: external evidence, publication, then 
 | `/login firecrawl`       | Store a Firecrawl key in Pi's cross-platform credential file    |
 | `/logout firecrawl`      | Remove the Firecrawl key stored by Pi                           |
 | `/fast`                  | Toggle global Codex Fast Mode                                   |
+| `/mcp`                   | Enable or disable configured MCP servers                        |
 | `/skill:autopilot [PR]`  | Keep an existing GitHub PR merge-ready in the current agent     |
 | `/skill:bro`             | Restate the previous response simply, concisely, and coherently |
 | `/skill:grill-me`        | Stress-test a plan through native question-dialog rounds        |
@@ -190,6 +201,8 @@ Defaults below assume Pi's standard agent directory, `~/.pi/agent`.
 | Theme         | `themes/origin.json`         | Packaged TUI theme; select with `"theme": "origin"` in settings     |
 | Fast Mode     | `~/.pi/agent/fast-mode.json` | Global on/off state                                                 |
 | Firecrawl key | `~/.pi/agent/auth.json`      | API credential stored by `/login firecrawl` with `0600` permissions |
+| MCP servers   | `~/.config/mcp/mcp.json`     | Shared MCP server definitions, including executor                   |
+| MCP overlay   | `~/.pi/agent/mcp.json`       | Pi-only enable/disable flags; does not copy secrets                 |
 
 ## Security model
 
@@ -197,6 +210,7 @@ These are trusted local extensions, not sandboxes around Pi itself.
 
 - Pi extensions run with the user's process permissions.
 - Pi's `auth.json` credential store is user-readable plaintext protected by filesystem permissions, not an encrypted OS keychain.
+- MCP servers run with the user's process permissions. `/mcp` persists enable/disable flags in `~/.pi/agent/mcp.json` and does not copy shared-config secrets into that overlay.
 - Web content, repository content, GitHub data, and model output are treated as untrusted data.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
 - `/yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
@@ -212,7 +226,8 @@ Read the extension-specific safety section before enabling mutating or billed ca
 ├── extensions/
 │   ├── question/                   # question
 │   ├── fast-mode/                  # /fast
-│   └── web-tools/                  # search, map, fetch, crawl, and extract
+│   ├── web-tools/                  # search, map, fetch, crawl, and extract
+│   └── mcp/                        # /mcp
 ├── skills/
 │   ├── autopilot/                  # Human-invoked PR reconciliation loop
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
@@ -255,6 +270,7 @@ pnpm check:root
 pnpm --filter pi-question check
 pnpm --filter pi-fast-mode check
 pnpm --filter pi-web-tools check
+pnpm --filter pi-mcp check
 pnpm format
 pnpm lint
 pnpm lint:fix
@@ -291,6 +307,7 @@ hk run pre-commit
 - [Question](extensions/question/README.md)
 - [Fast Mode](extensions/fast-mode/README.md)
 - [Web Tools](extensions/web-tools/README.md)
+- [MCP](extensions/mcp/README.md)
 - [Autopilot skill](skills/autopilot/SKILL.md)
 - [Bro skill](skills/bro/SKILL.md)
 - [Grill Me skill](skills/grill-me/SKILL.md)
