@@ -201,7 +201,7 @@ Thin Pi aliases are available as `/wayfinder`, `/grill-me`, `/handoff`, `/autopi
 | ---------------------------------- | ----------------------------------------------------------------- |
 | `/login firecrawl`                 | Store a Firecrawl key in Pi's cross-platform credential file      |
 | `/logout firecrawl`                | Remove the Firecrawl key stored by Pi                             |
-| `/fast`                            | Toggle global Codex Fast Mode                                     |
+| `/fast [action]`                   | Toggle Fast Mode; `on`, `off`, `status`, `refresh`, or `details`  |
 | `/mcp`                             | Enable or disable configured MCP servers                          |
 | `/skill:autopilot [PR]`            | Keep an existing GitHub PR merge-ready in the current agent       |
 | `/skill:bro`                       | Restate the previous response simply, concisely, and coherently   |

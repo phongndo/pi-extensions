@@ -9,21 +9,28 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { OpenAICodexResponsesOptions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 
-const FAST_PROVIDER = "openai-codex";
-const FAST_API = "openai-codex-responses";
+import {
+  isCodexModel,
+  isRecord,
+  resolveFastCapability,
+  type FastCapabilityResolver,
+} from "./capabilities.ts";
+import type { FastRequestJournal, FastRequestObservation } from "./diagnostics.ts";
+
 const FAST_PROVIDER_MARKER = Symbol("pi-fast-mode.provider");
 
 type CodexTierOptions = Pick<OpenAICodexResponsesOptions, "serviceTier">;
 
 export type FastModeReader = () => Promise<boolean>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export interface FastModeHooks {
+  resolveCapability?: FastCapabilityResolver;
+  journal?: FastRequestJournal;
+  isActive?: () => boolean;
 }
 
 export function supportsCodexFastMode(model: Model<Api> | undefined): model is Model<Api> {
-  if (!model || model.provider !== FAST_PROVIDER || model.api !== FAST_API) return false;
-  return model.id === "gpt-5.4" || model.id === "gpt-5.5" || /^gpt-5\.6(?:-|$)/.test(model.id);
+  return model !== undefined && resolveFastCapability(model).status === "supported";
 }
 
 function isEligibleCodexFastPayload(
@@ -45,20 +52,52 @@ export function applyCodexFastMode(
 export function withFastPayload<TOptions extends StreamOptions>(
   options: TOptions | undefined,
   readEnabled: FastModeReader,
+  hooks?: FastModeHooks,
 ): TOptions {
   const previous = options?.onPayload;
   const effective = { ...options } as TOptions & CodexTierOptions;
+  let observation: FastRequestObservation | undefined;
+  if (hooks?.journal) {
+    const fetchRequest = options?.fetch ?? globalThis.fetch;
+    effective.fetch = async (input, init) => {
+      const response = await fetchRequest(input, init);
+      return hooks.isActive?.() === false
+        ? response
+        : (observation?.response(response) ?? response);
+    };
+  }
   effective.onPayload = async function (this: unknown, payload, requestModel) {
-    const previousResult = await previous?.(payload, requestModel);
+    const previousResult = await previous?.call(this, payload, requestModel);
     const transformed = previousResult === undefined ? payload : previousResult;
-    if (!isEligibleCodexFastPayload(transformed, requestModel)) return transformed;
+    if (
+      hooks?.isActive?.() === false ||
+      !isCodexModel(requestModel) ||
+      !isRecord(transformed) ||
+      transformed.model !== requestModel.id
+    )
+      return transformed;
 
-    const fastPayload = applyCodexFastMode(transformed, requestModel, await readEnabled());
-    if (isRecord(fastPayload) && fastPayload.service_tier === "priority") {
+    // The receiver is the final API options, including runtime-resolved auth. This also
+    // works when streamSimple copied the hook into a separate API options object.
+    const requestOptions = isRecord(this) ? (this as StreamOptions) : effective;
+    const capability =
+      hooks?.resolveCapability?.(requestModel, requestOptions) ??
+      resolveFastCapability(requestModel);
+    const applied = capability.status === "supported" && (await readEnabled());
+    if (hooks?.isActive?.() === false) return transformed;
+    const fastPayload = applied ? { ...transformed, service_tier: "priority" } : transformed;
+    if (fastPayload.service_tier === "priority") {
       effective.serviceTier = "priority";
-      // streamSimple copies this hook; its receiver is the API options used for response pricing.
+      // Keep Pi's existing request-tier pricing behavior; it is not admission confirmation.
       if (isRecord(this)) this.serviceTier = "priority";
     }
+    observation = hooks?.journal?.begin(
+      requestModel,
+      fastPayload,
+      requestOptions,
+      applied,
+      capability,
+    );
     return fastPayload;
   };
   return effective;
@@ -71,7 +110,11 @@ export function isFastModeProvider(provider: Provider): boolean {
 }
 
 /** Decorate the Codex provider so child ModelRuntimes inherit Fast mode without loading extensions. */
-export function decorateCodexProvider(provider: Provider, readEnabled: FastModeReader): Provider {
+export function decorateCodexProvider(
+  provider: Provider,
+  readEnabled: FastModeReader,
+  hooks?: FastModeHooks,
+): Provider {
   if (isFastModeProvider(provider)) return provider;
 
   const decorated: Provider = {
@@ -95,11 +138,11 @@ export function decorateCodexProvider(provider: Provider, readEnabled: FastModeR
       return provider.stream(
         model,
         context,
-        withFastPayload(options, readEnabled) as ApiStreamOptions<TApi>,
+        withFastPayload(options, readEnabled, hooks) as ApiStreamOptions<TApi>,
       );
     },
     streamSimple(model, context, options?: SimpleStreamOptions) {
-      return provider.streamSimple(model, context, withFastPayload(options, readEnabled));
+      return provider.streamSimple(model, context, withFastPayload(options, readEnabled, hooks));
     },
   };
   Object.defineProperty(decorated, FAST_PROVIDER_MARKER, { value: true });

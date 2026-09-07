@@ -555,13 +555,26 @@ async function acquireFastModeLock(path: string): Promise<() => Promise<void>> {
   }
 }
 
-export async function toggleFastMode(path: string = FAST_MODE_STATE_PATH): Promise<boolean> {
+async function updateFastMode(value: boolean | undefined, path: string): Promise<boolean> {
   const release = await acquireFastModeLock(path);
   try {
-    const enabled = !(await loadFastMode(path));
-    await saveFastMode(enabled, path);
+    const current = await loadFastMode(path);
+    const enabled = value ?? !current;
+    if (enabled !== current) await saveFastMode(enabled, path);
     return enabled;
   } finally {
     await release();
   }
+}
+
+/** Idempotent explicit writes share the toggle's inter-process lock. */
+export async function setFastMode(
+  enabled: boolean,
+  path: string = FAST_MODE_STATE_PATH,
+): Promise<boolean> {
+  return updateFastMode(enabled, path);
+}
+
+export async function toggleFastMode(path: string = FAST_MODE_STATE_PATH): Promise<boolean> {
+  return updateFastMode(undefined, path);
 }

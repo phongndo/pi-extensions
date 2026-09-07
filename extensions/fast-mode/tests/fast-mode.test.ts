@@ -13,8 +13,9 @@ import {
   type Provider,
   type StreamOptions,
 } from "@earendil-works/pi-ai";
-import { FooterComponent, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { installFastModeFooterPrefix, prefixFastModeModelLine } from "../footer.ts";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { formatFastDetails, formatFastStatus } from "../footer.ts";
+import { resolveFastCapability } from "../capabilities.ts";
 import { installFastModeProviderLookup } from "../index.ts";
 import {
   applyCodexFastMode,
@@ -47,6 +48,7 @@ test("recognizes only supported Codex Fast models", () => {
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
+    "gpt-6-astra",
   ]) {
     assert.equal(supportsCodexFastMode(model(id)), true, id);
   }
@@ -259,7 +261,7 @@ test("direct runtime streams stay Fast after a built-in provider refresh", async
     type: "oauth",
     access: "test-key",
     refresh: "test-refresh",
-    expires: Date.now() + 60_000,
+    expires: Date.now() + 3_600_000,
     accountId: "test-account",
   }));
   const runtime = await ModelRuntime.create({
@@ -387,34 +389,30 @@ test("Fast provider lookup supports immutable native providers", async () => {
   assert.equal(await captured.onPayload(payload, selected), payload);
 });
 
-test("prefixes the supported model in the built-in footer without changing its width", () => {
-  const lines = [
-    "~/project (main)",
-    "$0.000 (sub) 0.1%/272k (auto)    (openai-codex) gpt-5.6-sol • xhigh",
-  ];
-  const prefixed = prefixFastModeModelLine(lines, model("gpt-5.6-sol"), true);
-
-  assert.deepEqual(prefixed, [
-    lines[0],
-    "$0.000 (sub) 0.1%/272k (auto)  (openai-codex) ϟ gpt-5.6-sol • xhigh",
-  ]);
-  assert.equal(prefixed[1]?.length, lines[1]?.length);
-  assert.equal(prefixFastModeModelLine(lines, model("gpt-5.6-sol"), false), lines);
-  assert.equal(prefixFastModeModelLine(lines, model("gpt-5.4-mini"), true), lines);
-});
-
-test("decorates only the built-in footer prototype and restores it on teardown", () => {
-  const originalRender = FooterComponent.prototype.render;
-  const removeFirst = installFastModeFooterPrefix(() => true);
-  const decoratedRender = FooterComponent.prototype.render;
-  const removeSecond = installFastModeFooterPrefix(() => true);
-
-  assert.notEqual(decoratedRender, originalRender);
-  assert.equal(FooterComponent.prototype.render, decoratedRender);
-  removeFirst();
-  assert.equal(FooterComponent.prototype.render, decoratedRender);
-  removeSecond();
-  assert.equal(FooterComponent.prototype.render, originalRender);
+test("Astra and unavailable models have explicit, distinct status text", () => {
+  const astra = model("gpt-6-astra");
+  const supported = resolveFastCapability(astra);
+  assert.equal(formatFastStatus({ enabled: true }, supported), "fast on");
+  assert.equal(formatFastStatus({ enabled: false }, supported), "fast off");
+  assert.equal(formatFastStatus({ error: "broken" }, supported), "fast error");
+  assert.equal(formatFastStatus({}, supported), "fast unknown");
+  assert.match(
+    formatFastStatus({ enabled: true }, resolveFastCapability(model("gpt-5.4-mini"))),
+    /unavailable/,
+  );
+  assert.match(
+    formatFastStatus({ enabled: true }, resolveFastCapability(model("gpt-future"))),
+    /support unknown/,
+  );
+  assert.match(formatFastDetails({ enabled: true }, astra, supported), /2.5×/);
+  assert.deepEqual(
+    applyCodexFastMode({ model: astra.id, reasoning: { effort: "xhigh" } }, astra, true),
+    {
+      model: astra.id,
+      reasoning: { effort: "xhigh" },
+      service_tier: "priority",
+    },
+  );
 });
 
 test("persists the global toggle atomically", async () => {
