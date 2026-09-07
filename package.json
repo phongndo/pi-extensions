@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "check": "pnpm run check:root && pnpm --filter pi-question check && pnpm --filter pi-fast-mode check && pnpm --filter pi-web-tools check && pnpm --filter pi-mcp check",
-    "check:root": "pnpm run format:check && pnpm run lint && pnpm run typecheck",
+    "check:root": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:skills",
+    "test:skills": "node --test tests/skills.test.mjs",
+    "test:pi-skills": "node tests/pi-skills-smoke.mjs",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
@@ -14,9 +16,9 @@
     "lsp": "typescript-language-server --stdio"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.82.1",
-    "@earendil-works/pi-coding-agent": "^0.82.1",
-    "@earendil-works/pi-tui": "^0.82.1",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
     "@types/node": "^24.12.4",
     "oxfmt": "^0.61.0",
     "oxlint": "^1.76.0",
