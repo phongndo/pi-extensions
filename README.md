@@ -2,7 +2,7 @@
 
 A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, a native MCP server menu, plain-language restatements, visual explanations, plan stress-testing, repo-native domain docs, multi-session planning, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
-The workspace is one Pi package, so installation exposes every extension, the bundled skills, and the `origin` theme together. `skills/` is also the canonical cross-agent source: chezmoi distributes compatible, ownership-tracked copies rather than maintaining independent skill trees. See the [architecture audit, native paths, and validation limits](docs/agent-skills.md).
+The workspace is one Pi package, so installation exposes every extension, the bundled skills, and the `origin` theme together. This repository owns the canonical skill content and Pi integration; other-agent installation and compatibility are owned separately by [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md).
 
 ## Extension suite
 
@@ -196,8 +196,6 @@ Each stage has a different trust boundary: external evidence, publication, then 
 ## Command reference
 
 Thin Pi aliases are available as `/wayfinder`, `/grill-me`, `/handoff`, `/autopilot`, and `/yeet`. They forward arguments through Pi's native skill expansion; `/skill:<name>` remains available for every skill. There is one implementation per skill, with the alias map in `src/skill-aliases.ts`.
-
-For other agents, update skills normally in this checkout, review and `git add` new supporting files, then run `chezmoi apply`. The optional chezmoi-owned `sync-agent-skills --dry-run` previews only skill reconciliation. No `~/.pi/agent/skills` or `~/.agents/skills` mirror is needed. Cursor CLI isolation and OpenCode invocation-policy limitations are documented in the [audit](docs/agent-skills.md#cursor-remaining-isolation-limitation).
 
 | Command                            | Description                                                       |
 | ---------------------------------- | ----------------------------------------------------------------- |
