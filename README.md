@@ -11,7 +11,7 @@ The workspace is one Pi package, so installation exposes every extension, the bu
 | [Question](extensions/question/README.md)   | The agent needs a material clarification without ending its current run | `question`                                   | Pauses the active tool call until the user answers or cancels |
 | [Fast Mode](extensions/fast-mode/README.md) | You want eligible Codex requests to ask for priority service            | `/fast`                                      | Changes global Fast Mode state; may affect provider billing   |
 | [Web Tools](extensions/web-tools/README.md) | You need live search, mapping, linked-page crawling, or extraction      | `search`, `map`, `fetch`, `crawl`, `extract` | Calls Firecrawl and spends provider credits                   |
-| [MCP](extensions/mcp/README.md)             | You want Pi to use MCP servers already configured for other agents      | `/mcp`                                       | Connects enabled servers and registers their tools            |
+| [MCP](extensions/mcp/README.md)             | You want Pi to use MCP servers already configured for other agents      | `/mcp`                                       | Native tools with a live inline `mcp (connected/total)` count |
 
 The `question` tool is available in ordinary TUI and RPC chats. Its TUI batches related questions into one native layered dialog and returns answers to the same agent run without requiring a separate user turn.
 

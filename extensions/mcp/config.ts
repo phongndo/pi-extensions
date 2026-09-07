@@ -1,7 +1,7 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { basename, dirname, join } from "node:path";
+import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 
 const ENV_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -140,12 +140,18 @@ export async function setServerDisabled(
   name: string,
   disabled: boolean,
 ): Promise<void> {
-  const current = (await readJsonObject(overlayPath)) ?? {};
-  const servers = isRecord(current.mcpServers) ? { ...current.mcpServers } : {};
-  const existing = isRecord(servers[name]) ? { ...servers[name] } : {};
-  existing.disabled = disabled;
-  servers[name] = existing;
-  await writeJsonAtomic(overlayPath, { ...current, mcpServers: servers });
+  // Canonicalize the parent before queue registration, so a new file keeps the
+  // same queue key after creation (notably /var vs /private/var on macOS).
+  await mkdir(dirname(overlayPath), { recursive: true });
+  const queuePath = join(await realpath(dirname(overlayPath)), basename(overlayPath));
+  await withFileMutationQueue(queuePath, async () => {
+    const current = (await readJsonObject(overlayPath)) ?? {};
+    const servers = isRecord(current.mcpServers) ? { ...current.mcpServers } : {};
+    const existing = isRecord(servers[name]) ? { ...servers[name] } : {};
+    existing.disabled = disabled;
+    servers[name] = existing;
+    await writeJsonAtomic(overlayPath, { ...current, mcpServers: servers });
+  });
 }
 
 async function readMcpFile(

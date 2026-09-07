@@ -38,6 +38,10 @@ async function loadLocalExecutor(): Promise<ResolvedMcpServer | undefined> {
 }
 
 test("connects to the local executor MCP and runs execute", async (t) => {
+  if (process.env.PI_MCP_LIVE_TEST !== "1") {
+    t.skip("set PI_MCP_LIVE_TEST=1 to use the real shared executor config");
+    return;
+  }
   const server = await loadLocalExecutor();
   if (!server) {
     t.skip("shared executor MCP config is not present");

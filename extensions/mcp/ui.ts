@@ -1,23 +1,10 @@
-import { DynamicBorder, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
-  Container,
-  type SettingItem,
-  SettingsList,
-  type SettingsListTheme,
-} from "@earendil-works/pi-tui";
+  DynamicBorder,
+  getSettingsListTheme,
+  type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
+import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
 import type { McpServerStatus, McpToolSummary } from "./manager.ts";
-
-type Theme = ExtensionCommandContext["ui"]["theme"];
-
-export function settingsListTheme(theme: Theme): SettingsListTheme {
-  return {
-    label: (text, selected) => (selected ? theme.fg("accent", text) : text),
-    value: (text, selected) => (selected ? theme.fg("accent", text) : theme.fg("muted", text)),
-    description: (text) => theme.fg("dim", text),
-    cursor: theme.fg("accent", "→ "),
-    hint: (text) => theme.fg("dim", text),
-  };
-}
 
 export function estimateToolTokens(tool: McpToolSummary): number {
   const serialized = JSON.stringify({
@@ -95,42 +82,52 @@ export async function showMcpPanel(
   ctx: ExtensionCommandContext,
   readServers: () => McpServerStatus[],
   onToggle: (name: string, enabled: boolean) => Promise<void>,
+  subscribe: (listener: () => void) => () => void = () => () => {},
 ): Promise<void> {
   if (ctx.mode === "tui") {
     await ctx.ui.custom((tui, theme, _keybindings, done) => {
       const container = new Container();
       const border = (text: string) => theme.fg("border", text);
+      let open = true;
       container.addChild(new DynamicBorder(border));
 
       const items = buildMcpSettingItems(readServers());
       const settingsList = new SettingsList(
         items,
         10,
-        settingsListTheme(theme),
+        getSettingsListTheme(),
         (id, newValue) => {
           void onToggle(id, newValue === "enabled")
             .catch((error: unknown) => {
-              ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+              if (open)
+                ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
             })
-            .finally(() => {
-              const updated = buildMcpSettingItems(readServers());
-              for (const item of items) {
-                const next = updated.find((candidate) => candidate.id === item.id);
-                if (!next) continue;
-                item.currentValue = next.currentValue;
-                if (next.description) item.description = next.description;
-                else delete item.description;
-                settingsList.updateValue(item.id, item.currentValue);
-              }
-              tui.requestRender();
-            });
+            .finally(update);
         },
         () => done(undefined),
         { enableSearch: true },
       );
+      const update = () => {
+        if (!open) return;
+        const updated = buildMcpSettingItems(readServers());
+        for (const item of items) {
+          const next = updated.find((candidate) => candidate.id === item.id);
+          if (!next) continue;
+          item.currentValue = next.currentValue;
+          if (next.description) item.description = next.description;
+          else delete item.description;
+          settingsList.updateValue(item.id, item.currentValue);
+        }
+        tui.requestRender();
+      };
+      const unsubscribe = subscribe(update);
       container.addChild(settingsList);
       container.addChild(new DynamicBorder(border));
       return {
+        dispose() {
+          open = false;
+          unsubscribe();
+        },
         render: (width: number) => container.render(width),
         invalidate: () => {
           container.invalidate();
@@ -146,10 +143,7 @@ export async function showMcpPanel(
   }
 
   const servers = readServers();
-  if (!ctx.hasUI) {
-    ctx.ui.notify(formatStatusText(servers), "info");
-    return;
-  }
+  if (!ctx.hasUI) return;
   if (servers.length === 0) {
     ctx.ui.notify("No MCP servers configured.", "warning");
     return;

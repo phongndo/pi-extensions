@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import {
   interpolateEnv,
   isValidServerName,
@@ -13,8 +13,12 @@ import {
   type McpConfigPaths,
 } from "../config.ts";
 
+const tempRoots: string[] = [];
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
 async function fixturePaths(): Promise<McpConfigPaths & { root: string }> {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-"));
+  tempRoots.push(root);
   const project = join(root, "project");
   await mkdir(join(root, "mcp"), { recursive: true });
   await mkdir(join(root, "agent"), { recursive: true });
@@ -180,4 +184,15 @@ test("writes only the disabled flag into the Pi overlay", async () => {
   assert.deepEqual(overlay.mcpServers.executor, { disabled: true });
   assert.equal("url" in overlay.mcpServers.executor, false);
   assert.equal("headers" in overlay.mcpServers.executor, false);
+});
+
+test("simultaneous toggles of different servers preserve every overlay change", async () => {
+  const paths = await fixturePaths();
+  const names = Array.from({ length: 12 }, (_, i) => `server-${i}`);
+  await Promise.all(names.map((name) => setServerDisabled(paths.agentOverlay, name, true)));
+  const overlay = JSON.parse(await readFile(paths.agentOverlay, "utf8"));
+  assert.deepEqual(
+    overlay.mcpServers,
+    Object.fromEntries(names.map((name) => [name, { disabled: true }])),
+  );
 });

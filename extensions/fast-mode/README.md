@@ -31,7 +31,7 @@ When Fast mode is on and the current model is eligible, Pi's built-in footer sho
 
 This is the original text glyph `ϟ`, not a lightning emoji. It sits immediately before the model ID, with **no separate Fast-mode TUI status row**. The decorator reuses existing padding so the line width stays unchanged. The glyph is hidden when off, unsupported, unknown, or errored; it is also omitted if the model name is truncated away.
 
-Custom footers are not modified or replaced. `/fast details` provides the full state even when a custom footer or narrow terminal hides the indicator. The decorator is session-scoped and removed on shutdown/reload.
+Custom footers are not modified or replaced. `/fast details` provides the full state even when a custom footer or narrow terminal hides the indicator. The decorator is session-scoped and removed on shutdown/reload. It shares [`src/footer-decorator.ts`](../../src/footer-decorator.ts) with MCP so both inline indicators compose without stacking independent footer patches.
 
 ### Detailed status (`/fast details` and RPC)
 

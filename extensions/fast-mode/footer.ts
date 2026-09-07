@@ -1,27 +1,12 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { FooterComponent, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { installFooterDecorator } from "../../src/footer-decorator.ts";
 import type { FastCapability } from "./capabilities.ts";
 import { safeLabel, type FastRequestRecord } from "./diagnostics.ts";
 import type { FastStateSnapshot } from "./monitor.ts";
 
 export const FAST_MODE_STATUS_KEY = "fast-mode";
 const FAST_MODE_GLYPH = "ϟ";
-const FOOTER_INSTALLATION = Symbol.for("dp.pi-fast-mode.footer-prefix");
-
-type ReadonlySessionManager = ExtensionContext["sessionManager"];
-type ModelReader = (model: Model<Api> | undefined) => boolean;
-type FooterRender = FooterComponent["render"];
-interface FooterInstallation {
-  readers: Map<ReadonlySessionManager, Set<ModelReader>>;
-  originalRender: FooterRender;
-  render: FooterRender;
-}
-type FooterPrototype = typeof FooterComponent.prototype & {
-  [FOOTER_INSTALLATION]?: FooterInstallation;
-};
-interface FooterWithSession {
-  session?: { state?: { model?: Model<Api> }; sessionManager?: ReadonlySessionManager };
-}
 
 /** Reuse the model section's existing padding, keeping ANSI styling and line width unchanged. */
 export function prefixFastModeModelLine(
@@ -49,52 +34,12 @@ export function prefixFastModeModelLine(
 
 /** Decorate only the built-in footer, scoped to its session; custom footers remain untouched. */
 export function installFastModeFooterPrefix(
-  sessionManager: ReadonlySessionManager,
-  readEnabled: ModelReader,
+  sessionManager: ExtensionContext["sessionManager"],
+  readEnabled: (model: Model<Api> | undefined) => boolean,
 ): () => void {
-  const prototype = FooterComponent.prototype as FooterPrototype;
-  let installation = prototype[FOOTER_INSTALLATION];
-  if (!installation) {
-    const readers = new Map<ReadonlySessionManager, Set<ModelReader>>();
-    const originalRender = prototype.render;
-    const render: FooterRender = function (this: FooterComponent, width) {
-      const lines = originalRender.call(this, width);
-      const session = (this as unknown as FooterWithSession).session;
-      const model = session?.state?.model;
-      const scopedReaders = session?.sessionManager
-        ? readers.get(session.sessionManager)
-        : undefined;
-      const showPrefix =
-        scopedReaders !== undefined && [...scopedReaders].some((reader) => reader(model));
-      return prefixFastModeModelLine(lines, model, showPrefix);
-    };
-    installation = { readers, originalRender, render };
-    try {
-      Object.defineProperty(prototype, FOOTER_INSTALLATION, {
-        configurable: true,
-        value: installation,
-      });
-      prototype.render = render;
-    } catch (error) {
-      if (prototype.render === render) prototype.render = originalRender;
-      if (prototype[FOOTER_INSTALLATION] === installation) delete prototype[FOOTER_INSTALLATION];
-      throw new Error("Could not install the Fast model-name indicator.", { cause: error });
-    }
-  }
-  const reader: ModelReader = (model) => readEnabled(model);
-  const scopedReaders = installation.readers.get(sessionManager) ?? new Set<ModelReader>();
-  scopedReaders.add(reader);
-  installation.readers.set(sessionManager, scopedReaders);
-  let removed = false;
-  return () => {
-    if (removed) return;
-    removed = true;
-    scopedReaders.delete(reader);
-    if (scopedReaders.size === 0) installation!.readers.delete(sessionManager);
-    if (installation!.readers.size > 0) return;
-    if (prototype.render === installation!.render) prototype.render = installation!.originalRender;
-    if (prototype[FOOTER_INSTALLATION] === installation) delete prototype[FOOTER_INSTALLATION];
-  };
+  return installFooterDecorator(sessionManager, (lines, model) =>
+    prefixFastModeModelLine(lines, model, readEnabled(model)),
+  );
 }
 
 export function formatFastStatus(state: FastStateSnapshot, capability: FastCapability): string {

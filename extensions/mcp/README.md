@@ -2,7 +2,7 @@
 
 A small native `/mcp` menu for Pi. It connects the current session to MCP servers you already configured for other agents, and lets you enable or disable those servers the same way `/settings` toggles options.
 
-Pi does not ship MCP in core. This extension is the missing command: one slash command, a bordered settings list, and tools registered only while a server is enabled.
+Pi does not ship MCP in core. This extension adds one slash command, a native settings list, Pi-registered tools, and a compact inline connection count. Requires Pi **0.85.1 or newer**; tested against 0.85.1.
 
 ## Behavior
 
@@ -11,8 +11,21 @@ Pi does not ship MCP in core. This extension is the missing command: one slash c
 - Enabling a server connects it immediately and adds its tools to the current session. Disabling disconnects it and removes those tools from the active set.
 - Enabled servers also connect on `session_start`, so executor is available without opening the menu.
 - The menu writes enable/disable state to Pi's overlay file. It does not copy URLs, headers, or other secrets out of the shared config.
+- The built-in footer shows **`mcp (connected/total)`** beside the existing stats, with no extra row or startup banner. The menu and count update as clients connect, fail, disconnect, or are toggled.
 
-RPC sessions can still use `/mcp`: pick a server, then enable or disable it. Print and JSON modes print a one-line status list.
+RPC sessions can still use `/mcp`: pick a server, then enable or disable it. RPC also receives the count through Pi's native status API. Print and JSON sessions connect tools but do not install a panel or emit status UI.
+
+## Inline count
+
+```text
+… (auto) mcp (1/2)                 (openai-codex) ϟ gpt-6-astra • xhigh
+```
+
+`mcp (1/2)` means one connected server out of two configured servers. Disabled, connecting, and failed servers remain in the denominator but not the numerator. This counts **servers**, not the tools or integrations exposed by an executor server.
+
+No configured servers means no label. On narrow terminals, the label is omitted rather than displacing Pi's stats/model or adding a row. Custom footers remain untouched. Connection status is session-local and based on the SDK's known transport state, not a background health check.
+
+Pi has no public inline-footer slot. A small shared decorator in [`src/footer-decorator.ts`](../../src/footer-decorator.ts) supplies that compatibility seam for MCP and Fast Mode; it is session-scoped and cleaned up in either teardown order. All commands, tools, settings UI, and RPC statuses use Pi's supported APIs.
 
 ## Configuration
 
@@ -47,7 +60,9 @@ If executor is already in `~/.config/mcp/mcp.json`, this extension uses that ent
 
 Connected servers register tools as `mcp__<server>__<tool>`. Executor therefore appears as `mcp__executor__execute`, `mcp__executor__resume`, `mcp__executor__skills`, and the `search_*` loaders the server exposes. Tool calls are sequential and read the live client at call time, so a reconnect does not leave a closed transport in a closure.
 
-Disable a server from `/mcp` to drop its tools from the model without a reload.
+Disable a server from `/mcp` to drop its tools from the model without a reload. Closed transports also deactivate their tools. Re-enabling refreshes descriptions and schemas, including paginated tool lists.
+
+Tool results use Pi's native collapsed/expanded rendering and image blocks. Text is limited to Pi's standard **2,000 lines or 50 KiB**; larger responses are saved to a private temporary file with a path for follow-up reads. Tool errors remain errors, and request cancellation is forwarded to the MCP SDK. Stdio server logs are drained rather than printed over the TUI or RPC/JSON stream.
 
 ## Command
 
@@ -63,4 +78,14 @@ The command takes no arguments. Use the menu to enable or disable servers.
 pnpm --filter pi-mcp check
 ```
 
-After editing, run `/reload` in Pi. Tests cover config merge, overlay writes, tool naming, result formatting, the settings rows, and a live executor round-trip when `~/.config/mcp/mcp.json` points at a running executor.
+After editing, run `/reload` in Pi. Tests cover the native settings menu and result renderer, live counts, Fast Mode composition and teardown, concurrent overlay writes, stale lifecycle work, output limits, and a local SDK-backed stdio fixture. Normal checks do not read real MCP credentials or call configured servers.
+
+An optional live executor check is available with `PI_MCP_LIVE_TEST=1 pnpm --filter pi-mcp test`.
+
+### Scope and remaining limitations
+
+- No automatic reconnect or heartbeat; toggle off/on or `/reload` to reconnect. Transport failures not reported as a close may remain connected until a subsequent operation detects them.
+- Tools are discovered on connection; live tool-list-change notifications, MCP prompts/resources browsing, OAuth login, sampling, and elicitation are not implemented.
+- Overlay mutations are serialized within a Pi process using Pi's file-mutation queue. Separate Pi processes are not inter-process locked or automatically synchronized.
+
+See [the implementation review](../../docs/mcp-review.md) for the audit findings and regression coverage.
