@@ -38,7 +38,7 @@
               inherit (finalAttrs) pname version src;
               inherit pnpm;
               fetcherVersion = 4;
-              hash = "sha256-YKnxfBXoZNOIrcugGvnwI3uxhM5Zv8QLuVTO7csMMr4=";
+              hash = "sha256-YOpkV4aEF4fh5s5pIat9lrlhf/IQJzFvGGHjZXmZ/No=";
             };
 
             # A sandboxed Darwin build cannot write to the user's Keychain.
