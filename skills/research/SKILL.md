@@ -7,7 +7,7 @@ Investigate the question against **primary sources** and write the findings to a
 
 If you can dispatch a sub-agent, do the research there so this session can keep working. The research agent must complete the reading itself and must not spawn further agents. If you cannot dispatch a sub-agent, or you already are one, do the research in this session.
 
-Prefer available web tools (`search`, `fetch`, `map`, `crawl`, `extract`) to reach primary sources. Follow every claim back to the source that owns it: official docs, source code, specs, first-party APIs, not a secondary write-up of them.
+Use the available web search and page-reading tools to reach primary sources. Discover sources first, then read the selected primary pages; use broader crawling only when the question requires it. Follow every claim back to the source that owns it: official docs, source code, specs, first-party APIs, not a secondary write-up of them.
 
 1. Investigate the question against those primary sources.
 2. Write the findings to a single Markdown file, citing each claim's source.

@@ -4,6 +4,7 @@ packages:
 
 allowBuilds:
   "@google/genai": true
+  esbuild: false
   protobufjs: true
 minimumReleaseAgeExclude:
   - "@oxfmt/binding-android-arm-eabi@0.61.0"

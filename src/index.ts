@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { registerSkillAliases } from "./skill-aliases.js";
 
 type RestoreState = {
   model: NonNullable<ExtensionContext["model"]>;
@@ -6,6 +7,7 @@ type RestoreState = {
 };
 
 export default function workspaceExtension(pi: ExtensionAPI): void {
+  registerSkillAliases(pi);
   let restoreState: RestoreState | undefined;
 
   async function restorePreviousModel(ctx: ExtensionContext): Promise<void> {

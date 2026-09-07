@@ -2,7 +2,7 @@
 
 A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, a native MCP server menu, plain-language restatements, visual explanations, plan stress-testing, repo-native domain docs, multi-session planning, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
-The workspace is one Pi package, so installation exposes every extension, the bundled skills, and the `origin` theme together.
+The workspace is one Pi package, so installation exposes every extension, the bundled skills, and the `origin` theme together. This repository owns the canonical skill content and Pi integration; other-agent installation and compatibility are owned separately by [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md).
 
 ## Extension suite
 
@@ -32,13 +32,13 @@ Also included:
 - [`/skill:autopilot`](skills/autopilot/SKILL.md), drives an existing GitHub PR to merge readiness in the current agent session
 - [`/skill:yeet`](skills/yeet/SKILL.md), verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`autopilot`, `bro`, `grill-me`, `grill-with-docs`, `handoff`, `setup-matt-pocock-skills`, `teach`, `wayfinder`, and `yeet` are manual-only. `diagnosing-bugs`, `domain-modeling`, `grilling`, `prototype`, `research`, `resolving-merge-conflicts`, `show-me`, and `wizard` can also be selected by the model when their descriptions match the task. The `bro`, `show-me`, `teach`, `diagnosing-bugs`, `domain-modeling`, `prototype`, and `resolving-merge-conflicts` files are unmodified upstream copies; `grill-me`, `grill-with-docs`, `handoff`, `setup-matt-pocock-skills`, `wayfinder`, and `wizard` are adapted to name Pi skill commands; `grilling` is adapted to use the native question dialog; `research` is adapted to use Pi web tools and not nest research agents. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`autopilot`, `bro`, `grill-me`, `grill-with-docs`, `handoff`, `setup-matt-pocock-skills`, `teach`, `wayfinder`, and `yeet` are manual-only. `diagnosing-bugs`, `domain-modeling`, `grilling`, `prototype`, `research`, `resolving-merge-conflicts`, `show-me`, and `wizard` can also be selected by the model when their descriptions match the task. The `bro`, `teach`, `diagnosing-bugs`, `domain-modeling`, `prototype`, and `resolving-merge-conflicts` workflows retain upstream behavior; `grill-me`, `grill-with-docs`, `handoff`, `setup-matt-pocock-skills`, `wayfinder`, and `wizard` name skills without harness-specific invocation syntax. `grilling` uses the available interactive question mechanism, `research` uses available web tools without nesting research agents, and `show-me` uses platform-appropriate desktop openers. `autopilot` is adapted from Cursor's bundled skill; its upstream redistribution license remains unverified. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
 ### Requirements
 
-- Pi with package/extension support
+- Pi 0.85.1 or newer with package/extension support
 - Node.js 22.19 or newer
 - pnpm 11
 - Provider credentials for the models you use
@@ -195,6 +195,8 @@ Each stage has a different trust boundary: external evidence, publication, then 
 
 ## Command reference
 
+Thin Pi aliases are available as `/wayfinder`, `/grill-me`, `/handoff`, `/autopilot`, and `/yeet`. They forward arguments through Pi's native skill expansion; `/skill:<name>` remains available for every skill. There is one implementation per skill, with the alias map in `src/skill-aliases.ts`.
+
 | Command                            | Description                                                       |
 | ---------------------------------- | ----------------------------------------------------------------- |
 | `/login firecrawl`                 | Store a Firecrawl key in Pi's cross-platform credential file      |
@@ -255,7 +257,8 @@ Read the extension-specific safety section before enabling mutating or billed ca
 
 ```text
 .
-├── src/index.ts                    # Reserved workspace-wide extension entry point
+├── src/index.ts                    # Workspace commands and skill-alias registration
+├── src/skill-aliases.ts             # Five thin aliases to native /skill:name expansion
 ├── extensions/
 │   ├── question/                   # question
 │   ├── fast-mode/                  # /fast
@@ -300,6 +303,7 @@ Run the complete workspace validation:
 
 ```bash
 pnpm check
+pnpm test:pi-skills # Installed Pi, disposable HOME, no model/network execution
 nix flake check # Reproducible sandboxed equivalent
 ```
 
