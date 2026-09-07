@@ -16,6 +16,15 @@
 
 [`skills/teach/`](skills/teach/) is copied from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`6654f6b60cd9d5be8b54c6fafe44346dabeb3b76`](https://github.com/mattpocock/skills/commit/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76), including the skill and its supporting workspace-format documents.
 
+## Additional Matt Pocock engineering skills
+
+The following skills are from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`3cca18b368ae95cdbdebbff572ccafa662551015`](https://github.com/mattpocock/skills/commit/3cca18b368ae95cdbdebbff572ccafa662551015):
+
+- [`skills/diagnosing-bugs/`](skills/diagnosing-bugs/) and [`skills/domain-modeling/`](skills/domain-modeling/) are unmodified copies, including supporting format documents and the diagnosis HITL script.
+- [`skills/prototype/`](skills/prototype/) and [`skills/resolving-merge-conflicts/SKILL.md`](skills/resolving-merge-conflicts/SKILL.md) are unmodified copies. Prototype includes its logic and UI branch documents.
+- [`skills/grill-with-docs/SKILL.md`](skills/grill-with-docs/SKILL.md), [`skills/setup-matt-pocock-skills/`](skills/setup-matt-pocock-skills/), [`skills/wayfinder/SKILL.md`](skills/wayfinder/SKILL.md), and [`skills/wizard/`](skills/wizard/) are adapted to name Pi `/skill:name` commands. Setup keeps its issue-tracker and domain-doc templates; wizard keeps its bash template.
+- [`skills/research/SKILL.md`](skills/research/SKILL.md) is adapted to use Pi web tools and to avoid nested research agents.
+
 ## Matt Pocock MIT license
 
 MIT License

@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, a native MCP server menu, plain-language restatements, visual explanations, plan stress-testing, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
+A focused local extension suite for [Pi](https://github.com/badlogic/pi-mono): native interactive clarification, faster Codex requests, bounded web access, a native MCP server menu, plain-language restatements, visual explanations, plan stress-testing, repo-native domain docs, multi-session planning, stateful teaching, session handoffs, safe PR publishing, and human-invoked PR autopilot.
 
 The workspace is one Pi package, so installation exposes every extension, the bundled skills, and the `origin` theme together.
 
@@ -19,13 +19,20 @@ Also included:
 
 - [Dillon Mulroy's `/skill:bro`](skills/bro/SKILL.md), restates the last message in plain human language, with no jargon
 - [Matt Pocock's `/skill:grill-me`](skills/grill-me/SKILL.md), stress-tests a plan through a [`grilling`](skills/grilling/SKILL.md) workflow adapted to use Pi's native `question` tool
+- [Matt Pocock's `/skill:grill-with-docs`](skills/grill-with-docs/SKILL.md), the same interview in a working directory, writing glossary terms and ADRs through [`domain-modeling`](skills/domain-modeling/SKILL.md)
+- [Matt Pocock's `/skill:wayfinder`](skills/wayfinder/SKILL.md), charts an effort too big for one session as a shared map of decision tickets. Run [`/skill:setup-matt-pocock-skills`](skills/setup-matt-pocock-skills/SKILL.md) once per repo first
+- [Matt Pocock's `/skill:prototype`](skills/prototype/SKILL.md), throwaway code that answers a look, feel, or logic question
+- [Matt Pocock's `/skill:research`](skills/research/SKILL.md), investigates a question against primary sources and writes a cited Markdown file
+- [Matt Pocock's `/skill:diagnosing-bugs`](skills/diagnosing-bugs/SKILL.md), a diagnosis loop for hard bugs and performance regressions
+- [Matt Pocock's `/skill:resolving-merge-conflicts`](skills/resolving-merge-conflicts/SKILL.md), resolves an in-progress merge or rebase hunk by hunk from each side's intent
+- [Matt Pocock's `/skill:wizard`](skills/wizard/SKILL.md), generates an interactive bash wizard for steps only a human can perform
 - [Matt Pocock's `/skill:handoff`](skills/handoff/SKILL.md), compacts the current conversation into a temporary handoff document for a fresh agent
 - [Matt Pocock's `/skill:teach`](skills/teach/SKILL.md), builds a stateful teaching workspace with sourced lessons, reference materials, and learning records
 - [HumanLayer's `/skill:show-me`](skills/show-me/SKILL.md), helps explain the current topic with concise diagrams, code-shape sketches, and focused HTML artifacts
 - [`/skill:autopilot`](skills/autopilot/SKILL.md), drives an existing GitHub PR to merge readiness in the current agent session
 - [`/skill:yeet`](skills/yeet/SKILL.md), verifies, commits, pushes, and creates or updates one ready-for-review pull request while preserving user work
 
-`autopilot`, `bro`, `grill-me`, `handoff`, `teach`, and `yeet` are manual-only. `show-me` and `grilling` can also be selected by the model when their descriptions match the task. The `bro`, `show-me`, and `teach` files are unmodified upstream copies; `grill-me` and `handoff` are adapted to name Pi skill commands, and `grilling` is adapted to use the native question dialog. See the [third-party notices](THIRD_PARTY_NOTICES.md).
+`autopilot`, `bro`, `grill-me`, `grill-with-docs`, `handoff`, `setup-matt-pocock-skills`, `teach`, `wayfinder`, and `yeet` are manual-only. `diagnosing-bugs`, `domain-modeling`, `grilling`, `prototype`, `research`, `resolving-merge-conflicts`, `show-me`, and `wizard` can also be selected by the model when their descriptions match the task. The `bro`, `show-me`, `teach`, `diagnosing-bugs`, `domain-modeling`, `prototype`, and `resolving-merge-conflicts` files are unmodified upstream copies; `grill-me`, `grill-with-docs`, `handoff`, `setup-matt-pocock-skills`, `wayfinder`, and `wizard` are adapted to name Pi skill commands; `grilling` is adapted to use the native question dialog; `research` is adapted to use Pi web tools and not nest research agents. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Quick start
 
@@ -36,7 +43,7 @@ Also included:
 - pnpm 11
 - Provider credentials for the models you use
 - A Firecrawl API key only if using Web Tools
-- GitHub CLI (`gh`) only for `/skill:autopilot` and `/skill:yeet`
+- GitHub CLI (`gh`) for `/skill:autopilot`, `/skill:yeet`, GitHub-backed `/skill:wayfinder`, and `/skill:wizard` secret writes
 
 ### Install this checkout
 
@@ -111,6 +118,10 @@ The agent picks the smallest useful view, using pseudocode, trees, Mermaid, diff
 
 The agent interviews you through the native layered question dialog, asking up to four current design-tree decisions per round until every branch is resolved and you confirm the shared understanding.
 
+In a repository, `/skill:grill-with-docs` runs the same interview and writes resolved terms into `CONTEXT.md` and hard decisions into ADRs as they land.
+
+If the effort will not fit in one session, `/skill:wayfinder` charts it as a shared map of decision tickets and walks them one session at a time. Run `/skill:setup-matt-pocock-skills` once in that repo first so the map has a tracker to live on.
+
 ### 7. Hand off work to a fresh session
 
 ```text
@@ -149,22 +160,30 @@ You can also pass a PR number, URL, or branch. The current agent—not a subagen
 
 ## Choosing the right primitive
 
-| Need                                          | Prefer                           | Why                                                    |
-| --------------------------------------------- | -------------------------------- | ------------------------------------------------------ |
-| Material ambiguity during an active run       | `question`                       | Pauses in place and resumes with a compact answer map  |
-| One known page needing readable evidence      | `fetch`                          | Smallest live-web reading operation                    |
-| One known site, but not the exact page        | `map`, then `fetch`              | Discovers site URLs without crawling every page        |
-| Several linked pages in one section           | `crawl`                          | Bounded, resumable document windows                    |
-| Machine-readable fields from one exact page   | `extract`                        | JSON-mode extraction with prompt-injection checking    |
-| Unknown source                                | `search`, then selective fetches | Bounded discovery before reading primary sources       |
-| The last answer was confusing or too wordy    | `/skill:bro`                     | A simpler, concise restatement without jargon          |
-| A concept would be clearer as a visual        | `/skill:show-me`                 | Concise diagrams, code-shape sketches, or focused HTML |
-| A plan or design needs every assumption aired | `/skill:grill-me`                | Native question dialogs over the design-tree frontier  |
-| A fresh session should continue current work  | `/skill:handoff [focus]`         | Compact, redacted context saved outside the repository |
-| You want a multi-session personalized course  | `/skill:teach [topic]`           | Stateful lessons grounded in one learning mission      |
-| Finished changes ready for GitHub             | `/skill:yeet`                    | Repo-native verification and PR-template workflow      |
-| An existing PR should be kept merge-ready     | `/skill:autopilot [PR]`          | Human-started conflict, review, and CI reconciliation  |
-| MCP servers already set up for other agents   | `/mcp`                           | Native enable/disable menu over shared MCP config      |
+| Need                                          | Prefer                             | Why                                                      |
+| --------------------------------------------- | ---------------------------------- | -------------------------------------------------------- |
+| Material ambiguity during an active run       | `question`                         | Pauses in place and resumes with a compact answer map    |
+| One known page needing readable evidence      | `fetch`                            | Smallest live-web reading operation                      |
+| One known site, but not the exact page        | `map`, then `fetch`                | Discovers site URLs without crawling every page          |
+| Several linked pages in one section           | `crawl`                            | Bounded, resumable document windows                      |
+| Machine-readable fields from one exact page   | `extract`                          | JSON-mode extraction with prompt-injection checking      |
+| Unknown source                                | `search`, then selective fetches   | Bounded discovery before reading primary sources         |
+| The last answer was confusing or too wordy    | `/skill:bro`                       | A simpler, concise restatement without jargon            |
+| A concept would be clearer as a visual        | `/skill:show-me`                   | Concise diagrams, code-shape sketches, or focused HTML   |
+| A plan or design needs every assumption aired | `/skill:grill-me`                  | Native question dialogs over the design-tree frontier    |
+| The same interview, plus glossary and ADRs    | `/skill:grill-with-docs`           | Writes `CONTEXT.md` and ADRs as terms and decisions land |
+| An effort too big to decide in one session    | `/skill:wayfinder`                 | Shared map of decision tickets, one ticket per session   |
+| First-time engineering-skill setup in a repo  | `/skill:setup-matt-pocock-skills`  | Issue tracker and domain-doc layout wayfinder reads      |
+| Throwaway code to answer look, feel, or logic | `/skill:prototype`                 | Shareable HTML demo or switchable UI variants            |
+| External facts from primary sources           | `/skill:research`                  | Cited Markdown file from official docs, specs, or code   |
+| A hard bug or performance regression          | `/skill:diagnosing-bugs`           | Tight red loop, then hypothesise, instrument, and fix    |
+| An in-progress merge or rebase conflict       | `/skill:resolving-merge-conflicts` | Resolve hunks by intent, then finish the operation       |
+| A human-only setup, secret, or dashboard step | `/skill:wizard`                    | Interactive bash wizard the human runs themselves        |
+| A fresh session should continue current work  | `/skill:handoff [focus]`           | Compact, redacted context saved outside the repository   |
+| You want a multi-session personalized course  | `/skill:teach [topic]`             | Stateful lessons grounded in one learning mission        |
+| Finished changes ready for GitHub             | `/skill:yeet`                      | Repo-native verification and PR-template workflow        |
+| An existing PR should be kept merge-ready     | `/skill:autopilot [PR]`            | Human-started conflict, review, and CI reconciliation    |
+| MCP servers already set up for other agents   | `/mcp`                             | Native enable/disable menu over shared MCP config        |
 
 A useful sequence for larger changes is:
 
@@ -176,19 +195,27 @@ Each stage has a different trust boundary: external evidence, publication, then 
 
 ## Command reference
 
-| Command                      | Description                                                     |
-| ---------------------------- | --------------------------------------------------------------- |
-| `/login firecrawl`           | Store a Firecrawl key in Pi's cross-platform credential file    |
-| `/logout firecrawl`          | Remove the Firecrawl key stored by Pi                           |
-| `/fast`                      | Toggle global Codex Fast Mode                                   |
-| `/mcp`                       | Enable or disable configured MCP servers                        |
-| `/skill:autopilot [PR]`      | Keep an existing GitHub PR merge-ready in the current agent     |
-| `/skill:bro`                 | Restate the previous response simply, concisely, and coherently |
-| `/skill:grill-me`            | Stress-test a plan through native question-dialog rounds        |
-| `/skill:handoff [focus]`     | Write a compact continuation document for a fresh agent         |
-| `/skill:show-me [topic]`     | Explain a topic with concise diagrams, code shapes, or HTML     |
-| `/skill:teach [topic]`       | Build a stateful, sourced course in the current directory       |
-| `/skill:yeet [instructions]` | Publish appropriate work as one ready PR                        |
+| Command                            | Description                                                       |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| `/login firecrawl`                 | Store a Firecrawl key in Pi's cross-platform credential file      |
+| `/logout firecrawl`                | Remove the Firecrawl key stored by Pi                             |
+| `/fast`                            | Toggle global Codex Fast Mode                                     |
+| `/mcp`                             | Enable or disable configured MCP servers                          |
+| `/skill:autopilot [PR]`            | Keep an existing GitHub PR merge-ready in the current agent       |
+| `/skill:bro`                       | Restate the previous response simply, concisely, and coherently   |
+| `/skill:diagnosing-bugs`           | Diagnose a hard bug or performance regression                     |
+| `/skill:grill-me`                  | Stress-test a plan through native question-dialog rounds          |
+| `/skill:grill-with-docs`           | Grill a plan and write glossary terms and ADRs as they resolve    |
+| `/skill:handoff [focus]`           | Write a compact continuation document for a fresh agent           |
+| `/skill:prototype [question]`      | Build throwaway code that answers a look, feel, or logic question |
+| `/skill:research [question]`       | Research a question against primary sources into a cited file     |
+| `/skill:resolving-merge-conflicts` | Resolve an in-progress merge or rebase by intent                  |
+| `/skill:setup-matt-pocock-skills`  | Configure tracker and domain docs for wayfinder in a repo         |
+| `/skill:show-me [topic]`           | Explain a topic with concise diagrams, code shapes, or HTML       |
+| `/skill:teach [topic]`             | Build a stateful, sourced course in the current directory         |
+| `/skill:wayfinder [idea or map]`   | Chart or walk a multi-session map of decision tickets             |
+| `/skill:wizard [procedure]`        | Generate an interactive bash wizard for human-only steps          |
+| `/skill:yeet [instructions]`       | Publish appropriate work as one ready PR                          |
 
 See each extension README for complete syntax, safety constraints, and troubleshooting.
 
@@ -215,6 +242,12 @@ These are trusted local extensions, not sandboxes around Pi itself.
 - Web Tools applies client-side URL checks, but the Firecrawl deployment must enforce private-network blocking at provider egress and on redirects.
 - `/skill:yeet` can create commits, push a branch, and open a public PR. It stops on suspicious files, likely secrets, destructive changes, or unrelated work.
 - `/skill:autopilot` can check out a PR branch, merge its base, create commits, push, reply to reviews, and resolve threads. It never merges the PR, enables auto-merge, marks a draft ready, force-pushes, or rewrites history.
+- `/skill:grill-with-docs` and `/skill:domain-modeling` write `CONTEXT.md` and ADRs into the current repository.
+- `/skill:setup-matt-pocock-skills` writes `docs/agents/` files and an `## Agent skills` block in `AGENTS.md` or `CLAUDE.md`.
+- `/skill:wayfinder` can create, assign, comment on, and close issues or local markdown tickets. It plans; it does not implement the destination.
+- `/skill:prototype` writes throwaway code next to the thing it is prototyping and may commit it to a throwaway branch.
+- `/skill:resolving-merge-conflicts` can finish a merge or rebase and create a commit. It never runs `--abort`.
+- `/skill:wizard` can write `.env` values and GitHub Actions secrets. The generated script is run by the user, not by the agent.
 
 Read the extension-specific safety section before enabling mutating or billed capabilities.
 
@@ -231,11 +264,20 @@ Read the extension-specific safety section before enabling mutating or billed ca
 ├── skills/
 │   ├── autopilot/                  # Human-invoked PR reconciliation loop
 │   ├── bro/                        # Dillon Mulroy's /skill:bro
+│   ├── diagnosing-bugs/            # Hard-bug diagnosis loop
+│   ├── domain-modeling/            # Glossary and ADR writer used by grilling
 │   ├── grill-me/                   # Matt Pocock's /skill:grill-me entry point
+│   ├── grill-with-docs/            # Stateful grilling that writes domain docs
 │   ├── grilling/                   # Interview workflow adapted for question
 │   ├── handoff/                    # Matt Pocock's /skill:handoff
+│   ├── prototype/                  # Throwaway logic and UI prototypes
+│   ├── research/                   # Primary-source research into a cited file
+│   ├── resolving-merge-conflicts/  # Intent-based merge and rebase resolution
+│   ├── setup-matt-pocock-skills/   # Per-repo tracker and domain-doc setup
 │   ├── show-me/                    # HumanLayer's /skill:show-me
 │   ├── teach/                      # Matt Pocock's /skill:teach
+│   ├── wayfinder/                  # Multi-session map of decision tickets
+│   ├── wizard/                     # Interactive bash wizard for human-only steps
 │   └── yeet/                       # Human-invoked PR publishing
 ├── THIRD_PARTY_NOTICES.md          # Skill provenance and licenses
 ├── themes/origin.json               # origin TUI theme
@@ -310,10 +352,19 @@ hk run pre-commit
 - [MCP](extensions/mcp/README.md)
 - [Autopilot skill](skills/autopilot/SKILL.md)
 - [Bro skill](skills/bro/SKILL.md)
+- [Diagnosing Bugs skill](skills/diagnosing-bugs/SKILL.md)
+- [Domain Modeling skill](skills/domain-modeling/SKILL.md)
 - [Grill Me skill](skills/grill-me/SKILL.md)
+- [Grill With Docs skill](skills/grill-with-docs/SKILL.md)
 - [Grilling workflow](skills/grilling/SKILL.md)
 - [Handoff skill](skills/handoff/SKILL.md)
+- [Prototype skill](skills/prototype/SKILL.md)
+- [Research skill](skills/research/SKILL.md)
+- [Resolving Merge Conflicts skill](skills/resolving-merge-conflicts/SKILL.md)
+- [Setup Matt Pocock Skills](skills/setup-matt-pocock-skills/SKILL.md)
 - [Show Me skill](skills/show-me/SKILL.md)
 - [Teach skill](skills/teach/SKILL.md)
+- [Wayfinder skill](skills/wayfinder/SKILL.md)
+- [Wizard skill](skills/wizard/SKILL.md)
 - [Yeet skill](skills/yeet/SKILL.md)
 - [Bundled skill third-party notices](THIRD_PARTY_NOTICES.md)
