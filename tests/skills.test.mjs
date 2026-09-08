@@ -13,6 +13,7 @@ export const expectedSkills = [
   "handoff",
   "research",
   "resolving-merge-conflicts",
+  "show-me",
   "teach",
   "wizard",
   "writing-for-agents",

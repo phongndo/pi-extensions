@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, summary-free context rollover, bounded web access, MCP tools, twelve skills, and the `origin` theme.
+A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, summary-free context rollover, bounded web access, MCP tools, thirteen skills, and the `origin` theme.
 
 This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md) distributes compatible skill copies to other agents through their existing adapters. Chezmoi retains the single native `~/.pi/agent/settings.json` template and package pointer; it does not generate a Pi mirror or write into this checkout. Other agents keep their own native config/skill roots, not Pi package copies.
 
@@ -29,6 +29,7 @@ Invoke skills using **only Pi's native `/skill:<name>` commands**. There are no 
 | [handoff](skills/handoff/SKILL.md)                                     | Write a redacted continuation document to the OS temporary directory | Manual          |
 | [yeet](skills/yeet/SKILL.md)                                           | Commit, push, and open or update a ready-for-review PR               | Manual          |
 | [autopilot](skills/autopilot/SKILL.md)                                 | Resolve conflicts, reviews, and CI on an existing PR; never merge it | Manual          |
+| [show-me](skills/show-me/SKILL.md)                                     | Explain visually with diagrams, code sketches, and HTML artifacts    | Manual or model |
 | [teach](skills/teach/SKILL.md)                                         | Build a sourced, stateful teaching workspace                         | Manual          |
 | [wizard](skills/wizard/SKILL.md)                                       | Generate a bash wizard for steps only a human can perform            | Manual or model |
 | [diagnosing-bugs](skills/diagnosing-bugs/SKILL.md)                     | Reproduce, diagnose, fix, and regression-test hard bugs              | Manual or model |
