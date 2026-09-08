@@ -107,21 +107,22 @@ try {
     skills.map((skill) => skill.name).sort(),
     (await names).map((name) => `skill:${name}`).sort(),
   );
-  for (const name of ["wayfinder", "grill-me", "handoff", "autopilot", "yeet"]) {
+  for (const name of new Set([...(await names), "wayfinder", "autopilot", "yeet", "cmd"])) {
     assert.equal(
       commands.filter((command) => command.source === "extension" && command.name === name).length,
-      1,
+      0,
+      `Unexpected shorthand skill command: /${name}`,
     );
+  }
+  for (const name of await names) {
     const canonical = await expand(`/skill:${name} smoke argument`);
-    const alias = await expand(`/${name} smoke argument`);
-    assert.equal(alias.prompt, canonical.prompt);
-    assert.ok(alias.prompt.includes(join(root, "skills", name)));
-    assert.ok(alias.prompt.includes("smoke argument"));
-    assert.equal(alias.skills.length, (await names).length);
+    assert.ok(canonical.prompt.includes(join(root, "skills", name)));
+    assert.ok(canonical.prompt.includes("smoke argument"));
+    assert.equal(canonical.skills.length, (await names).length);
   }
   assert.equal(events.filter((event) => event.type === "extension_error").length, 0);
   console.log(
-    `PASS: Pi ${execFileSync(process.env.PI_BIN || "pi", ["--version"], { encoding: "utf8" }).trim()}; ${(await names).length} skills once; all five aliases equal native expansion. ${expected.extensions.length} packaged extension entry points.`,
+    `PASS: Pi ${execFileSync(process.env.PI_BIN || "pi", ["--version"], { encoding: "utf8" }).trim()}; ${(await names).length} skills once; native skill commands expand; no shorthand aliases. ${expected.extensions.length} packaged extension entry points.`,
   );
 } finally {
   child.kill("SIGTERM");

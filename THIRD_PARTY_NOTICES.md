@@ -1,29 +1,30 @@
 # Third-party notices
 
-## bro
-
-[`skills/bro/SKILL.md`](skills/bro/SKILL.md) is copied from [Dillon Mulroy's `dmmulroy/skills`](https://github.com/dmmulroy/skills) at commit [`8603380821fee6a77c82639f364ce8fe4f5a92be`](https://github.com/dmmulroy/skills/commit/8603380821fee6a77c82639f364ce8fe4f5a92be). The source repository distributes it under the Matt Pocock MIT license reproduced below.
+The bundled skills originate from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills), under the MIT license reproduced below.
 
 ## grill-me and grilling
 
-[`skills/grill-me/SKILL.md`](skills/grill-me/SKILL.md) is adapted from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`85f83d3fde1d3a90d5c9a657f6998c79a6c37308`](https://github.com/mattpocock/skills/commit/85f83d3fde1d3a90d5c9a657f6998c79a6c37308). The adaptation replaces the upstream agent's Skill-tool terminology with semantic skill invocation. Its [`skills/grilling/SKILL.md`](skills/grilling/SKILL.md) dependency is adapted from the same commit to batch settled-prerequisite interview questions through the available interactive question tool (or one question per turn when unavailable). The design tree, fact/decision boundary, and final human confirmation are preserved.
+[`skills/grill-me/SKILL.md`](skills/grill-me/SKILL.md) is adapted from commit [`85f83d3fde1d3a90d5c9a657f6998c79a6c37308`](https://github.com/mattpocock/skills/commit/85f83d3fde1d3a90d5c9a657f6998c79a6c37308). The adaptation replaces the upstream agent's Skill-tool terminology with semantic skill invocation. Its [`skills/grilling/SKILL.md`](skills/grilling/SKILL.md) dependency is adapted from the same commit to batch settled-prerequisite interview questions through the available interactive question tool (or one question per turn when unavailable). The design tree, fact/decision boundary, and final human confirmation are preserved.
 
 ## handoff
 
-[`skills/handoff/SKILL.md`](skills/handoff/SKILL.md) is adapted from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`d28dfdc39beadc3142a33359b5cfa4765dcbd0bc`](https://github.com/mattpocock/skills/commit/d28dfdc39beadc3142a33359b5cfa4765dcbd0bc). The adaptation replaces the upstream agent's Skill-tool terminology with semantic skill invocation.
+[`skills/handoff/SKILL.md`](skills/handoff/SKILL.md) is adapted from commit [`d28dfdc39beadc3142a33359b5cfa4765dcbd0bc`](https://github.com/mattpocock/skills/commit/d28dfdc39beadc3142a33359b5cfa4765dcbd0bc). The adaptation replaces the upstream agent's Skill-tool terminology with semantic skill invocation.
 
 ## teach
 
-[`skills/teach/`](skills/teach/) is copied from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`6654f6b60cd9d5be8b54c6fafe44346dabeb3b76`](https://github.com/mattpocock/skills/commit/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76), including the skill and its supporting workspace-format documents.
+[`skills/teach/`](skills/teach/) is copied from commit [`6654f6b60cd9d5be8b54c6fafe44346dabeb3b76`](https://github.com/mattpocock/skills/commit/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76), including the skill and its supporting workspace-format documents.
 
-## Additional Matt Pocock engineering skills
+## Engineering and writing skills
 
-The following skills are from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills) at commit [`3cca18b368ae95cdbdebbff572ccafa662551015`](https://github.com/mattpocock/skills/commit/3cca18b368ae95cdbdebbff572ccafa662551015):
+These skills originate from commit [`3cca18b368ae95cdbdebbff572ccafa662551015`](https://github.com/mattpocock/skills/commit/3cca18b368ae95cdbdebbff572ccafa662551015):
 
-- [`skills/diagnosing-bugs/`](skills/diagnosing-bugs/) and [`skills/domain-modeling/`](skills/domain-modeling/) are unmodified copies, including supporting format documents and the diagnosis HITL script.
-- [`skills/prototype/`](skills/prototype/) and [`skills/resolving-merge-conflicts/SKILL.md`](skills/resolving-merge-conflicts/SKILL.md) are unmodified copies. Prototype includes its logic and UI branch documents.
-- [`skills/grill-with-docs/SKILL.md`](skills/grill-with-docs/SKILL.md), [`skills/setup-matt-pocock-skills/`](skills/setup-matt-pocock-skills/), [`skills/wayfinder/SKILL.md`](skills/wayfinder/SKILL.md), and [`skills/wizard/`](skills/wizard/) are adapted to name skills without harness-specific command syntax. Setup keeps its issue-tracker and domain-doc templates; wizard keeps its bash template.
-- [`skills/research/SKILL.md`](skills/research/SKILL.md) is adapted to use available web tools and to avoid nested research agents.
+- [`skills/diagnosing-bugs/`](skills/diagnosing-bugs/) and [`skills/resolving-merge-conflicts/`](skills/resolving-merge-conflicts/) retain the upstream workflows, including the diagnosis HITL script.
+- [`skills/wizard/`](skills/wizard/) is adapted to name skills without harness-specific command syntax. Its bash template additionally stops input gates on EOF and reports missing browser openers.
+- [`skills/research/`](skills/research/) is adapted to use available web tools and avoid nested research agents.
+- [`skills/codebase-design/`](skills/codebase-design/) contains the Markdown from upstream `skills/engineering/codebase-design`, including `DEEPENING.md` and `DESIGN-IT-TWICE.md`.
+- [`skills/writing-for-agents/`](skills/writing-for-agents/) contains the Markdown from upstream `skills/productivity/writing-for-agents`, including `SKILL-MECHANICS.md`.
+
+The two newly imported bundles preserve substantive wording; repository formatting may differ. Their upstream Codex display-metadata sidecars are not included: agent-specific distribution remains owned by nix-config's existing chezmoi adapters.
 
 ## Matt Pocock MIT license
 
@@ -36,23 +37,3 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-## show-me
-
-[`skills/show-me/SKILL.md`](skills/show-me/SKILL.md) is adapted from [HumanLayer's `humanlayer/skills`](https://github.com/humanlayer/skills) at commit [`6ab9013a10c28f5046f7f999549cd5328a0b30d7`](https://github.com/humanlayer/skills/commit/6ab9013a10c28f5046f7f999549cd5328a0b30d7).
-
-The adaptation replaces the upstream `Bash(open ...)` notation with available-shell instructions and macOS/Linux desktop openers.
-
-MIT License
-
-Copyright (c) 2026 HumanLayer
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-## autopilot
-
-[`skills/autopilot/SKILL.md`](skills/autopilot/SKILL.md) is adapted from Cursor's built-in `autopilot` skill, as confirmed by the owner and compared with the installed Cursor Agent `2026.09.02-c22c1a3` copy at `~/.cursor/skills-cursor/autopilot/SKILL.md`. See [Cursor's built-in skills documentation](https://cursor.com/docs/skills#built-in-cursor-skills). The local adaptation adds explicit human invocation, current-session execution, and work-preservation guardrails while retaining the conflict → review → CI loop. No standalone upstream license or original source revision has been established; the MIT notices above do not purport to license Cursor's material. Review redistribution rights before publishing this personal skill bundle.

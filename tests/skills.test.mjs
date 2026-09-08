@@ -5,23 +5,16 @@ import { test } from "node:test";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 
 export const expectedSkills = [
-  "autopilot",
-  "bro",
+  "codebase-design",
   "diagnosing-bugs",
-  "domain-modeling",
   "grill-me",
-  "grill-with-docs",
   "grilling",
   "handoff",
-  "prototype",
   "research",
   "resolving-merge-conflicts",
-  "setup-matt-pocock-skills",
-  "show-me",
   "teach",
-  "wayfinder",
   "wizard",
-  "yeet",
+  "writing-for-agents",
 ].sort();
 
 function files(dir) {
@@ -42,24 +35,18 @@ test("canonical inventory, native parser, and portable supporting files", () => 
   for (const file of [
     "diagnosing-bugs/scripts/hitl-loop.template.sh",
     "wizard/template.sh",
-    "prototype/UI.md",
-    "prototype/LOGIC.md",
-    "domain-modeling/ADR-FORMAT.md",
-    "domain-modeling/CONTEXT-FORMAT.md",
+    "codebase-design/DEEPENING.md",
+    "codebase-design/DESIGN-IT-TWICE.md",
+    "writing-for-agents/SKILL-MECHANICS.md",
     "teach/MISSION-FORMAT.md",
     "teach/RESOURCES-FORMAT.md",
     "teach/GLOSSARY-FORMAT.md",
     "teach/LEARNING-RECORD-FORMAT.md",
-    "setup-matt-pocock-skills/domain.md",
-    "setup-matt-pocock-skills/issue-tracker-github.md",
-    "setup-matt-pocock-skills/issue-tracker-gitlab.md",
-    "setup-matt-pocock-skills/issue-tracker-local.md",
-    "setup-matt-pocock-skills/triage-labels.md",
   ])
     assert.ok(readFileSync(`skills/${file}`).length);
   const notices = readFileSync("THIRD_PARTY_NOTICES.md", "utf8");
-  for (const owner of ["Matt Pocock", "HumanLayer", "Dillon Mulroy", "Cursor"])
-    assert.ok(notices.includes(owner));
+  assert.ok(notices.includes("Matt Pocock"));
+  for (const name of expectedSkills) assert.ok(notices.includes(`skills/${name}/`), name);
 });
 
 test("wizard input gates stop on EOF instead of proceeding without a human", () => {
