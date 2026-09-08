@@ -4,35 +4,44 @@ import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
-export async function loadEnabled(path: string): Promise<boolean> {
+export const MODES = ["default", "exp"] as const;
+export type ContextMode = (typeof MODES)[number];
+export const isMode = (value: unknown): value is ContextMode =>
+  MODES.some((mode) => mode === value);
+
+export async function loadMode(path: string): Promise<ContextMode> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "default";
     throw error;
   }
   const value: unknown = JSON.parse(text);
-  if (
-    !value ||
-    typeof value !== "object" ||
-    !("version" in value) ||
-    value.version !== 1 ||
-    !("enabled" in value) ||
-    typeof value.enabled !== "boolean"
-  )
-    throw new Error("Invalid context preference file; using normal pi compaction.");
-  return value.enabled;
+  if (value && typeof value === "object" && "version" in value) {
+    if (value.version === 3 && "mode" in value && isMode(value.mode)) return value.mode;
+    // Read older modes without rewriting user files. Removed memory-only mode falls back to Pi.
+    if (value.version === 2 && "mode" in value) {
+      if (value.mode === "exp-2") return "exp";
+      if (value.mode === "default" || value.mode === "exp-1") return "default";
+    }
+    if (value.version === 1 && "enabled" in value && typeof value.enabled === "boolean")
+      return value.enabled ? "exp" : "default";
+  }
+  throw new Error(
+    "Invalid context preference file; using default Pi compaction without memory tools.",
+  );
 }
 
-/** Explicit on/off writes need no read-modify-write lock. Last atomic rename wins. */
-export async function saveEnabled(path: string, enabled: boolean): Promise<void> {
+/** Explicit mode writes need no read-modify-write lock. Last atomic rename wins. */
+export async function saveMode(path: string, mode: ContextMode): Promise<void> {
+  if (!isMode(mode)) throw new Error("Unknown context mode.");
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     const file = await open(temporary, "wx", 0o600);
     try {
-      await file.writeFile(JSON.stringify({ version: 1, enabled }) + "\n", "utf8");
+      await file.writeFile(JSON.stringify({ version: 3, mode }) + "\n", "utf8");
       await file.sync();
     } finally {
       await file.close();
@@ -42,6 +51,12 @@ export async function saveEnabled(path: string, enabled: boolean): Promise<void>
     await rm(temporary, { force: true });
   }
 }
+
+/** Compatibility helpers for old embeddings; enabled now selects the single experiment. */
+export const loadEnabled = async (path: string): Promise<boolean> =>
+  (await loadMode(path)) === "exp";
+export const saveEnabled = (path: string, enabled: boolean): Promise<void> =>
+  saveMode(path, enabled ? "exp" : "default");
 
 /** Verify the actual session record, not just an in-memory append that failed to persist. */
 export async function verifySavedEntry(

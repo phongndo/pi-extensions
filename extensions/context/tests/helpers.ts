@@ -14,6 +14,7 @@ import {
   type CompactOptions,
 } from "@earendil-works/pi-coding-agent";
 import { createContextExtension, type ContextOptions } from "../index.ts";
+import { saveMode, type ContextMode } from "../state.ts";
 
 export const checkpoint = {
   goal: "Implement the requested fix",
@@ -87,12 +88,15 @@ export async function temporary(t: TestContext) {
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 export async function harness(
   t: TestContext,
-  options: ContextOptions = {},
+  options: ContextOptions & { initialMode?: ContextMode | null } = {},
   existing?: SessionManager,
 ) {
   const root = await temporary(t);
   const sm = existing ?? SessionManager.create(root, join(root, "sessions"));
   const path = options.statePath ?? join(root, "context.json");
+  // Legacy regression fixtures exercise fresh mode explicitly; production now defaults to Pi.
+  const { initialMode = "exp", ...extensionOptions } = options;
+  if (!options.statePath && initialMode) await saveMode(path, initialMode);
   const handlers = new Map<string, Handler[]>();
   const tools = new Map<string, ToolDefinition>();
   const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
@@ -137,10 +141,13 @@ export async function harness(
       commands.set(name, command);
     },
     getActiveTools: () => controls.tools,
+    setActiveTools: (names: string[]) => {
+      controls.tools = names;
+    },
     appendEntry: (type: string, data: unknown) => sm.appendCustomEntry(type, data),
     sendMessage: (...args: unknown[]) => sent.push(args),
   } as unknown as ExtensionAPI;
-  createContextExtension({ pollMs: 0, ...options, statePath: path })(api);
+  createContextExtension({ pollMs: 0, ...extensionOptions, statePath: path })(api);
   async function emit(name: string, event: object = {}) {
     let result: unknown;
     for (const handler of handlers.get(name) ?? [])

@@ -5,10 +5,10 @@ import test from "node:test";
 import { loadEnabled, saveEnabled, verifySavedEntry } from "../state.ts";
 import { temporary } from "./helpers.ts";
 
-test("global preference defaults on, writes atomically, and rejects corruption", async (t) => {
+test("global preference defaults to Pi, writes atomically, and rejects corruption", async (t) => {
   const root = await temporary(t);
   const path = join(root, "context.json");
-  assert.equal(await loadEnabled(path), true);
+  assert.equal(await loadEnabled(path), false);
   await saveEnabled(path, false);
   assert.equal(await loadEnabled(path), false);
   if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);

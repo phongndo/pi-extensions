@@ -4,23 +4,12 @@ import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { CHECKPOINT_TYPE, currentNotes, latestCheckpoint, recall } from "../model.ts";
 import { saveEnabled } from "../state.ts";
+import { diagnostics } from "../diagnostics.ts";
 import { assistant, checkpoint, harness, receipt, toolCall, user } from "./helpers.ts";
 
-test("/context on|off|status has global persistence, completions, and keeps recall/notes available", async (t) => {
+test("/context default|exp|status persists globally and preserves notes while disabled", async (t) => {
   const app = await harness(t);
-  assert.equal(app.statuses.get("context"), "ctxt recall");
-  assert.deepEqual(app.notifications, []);
-  await app.command("");
-  assert.equal(app.notifications.at(-1), "Context on");
-  await app.command("off");
-  assert.equal(app.notifications.at(-1), "Context off");
-  assert.equal(app.statuses.get("context"), "ctxt normal");
-  assert.deepEqual(app.commands.get("context")!.getArgumentCompletions!("o"), [
-    { value: "on", label: "on" },
-    { value: "off", label: "off" },
-  ]);
-  await app.command("invalid");
-  assert.match(app.notifications.at(-1)!, /Usage:/);
+  assert.equal(app.statuses.get("context"), "ctxt exp");
   const request = user(app.sm);
   const note = await app.execute("notes", {
     action: "write",
@@ -29,15 +18,23 @@ test("/context on|off|status has global persistence, completions, and keeps reca
     references: [request],
   });
   const id = (note.details as { entryId: string }).entryId;
-  const read = await app.execute("recall", { entryId: id });
-  assert.match(JSON.stringify(read.content), /Original evidence/);
   await app.saveCheckpoint();
+  await app.command("off");
+  assert.equal(app.notifications.at(-1), "Context default");
+  await assert.rejects(app.execute("recall", { entryId: id }), /disabled/);
   assert.equal(await app.beforeCompact(), undefined);
+  assert.deepEqual(
+    app.commands.get("context")!.getArgumentCompletions!(""),
+    ["default", "exp", "status"].map((value) => ({ value, label: value })),
+  );
+  await app.command("invalid");
+  assert.match(app.notifications.at(-1)!, /Usage:/);
   const second = await harness(t, { statePath: app.path });
-  assert.equal(second.statuses.get("context"), "ctxt normal");
+  assert.equal(second.statuses.get("context"), "ctxt default");
   await second.command("on");
   await app.command("status");
-  assert.equal(app.notifications.at(-1), "Context on");
+  assert.match(app.notifications.at(-1)!, /^Context exp · No recorded compaction/);
+  assert.match(JSON.stringify(await app.execute("recall", { entryId: id })), /Original evidence/);
   const before = await readFile(app.path, "utf8");
   await app.command("status");
   assert.equal(await readFile(app.path, "utf8"), before);
@@ -46,9 +43,9 @@ test("/context on|off|status has global persistence, completions, and keeps reca
 test("external preference changes refresh the status while idle", async (t) => {
   const app = await harness(t, { pollMs: 10 });
   await saveEnabled(app.path, false);
-  for (let i = 0; i < 100 && app.statuses.get("context") !== "ctxt normal"; i++)
+  for (let i = 0; i < 100 && app.statuses.get("context") !== "ctxt default"; i++)
     await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(app.statuses.get("context"), "ctxt normal");
+  assert.equal(app.statuses.get("context"), "ctxt default");
 });
 
 test("corrupt preferences fail safe and /context on repairs them", async (t) => {
@@ -57,9 +54,10 @@ test("corrupt preferences fail safe and /context on repairs them", async (t) => 
   await app.saveCheckpoint();
   await writeFile(app.path, "bad json");
   assert.equal(await app.beforeCompact(), undefined);
-  assert.equal(app.statuses.get("context"), "ctxt normal !");
+  assert.equal(app.statuses.get("context"), "ctxt default !");
+  assert.ok(!app.controls.tools.includes("recall"));
   await app.command("on");
-  assert.equal(app.statuses.get("context"), "ctxt recall");
+  assert.equal(app.statuses.get("context"), "ctxt exp");
 });
 
 test("reminders are transient, budget gated, and absent when disabled or tools unavailable", async (t) => {
@@ -69,7 +67,9 @@ test("reminders are transient, budget gated, and absent when disabled or tools u
   app.controls.tokens = 110_000;
   const result = (await app.emit("context", event)) as { messages: unknown[] };
   assert.equal(result.messages.length, 1);
-  assert.equal(app.sm.getBranch().length, 0);
+  assert.equal(diagnostics(app.sm.getBranch()).filter((e) => e.event === "reminder").length, 1);
+  await app.emit("context", event);
+  assert.equal(diagnostics(app.sm.getBranch()).filter((e) => e.event === "reminder").length, 1);
   assert.equal(event.messages.length, 0);
   await app.command("off");
   assert.equal(await app.emit("context", event), undefined);
