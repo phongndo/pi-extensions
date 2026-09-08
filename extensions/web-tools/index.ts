@@ -366,7 +366,10 @@ export function validatePublicUrl(value: string, label = "url"): string {
   if (url.username || url.password)
     throw new Error(`${label} must not contain credentials.`);
 
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const hostname = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
   if (
     hostname === "localhost" ||
     hostname.endsWith(".localhost") ||
@@ -754,6 +757,39 @@ function firecrawlUrl(path: string): string {
   return url.toString();
 }
 
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+class ResponseTooLargeError extends Error {
+  constructor() {
+    super(
+      "Firecrawl response exceeds the 16 MiB safety limit. Request fewer pages or narrower results.",
+    );
+  }
+}
+
+async function readBoundedResponse(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_RESPONSE_BYTES) throw new ResponseTooLargeError();
+      parts.push(decoder.decode(value, { stream: true }));
+    }
+    parts.push(decoder.decode());
+    return parts.join("");
+  } catch (error) {
+    await reader.cancel(error).catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function firecrawlRequest(
   path: string,
   body: JsonRecord | undefined,
@@ -779,8 +815,9 @@ export async function firecrawlRequest(
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: requestSignal,
     });
-    raw = await response.text();
+    raw = await readBoundedResponse(response);
   } catch (error) {
+    if (error instanceof ResponseTooLargeError) throw error;
     if (signal?.aborted)
       throw new Error("Web request was cancelled.", { cause: error });
     if (timeout.aborted)

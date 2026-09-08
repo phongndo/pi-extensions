@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "pnpm run check:root && pnpm --filter pi-question check && pnpm --filter pi-fast-mode check && pnpm --filter pi-web-tools check && pnpm --filter pi-mcp check",
+    "check": "pnpm run check:root && pnpm --filter pi-question check && pnpm --filter pi-fast-mode check && pnpm --filter pi-web-tools check && pnpm --filter pi-mcp check && pnpm --filter pi-context check",
     "check:root": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:skills",
     "test:skills": "node --test tests/skills.test.mjs",
     "test:pi-skills": "node tests/pi-skills-smoke.mjs",
@@ -38,6 +38,7 @@
       "./src/index.ts",
       "./extensions/question/index.ts",
       "./extensions/fast-mode/index.ts",
+      "./extensions/context/index.ts",
       "./extensions/web-tools/index.ts",
       "./extensions/mcp/index.ts"
     ],

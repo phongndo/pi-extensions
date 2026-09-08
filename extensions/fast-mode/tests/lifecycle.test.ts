@@ -98,12 +98,12 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.equal(app.statuses.size, 0, "factory starts no UI or background resources");
   await app.emit("session_start");
   assert.deepEqual(app.notifications, [], "startup stays quiet");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "fast off");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), undefined);
   await app.command("status");
   assert.equal(app.notifications.at(-1), "Fast mode off");
   await assert.rejects(stat(path), { code: "ENOENT" });
   await app.command("on");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "fast on");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
   assert.equal(app.notifications.at(-1), "Fast mode on");
   const modified = (await stat(path)).mtimeMs;
   await app.command("on");
@@ -119,7 +119,7 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   ]);
   app.ctx.model = model("gpt-future");
   await app.emit("model_select");
-  assert.match(app.statuses.get(FAST_MODE_STATUS_KEY)!, /support unknown/);
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed ?");
   app.ctx.model = model("gpt-5.4-mini");
   await app.emit("model_select");
   assert.match(app.statuses.get(FAST_MODE_STATUS_KEY)!, /unavailable/);
@@ -129,24 +129,24 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.equal(app.notifications.at(-1), "Fast mode off");
   await app.command("off");
   assert.equal(app.notifications.at(-1), "Fast mode off");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "fast off");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), undefined);
   await app.command("");
   assert.equal(app.notifications.at(-1), "Fast mode on");
-  assert.match(app.statuses.get(FAST_MODE_STATUS_KEY)!, /fast on/);
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed unavailable");
   await app.command("");
   assert.equal(app.notifications.at(-1), "Fast mode off");
   await writeFile(path, "broken");
   await app.command("status");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "fast error");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed !");
   await app.command("on");
   assert.equal(await readFile(path, "utf8"), "broken");
   await saveFastMode(false, path);
-  await eventually(() => app.statuses.get(FAST_MODE_STATUS_KEY) === "fast off");
+  await eventually(() => !app.statuses.has(FAST_MODE_STATUS_KEY));
   assert.equal(FooterComponent.prototype.render, original);
   await app.emit("session_shutdown");
   assert.equal(app.statuses.has(FAST_MODE_STATUS_KEY), false);
   await app.emit("session_start");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "fast off");
+  assert.equal(app.statuses.has(FAST_MODE_STATUS_KEY), false);
 });
 
 test("RPC gets status too; two sessions update without prompts", async (t) => {
@@ -163,9 +163,9 @@ test("RPC gets status too; two sessions update without prompts", async (t) => {
   await first.emit("session_start");
   await second.emit("session_start");
   await first.command("on");
-  await eventually(() => second.statuses.get(FAST_MODE_STATUS_KEY) === "fast on");
+  await eventually(() => second.statuses.get(FAST_MODE_STATUS_KEY) === "speed fast");
   await second.command("off");
-  await eventually(() => first.statuses.get(FAST_MODE_STATUS_KEY) === "fast off");
+  await eventually(() => !first.statuses.has(FAST_MODE_STATUS_KEY));
 });
 
 test("explicit capability refresh changes UI support without changing saved state", async (t) => {
@@ -189,7 +189,7 @@ test("explicit capability refresh changes UI support without changing saved stat
   await app.emit("session_start");
   assert.deepEqual(app.notifications, [], "enabled startup stays quiet too");
   await app.command("refresh");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "fast on");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
   assert.equal(app.notifications.at(-1), "Fast mode on");
   const count = calls;
   const before = (await stat(path)).mtimeMs;
@@ -201,7 +201,7 @@ test("explicit capability refresh changes UI support without changing saved stat
   assert.equal((await stat(path)).mtimeMs, before);
 });
 
-test("real Pi loader puts the original glyph immediately before Astra, without a status row", async (t) => {
+test("real Pi loader publishes a minimal native footer status without patching the model line", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "fast-host-footer-"));
   const path = join(root, "fast-mode.json");
   await saveFastMode(true, path);
@@ -256,12 +256,14 @@ test("real Pi loader puts the original glyph immediately before Astra, without a
     for (const width of [16, 40, 60, 80, 120]) {
       const lines = footer.render(width);
       const modelLine = stripVTControlCharacters(lines[1]!);
-      if (width >= 60) assert.match(modelLine, /ϟ gpt-6-astra/, `${theme}/${width}`);
-      assert.equal(lines.length, 2, "Fast mode must not add a separate TUI status row");
+      assert.doesNotMatch(modelLine, /ϟ/);
+      assert.equal(lines.length, 3, "Pi renders its native extension-status row");
+      assert.match(stripVTControlCharacters(lines[2]!), /fast/);
       assert.ok(lines.every((line) => !line.includes("⚡") && visibleWidth(line) <= width));
     }
   }
-  assert.equal(app.statuses.size, 0);
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
+  assert.equal(FooterComponent.prototype.render, original);
   app.statuses.set("other", "other extension status");
   const beforeUpdate = app.statusUpdates;
   await saveFastMode(false, path);
@@ -269,13 +271,13 @@ test("real Pi loader puts the original glyph immediately before Astra, without a
     () => app.statusUpdates > beforeUpdate,
     "external toggles must request a TUI redraw",
   );
-  assert.doesNotMatch(stripVTControlCharacters(footer.render(120)[1]!), /ϟ/);
-  await saveFastMode(true, path);
-  await eventually(() => footer.render(120)[1]!.includes("ϟ gpt-6-astra"));
-  assert.equal(app.statuses.get("other"), "other extension status");
   assert.equal(app.statuses.has(FAST_MODE_STATUS_KEY), false);
+  await saveFastMode(true, path);
+  await eventually(() => app.statuses.get(FAST_MODE_STATUS_KEY) === "speed fast");
+  assert.equal(app.statuses.get("other"), "other extension status");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
   await invoke("session_shutdown");
   assert.equal(FooterComponent.prototype.render, original);
   await invoke("session_start");
-  assert.match(stripVTControlCharacters(footer.render(120)[1]!), /ϟ gpt-6-astra/);
+  assert.match(stripVTControlCharacters(footer.render(120)[2]!), /fast/);
 });

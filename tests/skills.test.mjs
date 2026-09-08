@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { test } from "node:test";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
@@ -59,6 +60,46 @@ test("canonical inventory, native parser, and portable supporting files", () => 
   const notices = readFileSync("THIRD_PARTY_NOTICES.md", "utf8");
   for (const owner of ["Matt Pocock", "HumanLayer", "Dillon Mulroy", "Cursor"])
     assert.ok(notices.includes(owner));
+});
+
+test("wizard input gates stop on EOF instead of proceeding without a human", () => {
+  const library = readFileSync("skills/wizard/template.sh", "utf8").split("\n# STAGES:")[0];
+  for (const command of ['pause "Continue?"', 'ask VALUE "Value:"', 'ask_secret VALUE "Secret:"']) {
+    const result = spawnSync(
+      "bash",
+      ["-c", `${library}\n${command}\nprintf 'UNEXPECTED_CONTINUATION'`],
+      {
+        input: "",
+        encoding: "utf8",
+        env: { ...process.env, ENV_FILE: "/dev/null" },
+      },
+    );
+    assert.equal(result.error, undefined);
+    assert.notEqual(result.status, 0, command);
+    assert.doesNotMatch(result.stdout, /UNEXPECTED_CONTINUATION/);
+    const answered = spawnSync("bash", ["-c", `${library}\n${command}\nprintf 'CONTINUED'`], {
+      input: "\n",
+      encoding: "utf8",
+      env: { ...process.env, ENV_FILE: "/dev/null" },
+    });
+    assert.equal(answered.status, 0, command);
+    assert.match(answered.stdout, /CONTINUED/);
+  }
+});
+
+test("wizard reports when no browser opener is available", () => {
+  const library = readFileSync("skills/wizard/template.sh", "utf8").split("\n# STAGES:")[0];
+  const result = spawnSync(
+    "bash",
+    ["-c", `${library}\nPATH=''\nopen_url https://example.invalid`],
+    {
+      input: "",
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /visit it manually/);
 });
 
 test("Pi package resource paths have one owner", () => {

@@ -1,4 +1,5 @@
-import { chmod, mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
@@ -16,18 +17,34 @@ export interface McpConfigPaths {
   projectPiMcpJson: string;
 }
 
-export interface ResolvedMcpServer {
+interface McpServerBase {
   name: string;
   enabled: boolean;
-  type: McpTransport;
   source: string;
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  cwd?: string;
-  url?: string;
-  headers?: Record<string, string>;
 }
+
+/** A resolved transport always has its required endpoint, never mixed transport options. */
+export type ResolvedMcpServer = McpServerBase &
+  (
+    | {
+        type: "stdio";
+        command: string;
+        args?: string[];
+        env?: Record<string, string>;
+        cwd?: string;
+        url?: never;
+        headers?: never;
+      }
+    | {
+        type: "http" | "sse";
+        url: string;
+        headers?: Record<string, string>;
+        command?: never;
+        args?: never;
+        env?: never;
+        cwd?: never;
+      }
+  );
 
 export interface LoadedMcpConfig {
   servers: ResolvedMcpServer[];
@@ -146,8 +163,13 @@ export async function setServerDisabled(
   const queuePath = join(await realpath(dirname(overlayPath)), basename(overlayPath));
   await withFileMutationQueue(queuePath, async () => {
     const current = (await readJsonObject(overlayPath)) ?? {};
+    if (current.mcpServers !== undefined && !isRecord(current.mcpServers))
+      throw new Error(`Invalid mcpServers object in ${overlayPath}.`);
     const servers = isRecord(current.mcpServers) ? { ...current.mcpServers } : {};
-    const existing = isRecord(servers[name]) ? { ...servers[name] } : {};
+    if (Object.hasOwn(servers, name) && !isRecord(servers[name]))
+      throw new Error(`Invalid MCP server "${name}" in ${overlayPath}.`);
+    const existing =
+      Object.hasOwn(servers, name) && isRecord(servers[name]) ? { ...servers[name] } : {};
     existing.disabled = disabled;
     servers[name] = existing;
     await writeJsonAtomic(overlayPath, { ...current, mcpServers: servers });
@@ -239,28 +261,28 @@ function resolveServer(
     );
     return previous;
   }
-  if (type === "stdio" && !command) {
-    warnings.push(`Skipping MCP server "${name}" in ${source}: stdio servers require command.`);
-    return previous;
+  if (type === "stdio") {
+    if (!command) {
+      warnings.push(`Skipping MCP server "${name}" in ${source}: stdio servers require command.`);
+      return previous;
+    }
+    return {
+      name,
+      enabled,
+      type,
+      source,
+      command,
+      ...(args ? { args } : {}),
+      ...(serverEnv ? { env: serverEnv } : {}),
+      ...(cwd ? { cwd } : {}),
+    };
   }
-  if ((type === "http" || type === "sse") && !url) {
+  if (!url) {
     warnings.push(`Skipping MCP server "${name}" in ${source}: ${type} servers require url.`);
     return previous;
   }
 
-  const resolved: ResolvedMcpServer = {
-    name,
-    enabled,
-    type,
-    source,
-  };
-  if (command) resolved.command = command;
-  if (args) resolved.args = args;
-  if (serverEnv) resolved.env = serverEnv;
-  if (cwd) resolved.cwd = cwd;
-  if (url) resolved.url = url;
-  if (headers) resolved.headers = headers;
-  return resolved;
+  return { name, enabled, type, source, url, ...(headers ? { headers } : {}) };
 }
 
 function resolveTransport(
@@ -287,7 +309,8 @@ function resolveEnabled(raw: Record<string, unknown>, fallback: boolean): boolea
 async function readJsonObject(path: string): Promise<RawMcpFile | undefined> {
   try {
     const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    return isRecord(parsed) ? parsed : {};
+    if (!isRecord(parsed)) throw new Error("Expected a JSON object.");
+    return parsed;
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") return undefined;
     throw new Error(`Could not read ${path}: ${errorMessage(error)}`, { cause: error });
@@ -296,12 +319,23 @@ async function readJsonObject(path: string): Promise<RawMcpFile | undefined> {
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const tempPath = `${path}.${process.pid}.tmp`;
+  const tempPath = `${path}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(value, null, 2)}\n`;
-  await writeFile(tempPath, payload, { encoding: "utf8", mode: OVERLAY_MODE });
-  await chmod(tempPath, OVERLAY_MODE);
-  await rename(tempPath, path);
-  await chmod(path, OVERLAY_MODE);
+  // Only clean up a file we successfully created; never unlink somebody else's
+  // file if exclusive creation fails.
+  const file = await open(tempPath, "wx", OVERLAY_MODE);
+  try {
+    await file.writeFile(payload, "utf8");
+    await file.chmod(OVERLAY_MODE);
+    await file.close();
+    await rename(tempPath, path);
+  } finally {
+    try {
+      await file.close();
+    } finally {
+      await rm(tempPath, { force: true });
+    }
+  }
 }
 
 function optionalString(value: unknown): string | undefined {

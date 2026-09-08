@@ -12,9 +12,7 @@ Reviewed against the installed Pi **0.85.1** extension/TUI documentation, dynami
 
 ## Inline status
 
-The user selected an inline count rather than an additional status row: `mcp (connected/total)` beside the existing footer statistics. Total includes disabled and failed configured servers; the count is per Pi session, not a count of executor integrations or tools.
-
-Pi has no supported API for inserting text into its existing stats line. The explicit exception to public-API-only integration is [`src/footer-decorator.ts`](../src/footer-decorator.ts), which reads the built-in footer's session and decorates its rendered lines. It shares one session-scoped installation with Fast Mode, preserves other statuses and custom footers, and supports either load/teardown order. No extra row, emoji, or notification is added. The count is omitted when there is insufficient padding or no configured servers.
+Updated by user request: MCP and Fast Mode now use Pi's public `ctx.ui.setStatus` API with minimal labels (`mcp connected/total`, `fast`). The former inline footer decorator has been removed; neither extension patches the model/stats line or replaces custom footers. Pi owns status layout and truncation. Total includes disabled and failed configured servers; the count is per Pi session, not a count of executor integrations or tools. No configured servers means no MCP label; Fast is hidden when off.
 
 ## Confirmed issues addressed
 

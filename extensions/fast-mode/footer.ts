@@ -1,45 +1,21 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { installFooterDecorator } from "../../src/footer-decorator.ts";
 import type { FastCapability } from "./capabilities.ts";
 import { safeLabel, type FastRequestRecord } from "./diagnostics.ts";
 import type { FastStateSnapshot } from "./monitor.ts";
 
 export const FAST_MODE_STATUS_KEY = "fast-mode";
-const FAST_MODE_GLYPH = "ϟ";
 
-/** Reuse the model section's existing padding, keeping ANSI styling and line width unchanged. */
-export function prefixFastModeModelLine(
-  lines: string[],
-  model: Model<Api> | undefined,
-  showPrefix: boolean,
-): string[] {
-  if (!showPrefix || !model) return lines;
-  const line = lines[1];
-  if (line === undefined) return lines;
-  const modelIndex = line.lastIndexOf(model.id);
-  if (modelIndex < 0 || line.slice(0, modelIndex).endsWith(`${FAST_MODE_GLYPH} `)) return lines;
-  const providerIndex = line.lastIndexOf(`(${model.provider}) `, modelIndex);
-  const rightSideIndex = providerIndex >= 0 ? providerIndex : modelIndex;
-  const prefix = line.slice(0, rightSideIndex);
-  if (!prefix.endsWith("  ")) return lines;
-  const result = [...lines];
-  result[1] =
-    prefix.slice(0, -2) +
-    line.slice(rightSideIndex, modelIndex) +
-    `${FAST_MODE_GLYPH} ` +
-    line.slice(modelIndex);
-  return result;
-}
-
-/** Decorate only the built-in footer, scoped to its session; custom footers remain untouched. */
-export function installFastModeFooterPrefix(
-  sessionManager: ExtensionContext["sessionManager"],
-  readEnabled: (model: Model<Api> | undefined) => boolean,
-): () => void {
-  return installFooterDecorator(sessionManager, (lines, model) =>
-    prefixFastModeModelLine(lines, model, readEnabled(model)),
-  );
+/** Minimal footer status; commands retain the full preference/capability explanation. */
+export function formatFastFooterStatus(
+  state: FastStateSnapshot,
+  capability: FastCapability,
+): string | undefined {
+  if (state.error) return "speed !";
+  if (state.enabled === undefined) return "speed ?";
+  if (!state.enabled) return undefined;
+  if (capability.status === "unsupported") return "speed unavailable";
+  if (capability.status === "unknown") return "speed ?";
+  return "speed fast";
 }
 
 export function formatFastStatus(state: FastStateSnapshot, capability: FastCapability): string {

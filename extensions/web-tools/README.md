@@ -155,7 +155,7 @@ This extension intentionally does not provide:
 - dynamic tool activation
 - a separate credential store or configuration UI beyond Pi's native `/login` flow
 
-Ordinary requests have a 60-second timeout; crawl polling has a 90-second local deadline. Outputs, crawl scope, schema text, and document windows are bounded. Basic client-side URL validation rejects credentials, local hostnames, and direct private IP addresses. Firecrawl still controls the actual network connection and must enforce private-network and redirect protections at provider egress, including links discovered during a crawl.
+Ordinary requests have a 60-second timeout; crawl polling has a 90-second local deadline. Outputs, crawl scope, schema text, and document windows are bounded. Response bodies are streamed with a 16 MiB decoded-body limit; larger responses are cancelled and rejected before JSON parsing. Request fewer pages or narrower results if this limit is reached. Basic client-side URL validation rejects credentials, local hostnames, and direct private IP addresses. Firecrawl still controls the actual network connection and must enforce private-network and redirect protections at provider egress, including links discovered during a crawl.
 
 ## Development
 

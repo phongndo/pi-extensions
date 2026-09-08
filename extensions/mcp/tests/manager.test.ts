@@ -159,7 +159,7 @@ test("a connect that finishes after disable does not revive the server", async (
   assert.ok(closed.includes("executor"));
 });
 
-test("uses Pi's native collapsed result renderer and refreshes schemas on reconnect", async () => {
+test("renders compact expandable tool rows and refreshes schemas on reconnect", async () => {
   const paths = await fixturePaths();
   let version = 0;
   const app = harness(async (server) => {
@@ -171,7 +171,7 @@ test("uses Pi's native collapsed result renderer and refreshes schemas on reconn
   try {
     await app.manager.start(app.ctx, paths);
     const first = app.tools.get("mcp__executor__execute")!;
-    assert.equal(first.renderResult, undefined, "let Pi own collapse/expand and output styling");
+    assert.equal(typeof first.renderResult, "function");
     initTheme("dark", false);
     const row = new ToolExecutionComponent(
       first.name,

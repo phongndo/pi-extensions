@@ -2,10 +2,11 @@ import { watch, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
 import { FAST_MODE_STATE_PATH, loadFastMode, setFastMode, toggleFastMode } from "./state.ts";
 
-export interface FastStateSnapshot {
-  enabled?: boolean;
-  error?: string;
-}
+/** Unknown, known, or failed: an error cannot simultaneously report enabled. */
+export type FastStateSnapshot =
+  | { enabled?: never; error?: never }
+  | { enabled: boolean; error?: never }
+  | { enabled?: never; error: string };
 
 /** UI snapshot only. Requests still read authoritative state; old reads cannot overwrite newer UI. */
 export class FastStateMonitor {
@@ -14,6 +15,7 @@ export class FastStateMonitor {
   private closed = false;
   private watcher?: FSWatcher;
   private poll?: ReturnType<typeof setInterval>;
+  private polling = false;
   private debounce?: ReturnType<typeof setTimeout>;
   private readonly changed: () => void;
   private readonly path: string;
@@ -91,9 +93,14 @@ export class FastStateMonitor {
     this.attachWatcher();
     this.poll = setInterval(() => {
       this.attachWatcher();
+      // Slow storage must not start an unbounded queue or continuously invalidate
+      // every preceding read before it can publish a snapshot.
+      if (this.polling) return;
+      this.polling = true;
       void this.refresh()
         .catch(() => undefined)
         .then(() => {
+          this.polling = false;
           if (!this.closed) {
             try {
               tick?.();

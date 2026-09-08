@@ -2,7 +2,7 @@
 
 A small native `/mcp` menu for Pi. It connects the current session to MCP servers you already configured for other agents, and lets you enable or disable those servers the same way `/settings` toggles options.
 
-Pi does not ship MCP in core. This extension adds one slash command, a native settings list, Pi-registered tools, and a compact inline connection count. Requires Pi **0.85.1 or newer**; tested against 0.85.1.
+Pi does not ship MCP in core. This extension adds one slash command, a native settings list, Pi-registered tools, and a minimal native footer connection count. Requires Pi **0.85.1 or newer**; tested against 0.85.1.
 
 ## Behavior
 
@@ -11,21 +11,19 @@ Pi does not ship MCP in core. This extension adds one slash command, a native se
 - Enabling a server connects it immediately and adds its tools to the current session. Disabling disconnects it and removes those tools from the active set.
 - Enabled servers also connect on `session_start`, so executor is available without opening the menu.
 - The menu writes enable/disable state to Pi's overlay file. It does not copy URLs, headers, or other secrets out of the shared config.
-- The built-in footer shows **`mcp (connected/total)`** beside the existing stats, with no extra row or startup banner. The menu and count update as clients connect, fail, disconnect, or are toggled.
+- Pi's native footer status API shows **`mcp connected/total`** alongside other extension statuses, with no startup banner. The menu and count update as clients connect, fail, disconnect, or are toggled.
 
 RPC sessions can still use `/mcp`: pick a server, then enable or disable it. RPC also receives the count through Pi's native status API. Print and JSON sessions connect tools but do not install a panel or emit status UI.
 
-## Inline count
+## Native footer count
 
 ```text
-… (auto) mcp (1/2)                 (openai-codex) ϟ gpt-6-astra • xhigh
+ctxt recall · speed fast · mcp 1/2
 ```
 
-`mcp (1/2)` means one connected server out of two configured servers. Disabled, connecting, and failed servers remain in the denominator but not the numerator. This counts **servers**, not the tools or integrations exposed by an executor server.
+`mcp 1/2` means one connected server out of two configured servers. Disabled, connecting, and failed servers remain in the denominator but not the numerator. This counts **servers**, not the tools or integrations exposed by an executor server.
 
-No configured servers means no label. On narrow terminals, the label is omitted rather than displacing Pi's stats/model or adding a row. Custom footers remain untouched. Connection status is session-local and based on the SDK's known transport state, not a background health check.
-
-Pi has no public inline-footer slot. A small shared decorator in [`src/footer-decorator.ts`](../../src/footer-decorator.ts) supplies that compatibility seam for MCP and Fast Mode; it is session-scoped and cleaned up in either teardown order. All commands, tools, settings UI, and RPC statuses use Pi's supported APIs.
+No configured servers means no label. Uses the public `ctx.ui.setStatus` API; Pi owns layout and truncation. The extension never patches or replaces the footer. Connection status is session-local and based on the SDK's known transport state, not a background health check. Subscriptions and this extension's status are cleared on shutdown/reload.
 
 ## Configuration
 
@@ -62,7 +60,9 @@ Connected servers register tools as `mcp__<server>__<tool>`. Executor therefore 
 
 Disable a server from `/mcp` to drop its tools from the model without a reload. Closed transports also deactivate their tools. Re-enabling refreshes descriptions and schemas, including paginated tool lists.
 
-Tool results use Pi's native collapsed/expanded rendering and image blocks. Text is limited to Pi's standard **2,000 lines or 50 KiB**; larger responses are saved to a private temporary file with a path for follow-up reads. Tool errors remain errors, and request cancellation is forwarded to the MCP SDK. Stdio server logs are drained rather than printed over the TUI or RPC/JSON stream.
+Tool rows keep Pi's native shell, expand/collapse controls, theme colors, and image display. Headers show `server / tool` with a short argument preview. Collapsed results show up to four preview lines; JSON becomes readable field/item summaries instead of a dense blob. Expand to see all arguments and returned text, with JSON indented. Full-output paths remain visible even when collapsed. This is display-only: model-facing content and image blocks are unchanged.
+
+Text is limited to Pi's standard **2,000 lines or 50 KiB**; larger responses are saved to a private temporary file with a path for follow-up reads. Tool errors remain errors, and request cancellation is forwarded to the MCP SDK. Stdio server logs are drained rather than printed over the TUI or RPC/JSON stream.
 
 ## Command
 

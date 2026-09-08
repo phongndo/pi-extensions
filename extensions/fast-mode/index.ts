@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { setFooterStatus } from "../../src/footer-status.ts";
 import {
   CodexCapabilities,
   codexModelsUrl,
@@ -6,12 +7,7 @@ import {
   type CapabilityAuth,
 } from "./capabilities.ts";
 import { FastRequestJournal } from "./diagnostics.ts";
-import {
-  FAST_MODE_STATUS_KEY,
-  formatFastDetails,
-  formatFastStatus,
-  installFastModeFooterPrefix,
-} from "./footer.ts";
+import { FAST_MODE_STATUS_KEY, formatFastDetails, formatFastFooterStatus } from "./footer.ts";
 import { FastStateMonitor } from "./monitor.ts";
 import { installFastModeProviderLookup } from "./runtime.ts";
 
@@ -125,7 +121,6 @@ class FastModeSession {
   private readonly lifetime = new AbortController();
   private active = true;
   private removePolicy?: () => void;
-  private removeFooterPrefix?: () => void;
   private uiAuth?: CapabilityAuth;
   private discovery?: { controller: AbortController; promise: Promise<void> };
   private discoveryGeneration = 0;
@@ -143,22 +138,18 @@ class FastModeSession {
   }
 
   private snapshot() {
-    return this.policyError
-      ? { ...this.state.snapshot, error: this.policyError }
-      : this.state.snapshot;
+    return this.policyError ? { error: this.policyError } : this.state.snapshot;
   }
 
   private render(): void {
     if (!this.active || !this.ctx.hasUI) return;
     try {
-      const status = formatFastStatus(
+      const status = formatFastFooterStatus(
         this.snapshot(),
         this.capabilities.resolve(this.ctx.model, this.uiAuth),
       );
       if (status === this.renderedStatus) return;
-      // Clearing our TUI status also requests a render in Pi, so external toggles
-      // redraw the inline glyph without creating a separate status row. RPC keeps text.
-      this.ctx.ui.setStatus(FAST_MODE_STATUS_KEY, this.ctx.mode === "tui" ? undefined : status);
+      setFooterStatus(this.ctx, FAST_MODE_STATUS_KEY, status);
       this.renderedStatus = status;
     } catch {
       /* UI teardown can race a background discovery/state refresh. */
@@ -201,17 +192,6 @@ class FastModeSession {
 
   async start(): Promise<void> {
     try {
-      if (this.ctx.mode === "tui") {
-        this.removeFooterPrefix = installFastModeFooterPrefix(this.ctx.sessionManager, (model) => {
-          const state = this.snapshot();
-          return (
-            this.active &&
-            state.enabled === true &&
-            !state.error &&
-            this.capabilities.resolve(model, this.uiAuth).status === "supported"
-          );
-        });
-      }
       this.removePolicy = installFastModeProviderLookup(
         this.ctx.modelRegistry,
         () => this.state.refresh(),
@@ -294,11 +274,10 @@ class FastModeSession {
     this.lifetime.abort();
     this.discoveryGeneration++;
     this.state.close();
-    this.removeFooterPrefix?.();
     this.removePolicy?.();
     this.capabilities.clear();
     this.uiAuth = undefined;
-    if (this.ctx.hasUI) this.ctx.ui.setStatus(FAST_MODE_STATUS_KEY, undefined);
+    setFooterStatus(this.ctx, FAST_MODE_STATUS_KEY, undefined);
   }
 }
 

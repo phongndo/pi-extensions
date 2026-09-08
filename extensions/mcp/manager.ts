@@ -1,5 +1,4 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
 import {
   defaultMcpConfigPaths,
   loadMcpConfig,
@@ -10,6 +9,7 @@ import {
 } from "./config.ts";
 import { connectMcpServer, mcpPromptSnippet, type ConnectedMcpServer } from "./connect.ts";
 import { limitMcpOutput } from "./output.ts";
+import { renderMcpCall, renderMcpResult } from "./render.ts";
 
 export interface McpToolSummary {
   name: string;
@@ -267,9 +267,11 @@ export class McpManager {
             },
           };
         },
-        renderCall: (_args, theme) =>
-          new Text(theme.fg("toolTitle", theme.bold(`${serverName} ${tool.name}`)), 0, 0),
-        // Pi supplies the native collapsed/expanded result renderer and image display.
+        renderCall: (args, theme, context) =>
+          renderMcpCall(serverName, tool.name, args, theme, context.expanded),
+        renderResult: (result, options, theme, context) =>
+          renderMcpResult(result, options, theme, context.isError),
+        // Keep Pi's default tool shell and native image display.
       });
     }
     this.lastTools.set(

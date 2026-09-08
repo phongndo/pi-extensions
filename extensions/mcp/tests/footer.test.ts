@@ -11,69 +11,28 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { formatMcpCount, installMcpStatus } from "../footer.ts";
 import type { McpManager, McpServerStatus } from "../manager.ts";
 
-// Exercise the real sibling extension without typechecking its entire workspace
-// under MCP's different exactOptionalPropertyTypes setting.
-const { installFastModeFooterPrefix } = (await import(
-  new URL("../../fast-mode/footer.ts", import.meta.url).href
-)) as {
-  installFastModeFooterPrefix(
-    owner: ExtensionContext["sessionManager"],
-    readEnabled: () => boolean,
-  ): () => void;
-};
-
-test("MCP count means connected / configured, including disabled and failed servers in total", () => {
-  assert.equal(formatMcpCount([]), undefined);
-  assert.equal(
-    formatMcpCount([
-      { enabled: true, status: "connected" },
-      { enabled: true, status: "connecting" },
-      { enabled: true, status: "failed" },
-      { enabled: false, status: "disconnected" },
-    ]),
-    "mcp (1/4)",
-  );
-  assert.equal(formatMcpCount([{ enabled: false, status: "connected" }]), "mcp (0/1)");
-});
-
 function fixture(mode: ExtensionContext["mode"] = "tui") {
-  const model = {
-    id: "gpt-6-astra",
-    provider: "openai-codex",
-    api: "openai-codex-responses",
-    reasoning: true,
-    contextWindow: 272000,
-  } as NonNullable<ExtensionContext["model"]>;
-  const owner = SessionManager.inMemory("/tmp/project");
-  const statuses = new Map<string, string>([["other", "other extension"]]);
-  let renders = 0;
+  const statuses = new Map<string, string>([
+    ["other", "other extension"],
+    ["fast-mode", "fast"],
+  ]);
+  const listeners = new Set<() => void>();
+  let updates = 0;
+  let servers = [{ enabled: true, status: "connected" }] as McpServerStatus[];
   const ctx = {
     mode,
     hasUI: mode === "tui" || mode === "rpc",
-    sessionManager: owner,
-    model,
     ui: {
-      setStatus(key: string, text?: string) {
-        renders++;
-        if (text === undefined) statuses.delete(key);
-        else statuses.set(key, text);
+      setStatus(key: string, value?: string) {
+        updates++;
+        if (value === undefined) statuses.delete(key);
+        else statuses.set(key, value);
       },
       setFooter() {
-        throw new Error("Do not replace custom footers");
+        throw new Error("Must not replace custom footers");
       },
     },
   } as unknown as ExtensionContext;
-  let servers = [
-    {
-      name: "executor",
-      enabled: true,
-      status: "connected",
-      tools: [],
-      source: "fixture",
-      type: "http",
-    },
-  ] as McpServerStatus[];
-  const listeners = new Set<() => void>();
   const manager = {
     snapshot: () => servers,
     subscribe(listener: () => void) {
@@ -83,137 +42,110 @@ function fixture(mode: ExtensionContext["mode"] = "tui") {
       };
     },
   } as unknown as McpManager;
-  const makeFooter = (sessionManager = owner) =>
-    new FooterComponent(
-      {
-        state: { model, thinkingLevel: "xhigh" },
-        sessionManager,
-        getContextUsage: () => undefined,
-        modelRuntime: { isUsingSubscription: () => true },
-      } as unknown as ConstructorParameters<typeof FooterComponent>[0],
-      {
-        getGitBranch: () => "main",
-        getAvailableProviderCount: () => 2,
-        getExtensionStatuses: () => statuses,
-      } as unknown as ConstructorParameters<typeof FooterComponent>[1],
-    );
   return {
     ctx,
     manager,
     statuses,
-    makeFooter,
     listeners,
-    get renders() {
-      return renders;
+    get updates() {
+      return updates;
     },
-    disconnect() {
-      servers[0]!.status = "disconnected";
-      for (const listener of listeners) listener();
-    },
-    clear() {
-      servers = [];
+    change(status?: "connected" | "disconnected") {
+      servers = status ? ([{ enabled: true, status }] as McpServerStatus[]) : [];
       for (const listener of listeners) listener();
     },
   };
 }
 
-for (const mcpFirst of [false, true]) {
-  for (const removeMcpFirst of [false, true]) {
-    test(`inline MCP composes with Fast mode (load MCP first: ${mcpFirst}, remove MCP first: ${removeMcpFirst})`, () => {
-      initTheme("dark", false);
-      const app = fixture();
-      const original = FooterComponent.prototype.render;
-      const remove = new Map<string, () => void>();
-      const installMcp = () => remove.set("mcp", installMcpStatus(app.ctx, app.manager));
-      const installFast = () =>
-        remove.set(
-          "fast",
-          installFastModeFooterPrefix(app.ctx.sessionManager, () => true),
-        );
-      const footer = app.makeFooter();
-      if (mcpFirst) {
-        installMcp();
-        installFast();
-      } else {
-        installFast();
-        installMcp();
-      }
-      try {
-        for (const theme of ["dark", "light"]) {
-          initTheme(theme, false);
-          for (const width of [16, 40, 60, 100, 160]) {
-            const lines = footer.render(width);
-            const modelLine = stripVTControlCharacters(lines[1]!);
-            assert.equal(
-              lines.length,
-              3,
-              "preserve the existing other-extension row; add no new row",
-            );
-            if (width >= 100) {
-              assert.match(modelLine, /\(auto\) mcp \(1\/1\) +\(openai-codex\) ϟ gpt-6-astra/);
-              assert.equal(modelLine.match(/mcp \(/g)?.length, 1);
-            }
-            assert.ok(lines.every((line) => visibleWidth(line) <= width));
-          }
-        }
-        assert.doesNotMatch(app.makeFooter(SessionManager.inMemory()).render(160)[1]!, /mcp \(|ϟ/);
-        const before = app.renders;
-        app.disconnect();
-        assert.ok(app.renders > before, "state changes request a redraw while idle");
-        assert.match(footer.render(160)[1]!, /mcp \(0\/1\)/);
-        assert.equal(app.statuses.has("mcp"), false);
-        remove.get(removeMcpFirst ? "mcp" : "fast")!();
-        const remaining = stripVTControlCharacters(footer.render(160)[1]!);
-        if (removeMcpFirst) {
-          assert.doesNotMatch(remaining, /mcp \(/);
-          assert.match(remaining, /ϟ gpt/);
-        } else {
-          assert.match(remaining, /mcp \(0\/1\)/);
-          assert.doesNotMatch(remaining, /ϟ/);
-        }
-      } finally {
-        for (const cleanup of remove.values()) cleanup();
-      }
-      assert.equal(FooterComponent.prototype.render, original);
-      assert.equal(app.listeners.size, 0);
-      assert.deepEqual([...app.statuses], [["other", "other extension"]]);
-      const before = app.renders;
-      app.clear();
-      assert.equal(app.renders, before, "disposed subscribers cannot revive status");
-    });
-  }
-}
-
-test("a failed UI installation leaves no footer decorator or subscription behind", () => {
-  const app = fixture();
-  const original = FooterComponent.prototype.render;
-  app.ctx.ui.setStatus = () => {
-    throw new Error("UI unavailable");
-  };
-  assert.throws(() => installMcpStatus(app.ctx, app.manager), /UI unavailable/);
-  assert.equal(app.listeners.size, 0);
-  assert.equal(FooterComponent.prototype.render, original);
+test("MCP label counts connected / configured, including disabled and failed servers", () => {
+  assert.equal(formatMcpCount([]), undefined);
+  assert.equal(
+    formatMcpCount([
+      { enabled: true, status: "connected" },
+      { enabled: true, status: "failed" },
+      { enabled: false, status: "disconnected" },
+    ]),
+    "mcp 1/3",
+  );
+  assert.equal(formatMcpCount([{ enabled: false, status: "connected" }]), "mcp 0/1");
 });
 
-test("RPC gets a native status and headless modes do not install UI or listeners", () => {
-  for (const mode of ["rpc", "print", "json"] as const) {
+for (const mode of ["tui", "rpc", "print", "json"] as const)
+  test(`${mode}: native status updates and cleanup preserve other extensions`, () => {
     const app = fixture(mode);
     const original = FooterComponent.prototype.render;
     const remove = installMcpStatus(app.ctx, app.manager);
     try {
-      if (mode === "rpc") {
-        assert.equal(app.statuses.get("mcp"), "mcp (1/1)");
-        app.disconnect();
-        assert.equal(app.statuses.get("mcp"), "mcp (0/1)");
-        app.clear();
+      if (app.ctx.hasUI) {
+        assert.equal(app.statuses.get("mcp"), "mcp 1/1");
+        const before = app.updates;
+        app.change("connected");
+        assert.equal(app.updates, before, "unchanged labels do not redraw");
+        app.change("disconnected");
+        assert.equal(app.statuses.get("mcp"), "mcp 0/1");
+        app.change();
         assert.equal(app.statuses.has("mcp"), false);
       } else {
-        assert.equal(app.renders, 0);
+        assert.equal(app.updates, 0);
         assert.equal(app.listeners.size, 0);
       }
       assert.equal(FooterComponent.prototype.render, original);
     } finally {
       remove();
+      remove();
     }
+    assert.deepEqual(
+      [...app.statuses],
+      [
+        ["other", "other extension"],
+        ["fast-mode", "fast"],
+      ],
+    );
+    assert.equal(app.listeners.size, 0);
+    const before = app.updates;
+    app.change("connected");
+    assert.equal(app.updates, before);
+  });
+
+test("Pi's footer API composes both minimal labels without touching the model line", () => {
+  const app = fixture();
+  const remove = installMcpStatus(app.ctx, app.manager);
+  try {
+    const footer = new FooterComponent(
+      {
+        state: {
+          model: { id: "test-model", provider: "test", contextWindow: 100000 },
+          thinkingLevel: "off",
+        },
+        sessionManager: SessionManager.inMemory(),
+        getContextUsage: () => undefined,
+        modelRuntime: { isUsingSubscription: () => false },
+      } as unknown as ConstructorParameters<typeof FooterComponent>[0],
+      {
+        getGitBranch: () => null,
+        getAvailableProviderCount: () => 1,
+        getExtensionStatuses: () => app.statuses,
+      } as unknown as ConstructorParameters<typeof FooterComponent>[1],
+    );
+    for (const theme of ["dark", "light"]) {
+      initTheme(theme, false);
+      for (const width of [16, 40, 80, 160]) {
+        const lines = footer.render(width);
+        assert.doesNotMatch(stripVTControlCharacters(lines[1]!), /mcp|fast/);
+        if (width >= 80) assert.match(stripVTControlCharacters(lines[2]!), /fast.*mcp 1\/1/);
+        assert.ok(lines.every((line) => visibleWidth(line) <= width));
+      }
+    }
+  } finally {
+    remove();
   }
+});
+
+test("failed UI setup removes its subscription", () => {
+  const app = fixture();
+  app.ctx.ui.setStatus = () => {
+    throw new Error("UI unavailable");
+  };
+  assert.throws(() => installMcpStatus(app.ctx, app.manager), /UI unavailable/);
+  assert.equal(app.listeners.size, 0);
 });

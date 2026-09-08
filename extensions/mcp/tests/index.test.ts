@@ -26,7 +26,7 @@ test("registers a single /mcp command", () => {
   assert.equal(commands.get("mcp")?.description, "Enable or disable MCP servers");
 });
 
-test("session lifecycle and native /mcp menu update the inline count without extra status rows", async (t) => {
+test("session lifecycle and /mcp menu update the native footer status", async (t) => {
   initTheme("dark", false);
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-ui-"));
   const paths = {
@@ -127,10 +127,10 @@ test("session lifecycle and native /mcp menu update the inline count without ext
         try {
           assert.match(component.render(100).join("\n"), /connected/);
           component.handleInput?.("\r");
-          for (let i = 0; i < 100 && !footer.render(160)[1]!.includes("mcp (0/2)"); i++) {
+          for (let i = 0; i < 100 && statuses.get("mcp") !== "mcp 0/2"; i++) {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
-          assert.match(footer.render(160)[1]!, /mcp \(0\/2\)/);
+          assert.match(footer.render(160)[2]!, /mcp 0\/2/);
           assert.match(component.render(100).join("\n"), /disconnected/);
         } finally {
           component.dispose?.();
@@ -145,8 +145,9 @@ test("session lifecycle and native /mcp menu update the inline count without ext
   });
   await handlers.get("session_start")!({}, ctx);
   assert.equal(connections, 1);
-  assert.match(footer.render(160)[1]!, /mcp \(1\/2\)/);
-  assert.equal(footer.render(160).length, 2);
+  assert.match(footer.render(160)[2]!, /mcp 1\/2/);
+  assert.equal(footer.render(160).length, 3);
+  assert.equal(FooterComponent.prototype.render, original);
   await command.handler("", ctx);
   assert.deepEqual(active, ["read"]);
   assert.equal(
@@ -159,5 +160,5 @@ test("session lifecycle and native /mcp menu update the inline count without ext
   assert.equal(FooterComponent.prototype.render, original);
   await handlers.get("session_start")!({}, ctx);
   assert.equal(connections, 1, "disabled overlay persists across reload");
-  assert.match(footer.render(160)[1]!, /mcp \(0\/2\)/);
+  assert.match(footer.render(160)[2]!, /mcp 0\/2/);
 });

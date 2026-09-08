@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -184,6 +184,30 @@ test("writes only the disabled flag into the Pi overlay", async () => {
   assert.deepEqual(overlay.mcpServers.executor, { disabled: true });
   assert.equal("url" in overlay.mcpServers.executor, false);
   assert.equal("headers" in overlay.mcpServers.executor, false);
+});
+
+test("toggling refuses malformed overlays without overwriting them", async () => {
+  const paths = await fixturePaths();
+  for (const raw of [
+    "null",
+    "[]",
+    "42",
+    '{"mcpServers": []}',
+    '{"mcpServers": {"executor": 42}}',
+  ]) {
+    await writeFile(paths.agentOverlay, raw);
+    await assert.rejects(setServerDisabled(paths.agentOverlay, "executor", true));
+    assert.equal(await readFile(paths.agentOverlay, "utf8"), raw);
+  }
+});
+
+test("overlay writes never follow a pre-existing predictable temporary symlink", async () => {
+  const paths = await fixturePaths();
+  const victim = join(paths.root, "unrelated.txt");
+  await writeFile(victim, "untouched");
+  await symlink(victim, `${paths.agentOverlay}.${process.pid}.tmp`);
+  await setServerDisabled(paths.agentOverlay, "executor", true);
+  assert.equal(await readFile(victim, "utf8"), "untouched");
 });
 
 test("simultaneous toggles of different servers preserve every overlay change", async () => {

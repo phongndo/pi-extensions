@@ -1,6 +1,6 @@
 # Pi Fast Mode
 
-A global Codex Fast-mode preference with the original **`ϟ` immediately before the model name**, capability discovery, and private request diagnostics. Requires Pi **0.85.1 or newer**; tested against 0.85.1.
+A global Codex Fast-mode preference with a minimal native footer status, capability discovery, and private request diagnostics. Requires Pi **0.85.1 or newer**; tested against 0.85.1.
 
 Fast mode requests `service_tier: "priority"` for eligible `openai-codex` / `openai-codex-responses` calls. It **does not lower reasoning, change models, or promise a speedup**. The preference is global across Pi processes sharing the same agent directory and defaults to off.
 
@@ -21,19 +21,13 @@ Normal commands reply only **`Fast mode on`** or **`Fast mode off`**. Startup is
 
 After installing/updating, run **`/reload`**, then `/fast status`.
 
-## Inline model indicator
+## Native footer status
 
-When Fast mode is on and the current model is eligible, Pi's built-in footer shows:
+Uses Pi's public `ctx.ui.setStatus` API: **`speed fast`** when enabled and supported; hidden when off. Uncertain support/state shows `speed ?`, unsupported models show `speed unavailable`, and state/policy failures show `speed !`.
 
-```text
-ϟ gpt-6-astra • xhigh
-```
+Pi lays this out alongside other extension statuses. No model-line decoration, prototype patch, or custom-footer replacement. Status updates while idle and clears on shutdown/reload. RPC receives the same minimal labels; headless modes publish no UI.
 
-This is the original text glyph `ϟ`, not a lightning emoji. It sits immediately before the model ID, with **no separate Fast-mode TUI status row**. The decorator reuses existing padding so the line width stays unchanged. The glyph is hidden when off, unsupported, unknown, or errored; it is also omitted if the model name is truncated away.
-
-Custom footers are not modified or replaced. `/fast details` provides the full state even when a custom footer or narrow terminal hides the indicator. The decorator is session-scoped and removed on shutdown/reload. It shares [`src/footer-decorator.ts`](../../src/footer-decorator.ts) with MCP so both inline indicators compose without stacking independent footer patches.
-
-### Detailed status (`/fast details` and RPC)
+### Detailed status (`/fast details`)
 
 | Status                                 | Meaning                                                |
 | -------------------------------------- | ------------------------------------------------------ |
@@ -43,8 +37,6 @@ Custom footers are not modified or replaced. `/fast details` provides the full s
 | `fast on · support unknown`            | No usable capability metadata or documented fallback   |
 | `fast unknown`                         | State has not been read yet                            |
 | `fast error`                           | State/policy is unavailable; inspect `/fast details`   |
-
-RPC retains plain-text status through Pi's `setStatus` API. In TUI mode that API is used only to request a redraw when state changes; it never adds a separate row or removes another extension's status.
 
 **On is a preference, not proof of backend admission.** Changing it affects subsequent requests, not one already sent. Off leaves another caller's explicit `service_tier` unchanged; it is not a guarantee that the provider uses Standard routing.
 

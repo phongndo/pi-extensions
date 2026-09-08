@@ -193,6 +193,9 @@ test("validates map inputs and public URLs", () => {
   for (const value of [
     "file:///tmp/private",
     "http://localhost:3000",
+    "http://localhost.:3000",
+    "http://service.localhost./",
+    "http://service.local./",
     "http://127.0.0.1",
     "http://192.168.1.2",
     "http://[::ffff:127.0.0.1]",
@@ -203,6 +206,30 @@ test("validates map inputs and public URLs", () => {
   ]) {
     assert.throws(() => validatePublicUrl(value));
   }
+});
+
+test("oversized Firecrawl response bodies are cancelled before parsing", async () => {
+  let chunks = 0;
+  let cancelled = false;
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          chunks++;
+          if (chunks > 32) controller.close();
+          else controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+  await assert.rejects(
+    firecrawlRequest("/scrape", {}, undefined, "test-key"),
+    /response exceeds/,
+  );
+  assert.equal(cancelled, true);
+  assert.ok(chunks < 32);
 });
 
 test("builds bounded crawl starts and validates opaque continuations", () => {
@@ -646,15 +673,16 @@ test("classifies cancellation while reading a response body", async () => {
   process.env.FIRECRAWL_API_KEY = "fc-test-key";
   const controller = new AbortController();
   globalThis.fetch = async () =>
-    ({
-      ok: true,
-      status: 200,
-      statusText: "OK",
-      async text() {
-        controller.abort();
-        throw new DOMException("The operation was aborted.", "AbortError");
-      },
-    }) as unknown as Response;
+    new Response(
+      new ReadableStream<Uint8Array>({
+        pull(stream) {
+          controller.abort();
+          stream.error(
+            new DOMException("The operation was aborted.", "AbortError"),
+          );
+        },
+      }),
+    );
 
   await assert.rejects(
     firecrawlRequest(

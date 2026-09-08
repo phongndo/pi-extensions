@@ -100,6 +100,28 @@ test("late reads cannot overwrite newer state and shutdown prevents late UI writ
   assert.equal(renders, 1);
 });
 
+test("slow polling reads do not overlap or starve snapshot publication", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const pending: Array<(value: boolean) => void> = [];
+  const monitor = new FastStateMonitor(
+    () => {},
+    "/not-existing-test-directory/state",
+    () => new Promise((resolve) => pending.push(resolve)),
+  );
+  t.after(() => monitor.close());
+  monitor.start(10);
+  t.mock.timers.tick(30);
+  assert.equal(pending.length, 1, "poll ticks must share the outstanding background read");
+  pending[0]!(true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(monitor.snapshot.enabled, true);
+  t.mock.timers.tick(10);
+  assert.equal(pending.length, 2, "polling resumes after completion");
+  pending[1]!(false);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(monitor.snapshot.enabled, false);
+});
+
 test("status reads do not create state or lock directories", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "fast-read-only-"));
   const path = join(root, "missing", "fast-mode.json");
