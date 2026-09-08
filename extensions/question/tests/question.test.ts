@@ -278,6 +278,85 @@ test("matches Codex's layered option-and-notes flow", () => {
   assert.deepEqual(noteOnlyResult, { note_only: ["user_note: Only the note"] });
 });
 
+test("editing a submitted answer requires reconfirmation before finishing", () => {
+  let result: DialogAnswers | undefined;
+  const dialog = new QuestionDialog(
+    { terminal: { rows: 40 }, requestRender() {} } as any,
+    { matches: (data: string) => data === "\u001b" } as any,
+    { fg: (_role: string, text: string) => text, bold: (text: string) => text } as any,
+    [
+      { id: "first", question: "First?", options: [], multiple: false },
+      { id: "second", question: "Second?", options: [], multiple: false },
+    ],
+    undefined,
+    () => {},
+    (answers) => {
+      result = answers;
+    },
+  );
+  try {
+    for (const key of ["o", "l", "d", "\r", "\u0010", "N", "E", "W", "\u000e", "o", "k", "\r"])
+      dialog.handleInput(key);
+    assert.equal(result, undefined, "must not submit the obsolete first answer");
+    assert.match(dialog.render(80).join("\n"), /Question 1\/2/);
+    dialog.handleInput("\r");
+    dialog.handleInput("\r");
+    assert.deepEqual(result, { first: ["oldNEW"], second: ["ok"] });
+  } finally {
+    dialog.dispose();
+  }
+});
+
+test("choice-note drafts retain editor focus and require reconfirmation across navigation", () => {
+  for (const multiple of [false, true]) {
+    let result: DialogAnswers | undefined;
+    const dialog = new QuestionDialog(
+      { terminal: { rows: 40 }, requestRender() {} } as any,
+      { matches: (data: string) => data === "\u001b" } as any,
+      { fg: (_role: string, text: string) => text, bold: (text: string) => text } as any,
+      [
+        {
+          id: "first",
+          question: "First?",
+          options: [{ label: "Alpha" }, { label: "Beta" }],
+          multiple,
+        },
+        { id: "second", question: "Second?", options: [], multiple: false },
+      ],
+      undefined,
+      () => {},
+      (answers) => {
+        result = answers;
+      },
+    );
+    try {
+      for (const key of [
+        "\t",
+        "o",
+        "l",
+        "d",
+        "\r",
+        "\u0010",
+        "N",
+        "E",
+        "W",
+        "\u000e",
+        "o",
+        "k",
+        "\r",
+      ])
+        dialog.handleInput(key);
+      assert.equal(result, undefined);
+      assert.match(dialog.render(80).join("\n"), /Your note/);
+      dialog.handleInput("\r");
+      dialog.handleInput("\r");
+      assert.deepEqual(result, { first: ["Alpha", "user_note: oldNEW"], second: ["ok"] });
+    } finally {
+      dialog.dispose();
+    }
+  }
+});
+
 test("returns only the selected labels keyed by question id", async () => {
   const { tool } = createHarness();
   const titles: string[] = [];

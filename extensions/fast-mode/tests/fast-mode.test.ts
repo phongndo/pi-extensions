@@ -40,6 +40,21 @@ function model(id: string, provider = "openai-codex", api: Api = "openai-codex-r
   } satisfies Model<Api>;
 }
 
+test("incompatible private runtime fails before modifying registry methods", () => {
+  const getProvider = () => undefined;
+  const registry = {
+    runtime: { stream() {}, streamSimple() {} },
+    getProvider,
+    getRegisteredNativeProvider: getProvider,
+  };
+  assert.throws(
+    () => installFastModeProviderLookup(registry as unknown as ModelRegistry, async () => true),
+    /0\.85\.1-compatible/,
+  );
+  assert.equal(registry.getProvider, getProvider);
+  assert.equal(registry.getRegisteredNativeProvider, getProvider);
+});
+
 test("recognizes only supported Codex Fast models", () => {
   for (const id of [
     "gpt-5.4",
@@ -320,6 +335,47 @@ test("shared runtime wrappers support out-of-order session teardown", async () =
   removeSecond();
   assert.equal(runtime.stream, originalRuntimeStream);
   assert.equal(provider.stream, originalProviderStream);
+});
+
+test("shared registry installations survive either teardown order and restore lookups", async () => {
+  for (const firstRemoved of [0, 1]) {
+    const runtime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: null,
+      modelsStore: new InMemoryModelsStore(),
+      allowModelNetwork: false,
+    });
+    const registry = new ModelRegistry(runtime);
+    const originalGet = registry.getProvider;
+    const originalNative = registry.getRegisteredNativeProvider;
+    const provider = runtime.getProvider("openai-codex")!;
+    let captured: StreamOptions | undefined;
+    provider.streamSimple = (_model, _context, options) => {
+      captured = options;
+      throw new Error("captured");
+    };
+    const removers = [
+      installFastModeProviderLookup(registry, async () => true),
+      installFastModeProviderLookup(registry, async () => true),
+    ];
+    try {
+      removers[firstRemoved]!();
+      assert.throws(
+        () =>
+          registry.getProvider("openai-codex")!.streamSimple(model("gpt-5.5"), { messages: [] }),
+        /captured/,
+      );
+      assert.ok(captured?.onPayload);
+      assert.deepEqual(await captured.onPayload({ model: "gpt-5.5" }, model("gpt-5.5")), {
+        model: "gpt-5.5",
+        service_tier: "priority",
+      });
+    } finally {
+      for (const remove of removers) remove();
+    }
+    assert.equal(registry.getProvider, originalGet);
+    assert.equal(registry.getRegisteredNativeProvider, originalNative);
+  }
 });
 
 test("a retained outer runtime wrapper stays safe after Fast teardown", async () => {

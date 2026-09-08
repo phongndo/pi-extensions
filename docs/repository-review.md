@@ -32,7 +32,7 @@ Reviewed production modules in `src/` and all five extensions: Context, Fast Mod
 
 The installed-host smoke test confirms that Pi 0.85.1 loads all six packaged extension entry points, discovers all 17 skills once, and expands all five aliases identically to native skill commands. Wizard regressions execute only the helper library: no browser, secrets, or provisioning stages run.
 
-## Verification
+## Verification (original review snapshot)
 
 - `node --test extensions/*/tests/*.test.ts tests/skills.test.mjs`: **173 passed, 1 intentionally skipped live test**.
 - `node tests/pi-skills-smoke.mjs`: **passed**, installed Pi 0.85.1.
@@ -45,7 +45,7 @@ The installed-host smoke test confirms that Pi 0.85.1 loads all six packaged ext
 
 ## Remaining risks and validation limits
 
-- MCP's mutation queue serializes writes **within one process**, not across independent Pi processes or external editors. Atomic replacement prevents partial JSON, not cross-process lost updates. A cross-process locking policy remains follow-up work.
+- MCP now uses a cross-process lease plus atomic replacement; a six-process regression verifies concurrent updates. External editors and older extension versions that ignore the lock can still overwrite changes.
 - Invalid later MCP transport definitions retain the previous definition with a warning. This existing fallback policy was not changed to disable previously configured servers silently.
 - Context still scans branch metadata and must inspect history for sparse searches; deep pagination repeats earlier scans. Archive verification intentionally scales with persisted history. This is not an indexed or constant-time retrieval system.
 - `/commit` was inspected but does not have dedicated regression coverage for overlapping invocations, session changes, or manual model selection during restoration. The host smoke test validates loading, not every command's lifecycle.

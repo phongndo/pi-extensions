@@ -55,20 +55,14 @@ export interface ContextOptions {
   verify?: typeof verifySavedEntry;
 }
 
-interface PendingReset {
-  checkpointId: string;
-  compacted: boolean;
-}
+import { ResetController } from "./reset.ts";
 
 interface Runtime {
   ctx: ExtensionContext;
   enabled: boolean;
   error: string | undefined;
-  closed: boolean;
   revision: number;
-  pending: PendingReset | undefined;
-  resetting: boolean;
-  generation: number;
+  reset: ResetController;
   timer: ReturnType<typeof setInterval> | undefined;
 }
 
@@ -92,7 +86,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
   return (pi) => {
     let runtime: Runtime | undefined;
 
-    const active = (session: Runtime) => runtime === session && !session.closed;
+    const active = (session: Runtime) => runtime === session && !session.reset.closed;
     const notify = (
       ctx: ExtensionContext,
       value: string,
@@ -132,8 +126,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
     function close() {
       if (!runtime) return;
       setFooterStatus(runtime.ctx, "context", undefined);
-      runtime.closed = true;
-      runtime.pending = undefined;
+      runtime.reset.cancel(true);
       if (runtime.timer) clearInterval(runtime.timer);
       runtime = undefined;
     }
@@ -293,15 +286,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
               true,
             );
             if (problem) throw new Error(problem);
-            const pending = { checkpointId: entryId, compacted: false };
-            session.pending = pending;
-            signal?.addEventListener(
-              "abort",
-              () => {
-                if (session.pending === pending) session.pending = undefined;
-              },
-              { once: true },
-            );
+            session.reset.request(entryId, signal);
             return {
               content: [
                 {
@@ -387,11 +372,8 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
         ctx,
         enabled: true,
         error: undefined,
-        closed: false,
         revision: 0,
-        pending: undefined,
-        resetting: false,
-        generation: 0,
+        reset: new ResetController(),
         timer: undefined,
       };
       runtime = session;
@@ -413,8 +395,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
     pi.on("session_shutdown", close);
     pi.on("session_tree", (_event, ctx) => {
       if (runtime) {
-        runtime.generation++;
-        runtime.pending = undefined;
+        runtime.reset.cancel();
         runtime.ctx = ctx;
         render(runtime);
       }
@@ -550,25 +531,20 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
     });
     pi.on("session_compact", (event) => {
       const session = runtime;
-      if (!session?.pending) return;
+      const checkpointId = session?.reset.compacted();
+      if (!session || !checkpointId) return;
       const details = event.compactionEntry.details as
         | { context?: { checkpointId?: string } }
         | undefined;
-      // Any successful compaction suffices for continuation; stock fallback is also safe.
-      session.pending.compacted = true;
-      if (details?.context?.checkpointId === session.pending.checkpointId) render(session);
+      if (details?.context?.checkpointId === checkpointId) render(session);
     });
     pi.on("session_compact_failed", (event) => {
-      if (runtime && event.aborted) {
-        runtime.generation++;
-        runtime.pending = undefined;
-      }
+      if (runtime && event.aborted) runtime.reset.cancel();
     });
     pi.on("agent_settled", (_event, ctx) => {
       const session = runtime;
-      if (!session?.pending || session.resetting) return;
-      const pending = session.pending;
-      session.pending = undefined;
+      const pending = session?.reset.take();
+      if (!session || !pending) return;
       session.ctx = ctx;
       if (ctx.hasPendingMessages()) return;
       if (pending.compacted) {
@@ -594,26 +570,19 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
         // The agent already handled newer work; do not restart a completed/steered task.
         return;
       }
-      session.resetting = true;
+      const finish = session.reset.begin();
       const leaf = ctx.sessionManager.getLeafId();
-      const generation = session.generation;
       ctx.compact({
         onComplete: () => {
-          session.resetting = false;
-          if (session.generation !== generation) return;
+          if (!finish()) return;
           continueTask(
             session,
             "Continue the existing user task from the saved context. Use recall for missing evidence; do not repeat completed actions.",
           );
         },
         onError: (error) => {
-          session.resetting = false;
-          if (
-            !active(session) ||
-            session.generation !== generation ||
-            /abort|cancel/i.test(message(error))
-          )
-            return;
+          if (!finish()) return;
+          if (!active(session) || /abort|cancel/i.test(message(error))) return;
           notify(ctx, `Context reset failed: ${message(error)}`, "warning");
           if (ctx.sessionManager.getLeafId() === leaf)
             continueTask(

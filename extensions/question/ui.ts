@@ -18,15 +18,16 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 
+import { choiceAnswer, MAX_CUSTOM_ANSWER_LENGTH, OTHER_CHOICE } from "./answers.ts";
+export { OTHER_CHOICE } from "./answers.ts";
+
 const NUMBER_SHORTCUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 const MIN_OPTION_COLUMN_WIDTH = 32;
 const MAX_OPTION_COLUMN_WIDTH = 90;
 const MIN_SIDE_BY_SIDE_WIDTH = 96;
 const MIN_DETAIL_COLUMN_WIDTH = 36;
 const PANE_SEPARATOR = " │ ";
-export const OTHER_CHOICE = "None of the above";
 const OTHER_DESCRIPTION = "Optionally, add details in notes (tab).";
-const MAX_CUSTOM_ANSWER_LENGTH = 4_000;
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -46,13 +47,15 @@ export type DialogAnswers = Record<string, string[]>;
 
 interface QuestionState {
   editor: Editor;
+  focus: Focus;
   list?: NumberedSelectList;
   selectedIndex: number;
-  selectedLabels: Set<string>;
-  singleAnswer?: string;
+  selection:
+    | { kind: "text" }
+    | { kind: "single"; label?: string }
+    | { kind: "multiple"; labels: Set<string> };
   customAnswer?: string;
-  textAnswer?: string;
-  committed: boolean;
+  submission: { status: "draft" } | { status: "submitted"; values: [string, ...string[]] };
 }
 
 type Focus = "options" | "editor";
@@ -161,7 +164,6 @@ export class QuestionDialog extends Container implements Focusable {
   private readonly signal: AbortSignal | undefined;
   private readonly onAbort: () => void;
   private currentIndex = 0;
-  private focus: Focus;
   private settled = false;
   private _focused = false;
 
@@ -191,20 +193,28 @@ export class QuestionDialog extends Container implements Focusable {
     this.signal = signal;
     this.notify = notify;
     this.done = done;
-    this.focus = questions[0]?.options.length ? "options" : "editor";
-
     const editorTheme: EditorTheme = {
       borderColor: (text) => theme.fg("accent", text),
       selectList: selectTheme(theme),
     };
-    this.states = questions.map((_question, index) => {
+    this.states = questions.map((question, index) => {
       const editor = new Editor(tui, editorTheme, { paddingX: 1 });
       editor.onSubmit = (value) => this.submitEditor(index, value);
+      editor.onChange = () => {
+        const state = this.states[index];
+        if (state) state.submission = { status: "draft" };
+      };
       return {
         editor,
+        focus: question.options.length ? "options" : "editor",
         selectedIndex: 0,
-        selectedLabels: new Set<string>(),
-        committed: false,
+        selection:
+          question.options.length === 0
+            ? { kind: "text" }
+            : question.multiple
+              ? { kind: "multiple", labels: new Set<string>() }
+              : { kind: "single" },
+        submission: { status: "draft" },
       };
     });
     for (const index of this.questions.keys()) this.rebuildList(index);
@@ -212,6 +222,14 @@ export class QuestionDialog extends Container implements Focusable {
     this.onAbort = () => this.finish(undefined);
     signal?.addEventListener("abort", this.onAbort, { once: true });
     this.syncEditorFocus();
+  }
+
+  private get focus(): Focus {
+    return this.currentState().focus;
+  }
+
+  private set focus(value: Focus) {
+    this.currentState().focus = value;
   }
 
   private currentQuestion(): DialogQuestion {
@@ -231,11 +249,7 @@ export class QuestionDialog extends Container implements Focusable {
   }
 
   private isAnswered(index: number): boolean {
-    const question = this.questions[index]!;
-    const state = this.states[index]!;
-    if (!state.committed) return false;
-    if (question.options.length === 0) return Boolean(state.textAnswer);
-    return question.multiple ? state.selectedLabels.size > 0 : Boolean(state.singleAnswer);
+    return this.states[index]!.submission.status === "submitted";
   }
 
   private unansweredCount(): number {
@@ -249,17 +263,19 @@ export class QuestionDialog extends Container implements Focusable {
     const question = this.questions[index]!;
     const state = this.states[index]!;
     const choices = question.options.map((option) => {
-      const selected = question.multiple
-        ? state.selectedLabels.has(option.label)
-        : state.singleAnswer === option.label;
+      const selected =
+        state.selection.kind === "multiple"
+          ? state.selection.labels.has(option.label)
+          : state.selection.kind === "single" && state.selection.label === option.label;
       return {
         label: `${option.label}${selected ? "  ✓" : ""}`,
         ...(option.description ? { description: option.description } : {}),
       };
     });
-    const otherSelected = question.multiple
-      ? state.selectedLabels.has(OTHER_CHOICE)
-      : state.singleAnswer === OTHER_CHOICE;
+    const otherSelected =
+      state.selection.kind === "multiple"
+        ? state.selection.labels.has(OTHER_CHOICE)
+        : state.selection.kind === "single" && state.selection.label === OTHER_CHOICE;
     choices.push({
       label: `${OTHER_CHOICE}${otherSelected ? "  ✓" : ""}`,
       description: OTHER_DESCRIPTION,
@@ -288,38 +304,36 @@ export class QuestionDialog extends Container implements Focusable {
   }
 
   private markChoice(index: number, selectedIndex: number): boolean {
-    const question = this.questions[index]!;
     const state = this.states[index]!;
     const label = this.optionLabel(index, selectedIndex);
     if (!label) return false;
 
     state.selectedIndex = selectedIndex;
-    if (question.multiple) {
+    if (state.selection.kind === "multiple") {
+      const labels = state.selection.labels;
       if (label === OTHER_CHOICE) {
-        state.selectedLabels.clear();
-        state.selectedLabels.add(label);
+        labels.clear();
+        labels.add(label);
       } else {
-        state.selectedLabels.delete(OTHER_CHOICE);
-        if (state.selectedLabels.has(label)) state.selectedLabels.delete(label);
-        else state.selectedLabels.add(label);
+        labels.delete(OTHER_CHOICE);
+        if (labels.has(label)) labels.delete(label);
+        else labels.add(label);
       }
-    } else {
-      state.singleAnswer = label;
-    }
-    state.committed = false;
+    } else if (state.selection.kind === "single") {
+      state.selection.label = label;
+    } else return false;
+    state.submission = { status: "draft" };
     this.rebuildList(index);
     return true;
   }
 
   private selectChoice(index: number, selectedIndex: number): void {
     if (index !== this.currentIndex || !this.markChoice(index, selectedIndex)) return;
-    const question = this.questions[index]!;
-    const state = this.states[index]!;
-    if (question.multiple) {
+    if (this.states[index]!.selection.kind === "multiple") {
       this.requestRender();
       return;
     }
-    state.committed = true;
+    this.commitChoice(index);
     this.advanceOrFinish();
   }
 
@@ -328,7 +342,7 @@ export class QuestionDialog extends Container implements Focusable {
     const state = this.currentState();
     if (question.options.length === 0) return;
 
-    if (!question.multiple || state.selectedLabels.size === 0) {
+    if (state.selection.kind !== "multiple" || state.selection.labels.size === 0) {
       this.markChoice(this.currentIndex, state.selectedIndex);
     }
     this.focus = "editor";
@@ -341,7 +355,7 @@ export class QuestionDialog extends Container implements Focusable {
     const state = this.currentState();
     state.editor.setText("");
     delete state.customAnswer;
-    state.committed = false;
+    state.submission = { status: "draft" };
     this.focus = "options";
     this.rebuildList(this.currentIndex);
     this.syncEditorFocus();
@@ -356,40 +370,52 @@ export class QuestionDialog extends Container implements Focusable {
       return;
     }
 
-    const question = this.questions[index]!;
     const state = this.states[index]!;
-    if (question.options.length === 0) {
+    if (state.selection.kind === "text") {
       if (!answer) {
         this.notify("Enter an answer or press Escape to cancel.");
         return;
       }
-      state.textAnswer = answer;
       state.editor.setText(answer);
-      state.committed = true;
+      state.submission = { status: "submitted", values: [answer] };
       this.advanceOrFinish();
       return;
     }
 
-    if (question.multiple && state.selectedLabels.size === 0) {
+    if (state.selection.kind === "multiple" && state.selection.labels.size === 0) {
       this.markChoice(index, state.selectedIndex);
-    } else if (!question.multiple && !state.singleAnswer) {
+    } else if (state.selection.kind === "single" && !state.selection.label) {
       this.markChoice(index, state.selectedIndex);
     }
     if (answer) state.customAnswer = answer;
     else delete state.customAnswer;
-    state.committed = true;
+    // Native Editor clears its buffer on submit; retain the confirmed note for revisiting.
+    state.editor.setText(answer);
+    this.commitChoice(index);
     this.advanceOrFinish();
   }
 
   private submitMultipleChoice(): void {
     const state = this.currentState();
-    if (state.selectedLabels.size === 0) this.markChoice(this.currentIndex, state.selectedIndex);
-    if (state.selectedLabels.size === 0) {
-      this.notify("Select at least one answer before submitting.");
-      return;
-    }
-    state.committed = true;
+    if (state.selection.kind !== "multiple") return;
+    if (state.selection.labels.size === 0) this.markChoice(this.currentIndex, state.selectedIndex);
+    this.commitChoice(this.currentIndex);
     this.advanceOrFinish();
+  }
+
+  private commitChoice(index: number): void {
+    const state = this.states[index]!;
+    const selection = state.selection;
+    const selected =
+      selection.kind === "multiple"
+        ? selection.labels
+        : new Set(selection.kind === "single" && selection.label ? [selection.label] : []);
+    const values = choiceAnswer(
+      this.questions[index]!.options,
+      selected,
+      state.customAnswer ? { kind: "note", text: state.customAnswer } : undefined,
+    );
+    state.submission = values ? { status: "submitted", values } : { status: "draft" };
   }
 
   private advanceOrFinish(): void {
@@ -411,7 +437,6 @@ export class QuestionDialog extends Container implements Focusable {
     const nextIndex = (index + this.questions.length) % this.questions.length;
     if (nextIndex === this.currentIndex) return;
     this.currentIndex = nextIndex;
-    this.focus = this.currentQuestion().options.length > 0 ? "options" : "editor";
     this.syncEditorFocus();
     this.requestRender();
   }
@@ -419,24 +444,10 @@ export class QuestionDialog extends Container implements Focusable {
   private collectAnswers(): DialogAnswers {
     const answers: DialogAnswers = {};
     for (const [index, question] of this.questions.entries()) {
-      const state = this.states[index]!;
-      if (question.options.length === 0) {
-        answers[question.id] = [state.textAnswer!];
-        continue;
-      }
-
-      const values = question.multiple
-        ? question.options
-            .filter((option) => state.selectedLabels.has(option.label))
-            .map((option) => option.label)
-        : state.singleAnswer === OTHER_CHOICE && state.customAnswer
-          ? []
-          : [state.singleAnswer!];
-      if (question.multiple && state.selectedLabels.has(OTHER_CHOICE) && !state.customAnswer) {
-        values.push(OTHER_CHOICE);
-      }
-      if (state.customAnswer) values.push(`user_note: ${state.customAnswer}`);
-      answers[question.id] = [...new Set(values)];
+      const submission = this.states[index]!.submission;
+      if (submission.status !== "submitted")
+        throw new Error("Cannot collect an unsubmitted answer.");
+      answers[question.id] = [...submission.values];
     }
     return answers;
   }

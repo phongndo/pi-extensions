@@ -7,7 +7,7 @@ A small, native interactive clarification tool for Pi. The model can call `quest
 - Available as the `question` tool in normal interactive chat; it is not tied to plan mode.
 - Uses Pi's native `SelectList` and chat editor, including configured select/cancel keybindings.
 - Supports one to four related questions per call and up to six options per question.
-- Keeps every question in one layered dialog, with answers preserved while navigating layers.
+- Keeps every question in one layered dialog, preserving drafts and editor focus while navigating layers. Editing a submitted answer or note requires Enter to reconfirm before the dialog can finish.
 - Supports single choice, multiple choice, and wrapped multi-line free-text answers.
 - Follows Codex's request-user-input flow: Enter or a number submits a single choice, Space marks it without advancing, and Tab opens notes for that choice.
 - Adds “None of the above” as the final option; its note can stand alone as the answer.
@@ -24,7 +24,7 @@ A small, native interactive clarification tool for Pi. The model can call `quest
 - Returns cancellation as a normal tool result, allowing the model to recover.
 - Returns immediately with an unavailable result in print and JSON modes instead of hanging.
 
-Pi RPC mode uses the same dialog calls through Pi's extension UI protocol.
+RPC uses native select/editor prompts instead of the layered TUI. TUI notes use `user_note: ` in results; RPC custom answers and free text remain plain strings.
 
 ## Tool input
 

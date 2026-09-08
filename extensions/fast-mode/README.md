@@ -123,7 +123,7 @@ mv ~/.pi/agent/fast-mode.json ~/.pi/agent/fast-mode.json.bad
 
 Provider lookup and active-runtime stream decorators retain the global policy when provider objects/authentication are transferred into isolated child runtimes. They compose with existing payload hooks, catalog refreshes, immutable providers, and out-of-order teardown. Unsupported providers/APIs and mismatched payload models remain untouched.
 
-A small compatibility seam in `runtime.ts` still accesses Pi's underlying model runtime. A future public Pi policy hook covering both host and child requests could replace that seam. Using only the session `before_provider_request` event would lose isolated-child coverage and change state-error behavior, so this implementation does not do that.
+`runtime.ts` uses Pi internals to cover both host and child requests. Tested on Pi 0.85.1; required methods are checked before installation, but future versions may need updates. The existing file-lock protocol remains compatible with already-running sessions.
 
 ## Development
 

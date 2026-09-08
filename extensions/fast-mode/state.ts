@@ -1,21 +1,13 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  rmdir,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
+import { writePreferenceJson } from "../../src/preference-file.ts";
 
 export const FAST_MODE_STATE_PATH = join(getAgentDir(), "fast-mode.json");
 
@@ -126,19 +118,9 @@ export async function saveFastMode(
   enabled: boolean,
   path: string = FAST_MODE_STATE_PATH,
 ): Promise<void> {
-  const directory = dirname(path);
-  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   try {
-    await writeFile(
-      temporaryPath,
-      `${JSON.stringify({ version: 1, enabled } satisfies FastModeState, null, 2)}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
-    await chmod(temporaryPath, 0o600);
-    await rename(temporaryPath, path);
+    await writePreferenceJson(path, { version: 1, enabled } satisfies FastModeState);
   } catch (error) {
-    await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw new Error(`Could not save fast-mode state at ${path}.`, { cause: error });
   }
 }

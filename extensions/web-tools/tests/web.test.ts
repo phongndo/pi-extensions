@@ -240,6 +240,7 @@ test("builds bounded crawl starts and validates opaque continuations", () => {
   });
 
   assert.deepEqual(built, {
+    kind: "start",
     cursorSkip: 0,
     pageSize: 2,
     maximumCharsPerPage: 12_000,
@@ -266,6 +267,7 @@ test("builds bounded crawl starts and validates opaque continuations", () => {
   assert.deepEqual(
     buildCrawlRequest({ crawl_id: "crawl-123", cursor, page_size: 3 }),
     {
+      kind: "resume",
       crawlId: "crawl-123",
       cursorSkip: 4,
       pageSize: 3,
@@ -594,6 +596,50 @@ test("crawl starts once and reads later windows through its opaque cursor", asyn
   assert.match(requests[2]?.url ?? "", /skip=2/);
   assert.equal((second.details.pages as unknown[]).length, 1);
   assert.equal(second.details.next_cursor, undefined);
+});
+
+test("terminal crawl failures throw without pages and preserve partial results", async () => {
+  const crawl = testTool(registeredTools(), "crawl");
+  for (const status of ["failed", "cancelled"]) {
+    let data: unknown[] = [];
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          status,
+          error: "Remote job stopped",
+          data,
+          completed: data.length,
+          total: 2,
+        }),
+      );
+    await assert.rejects(
+      crawl.execute(
+        "failure",
+        { crawl_id: "failed-job" },
+        undefined,
+        undefined,
+        authenticatedContext(),
+      ),
+      /Remote job stopped.*failed-job/,
+    );
+    data = [
+      {
+        markdown: "Recovered page",
+        metadata: { sourceURL: "https://example.com/a" },
+      },
+    ];
+    const partial = await crawl.execute(
+      "partial",
+      { crawl_id: "failed-job" },
+      undefined,
+      undefined,
+      authenticatedContext(),
+    );
+    assert.equal(partial.details.status, status);
+    assert.match(partial.content[0]?.text ?? "", /partial results/i);
+    assert.match(partial.content[0]?.text ?? "", /Recovered page/);
+  }
 });
 
 test("extract uses JSON-mode scrape with prompt-injection checking", async () => {

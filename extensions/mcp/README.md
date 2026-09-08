@@ -56,7 +56,7 @@ If executor is already in `~/.config/mcp/mcp.json`, this extension uses that ent
 
 ## Tools
 
-Connected servers register tools as `mcp__<server>__<tool>`. Executor therefore appears as `mcp__executor__execute`, `mcp__executor__resume`, `mcp__executor__skills`, and the `search_*` loaders the server exposes. Tool calls are sequential and read the live client at call time, so a reconnect does not leave a closed transport in a closure.
+Connected servers register tools as `mcp__<server>__<tool>`. Names over 64 characters are shortened with a stable hash; execution uses the original name. Executor therefore appears as `mcp__executor__execute`, `mcp__executor__resume`, `mcp__executor__skills`, and the `search_*` loaders the server exposes. Tool calls are sequential and read the live client at call time, so a reconnect does not leave a closed transport in a closure.
 
 Disable a server from `/mcp` to drop its tools from the model without a reload. Closed transports also deactivate their tools. Re-enabling refreshes descriptions and schemas, including paginated tool lists.
 
@@ -86,6 +86,6 @@ An optional live executor check is available with `PI_MCP_LIVE_TEST=1 bun run --
 
 - No automatic reconnect or heartbeat; toggle off/on or `/reload` to reconnect. Transport failures not reported as a close may remain connected until a subsequent operation detects them.
 - Tools are discovered on connection; live tool-list-change notifications, MCP prompts/resources browsing, OAuth login, sampling, and elicitation are not implemented.
-- Overlay mutations are serialized within a Pi process using Pi's file-mutation queue. Separate Pi processes are not inter-process locked or automatically synchronized.
+- Overlay writes are atomic and locked across cooperating Pi processes. External editors, older versions, and processes suspended beyond the lease can still race. Other sessions must reload to pick up changes.
 
 See [the implementation review](../../docs/mcp-review.md) for the audit findings and regression coverage.

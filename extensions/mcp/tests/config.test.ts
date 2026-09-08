@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +56,17 @@ test("namespaces MCP tools as mcp__server__tool", () => {
     mcpToolName("chrome.devtools", "take.screenshot"),
     "mcp__chrome_devtools__take_screenshot",
   );
+});
+
+test("long tool aliases are bounded, stable, and distinguish original names", () => {
+  const server = "s".repeat(60);
+  const tool = "t".repeat(100);
+  const name = mcpToolName(server, tool);
+  assert.ok(name.length <= 64);
+  assert.match(name, /^mcp__[A-Za-z0-9_-]+$/);
+  assert.equal(name, mcpToolName(server, tool));
+  assert.notEqual(name, mcpToolName(server, `${tool}x`));
+  assert.notEqual(mcpToolName(server, `${tool}.x`), mcpToolName(server, `${tool}_x`));
 });
 
 test("wraps MCP JSON schemas without mutating the original", () => {
@@ -208,6 +221,26 @@ test("overlay writes never follow a pre-existing predictable temporary symlink",
   await symlink(victim, `${paths.agentOverlay}.${process.pid}.tmp`);
   await setServerDisabled(paths.agentOverlay, "executor", true);
   assert.equal(await readFile(victim, "utf8"), "untouched");
+});
+
+test("independent processes preserve every overlay change", async () => {
+  const paths = await fixturePaths();
+  const run = promisify(execFile);
+  const moduleUrl = new URL("../config.ts", import.meta.url).href;
+  await Promise.all(
+    Array.from({ length: 6 }, (_, i) =>
+      run(process.execPath, [
+        "--input-type=module",
+        "-e",
+        `import { setServerDisabled } from ${JSON.stringify(moduleUrl)};
+     for (let j = 0; j < 4; j++) await setServerDisabled(${JSON.stringify(paths.agentOverlay)}, 'worker-${i}-' + j, true);`,
+      ]),
+    ),
+  );
+  const overlay = JSON.parse(await readFile(paths.agentOverlay, "utf8"));
+  assert.equal(Object.keys(overlay.mcpServers).length, 24);
+  for (const server of Object.values(overlay.mcpServers))
+    assert.deepEqual(server, { disabled: true });
 });
 
 test("simultaneous toggles of different servers preserve every overlay change", async () => {

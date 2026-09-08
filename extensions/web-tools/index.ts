@@ -1,21 +1,23 @@
+import {
+  createFirecrawlProvider,
+  firecrawlRequestForContext,
+  providerMessage,
+} from "./transport.ts";
+export {
+  FIRECRAWL_PROVIDER_ID,
+  createFirecrawlProvider,
+  resolveFirecrawlApiKey,
+  firecrawlRequest,
+} from "./transport.ts";
+import { toolResult } from "./output.ts";
 import { isIP } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  createProvider,
-  envApiKeyAuth,
-  lazyApi,
-  type AuthResult,
-  type Provider,
-} from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
-export const FIRECRAWL_PROVIDER_ID = "firecrawl";
-const FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v2";
-const REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_SEARCH_LIMIT = 5;
 const MAX_SEARCH_LIMIT = 10;
 const DEFAULT_MAP_LIMIT = 20;
@@ -36,7 +38,6 @@ const MAX_CRAWL_PATHS = 20;
 const DEFAULT_EXTRACT_CHARS = 12_000;
 const MAX_EXTRACT_CHARS = 20_000;
 const MAX_SCHEMA_JSON_CHARS = 20_000;
-const MAX_TOOL_OUTPUT_CHARS = 22_000;
 const MAX_EXTRACT_OUTPUT_CHARS = 24_000;
 const MAX_CRAWL_OUTPUT_CHARS = 50_000;
 const CRAWL_OUTPUT_METADATA_CHARS = 18_000;
@@ -517,13 +518,14 @@ export function buildMapRequest(params: MapParams): JsonRecord {
   };
 }
 
-export interface BuiltCrawlRequest {
-  crawlId?: string;
+export type BuiltCrawlRequest = {
   cursorSkip: number;
   pageSize: number;
   maximumCharsPerPage: number;
-  request?: JsonRecord;
-}
+} & (
+  | { kind: "start"; request: JsonRecord; crawlId?: never }
+  | { kind: "resume"; crawlId: string; request?: never }
+);
 
 export function buildCrawlRequest(params: CrawlParams): BuiltCrawlRequest {
   const hasUrl = params.url !== undefined;
@@ -556,6 +558,7 @@ export function buildCrawlRequest(params: CrawlParams): BuiltCrawlRequest {
     }
     const crawlId = validateCrawlId(params.crawl_id);
     return {
+      kind: "resume",
       crawlId,
       cursorSkip: params.cursor ? decodeCrawlCursor(params.cursor, crawlId) : 0,
       pageSize,
@@ -581,6 +584,7 @@ export function buildCrawlRequest(params: CrawlParams): BuiltCrawlRequest {
     );
 
   return {
+    kind: "start",
     cursorSkip: 0,
     pageSize,
     maximumCharsPerPage,
@@ -683,165 +687,6 @@ export function buildExtractRequest(
       onlyMainContent: params.only_main_content ?? true,
     },
   };
-}
-
-export function createFirecrawlProvider(): Provider {
-  return createProvider({
-    id: FIRECRAWL_PROVIDER_ID,
-    name: "Firecrawl",
-    baseUrl: FIRECRAWL_BASE_URL,
-    auth: {
-      apiKey: envApiKeyAuth("Firecrawl API key", ["FIRECRAWL_API_KEY"]),
-    },
-    models: [],
-    api: lazyApi(async () => {
-      throw new Error("Firecrawl does not provide language models.");
-    }),
-  });
-}
-
-function requiredApiKey(value: string | undefined): string {
-  const key = value?.trim();
-  if (!key)
-    throw new Error(
-      "A Firecrawl API key is required. Run /login firecrawl to store one in Pi, or set FIRECRAWL_API_KEY before starting Pi.",
-    );
-  return key;
-}
-
-export async function resolveFirecrawlApiKey(
-  getProviderAuth?: (providerId: string) => Promise<AuthResult | undefined>,
-): Promise<string> {
-  if (getProviderAuth) {
-    const result = await getProviderAuth(FIRECRAWL_PROVIDER_ID);
-    if (result?.auth.apiKey) return requiredApiKey(result.auth.apiKey);
-  }
-  return requiredApiKey(process.env.FIRECRAWL_API_KEY);
-}
-
-type FirecrawlMethod = "POST" | "GET" | "DELETE";
-
-async function firecrawlRequestForContext(
-  ctx: ExtensionContext,
-  path: string,
-  body: JsonRecord | undefined,
-  signal?: AbortSignal,
-  method: FirecrawlMethod = "POST",
-): Promise<JsonRecord> {
-  const key = await resolveFirecrawlApiKey(
-    ctx.modelRegistry.getProviderAuth.bind(ctx.modelRegistry),
-  );
-  return firecrawlRequest(path, body, signal, key, method);
-}
-
-function providerMessage(payload: unknown): string | undefined {
-  if (!isRecord(payload)) return undefined;
-  for (const field of [payload.error, payload.message]) {
-    if (typeof field === "string" && field.trim()) return field.trim();
-    if (isRecord(field) && typeof field.message === "string")
-      return field.message;
-  }
-  return undefined;
-}
-
-function firecrawlUrl(path: string): string {
-  if (!path.startsWith("/") || path.startsWith("//") || path.includes("#"))
-    throw new Error("Invalid Firecrawl API path.");
-  const url = new URL(`${FIRECRAWL_BASE_URL}${path}`);
-  const base = new URL(FIRECRAWL_BASE_URL);
-  if (
-    url.origin !== base.origin ||
-    !url.pathname.startsWith(`${base.pathname}/`)
-  )
-    throw new Error("Invalid Firecrawl API path.");
-  return url.toString();
-}
-
-const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
-class ResponseTooLargeError extends Error {
-  constructor() {
-    super(
-      "Firecrawl response exceeds the 16 MiB safety limit. Request fewer pages or narrower results.",
-    );
-  }
-}
-
-async function readBoundedResponse(response: Response): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const parts: string[] = [];
-  let bytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > MAX_RESPONSE_BYTES) throw new ResponseTooLargeError();
-      parts.push(decoder.decode(value, { stream: true }));
-    }
-    parts.push(decoder.decode());
-    return parts.join("");
-  } catch (error) {
-    await reader.cancel(error).catch(() => undefined);
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-export async function firecrawlRequest(
-  path: string,
-  body: JsonRecord | undefined,
-  signal?: AbortSignal,
-  apiKeyOverride?: string,
-  method: FirecrawlMethod = "POST",
-): Promise<JsonRecord> {
-  const key = requiredApiKey(apiKeyOverride ?? process.env.FIRECRAWL_API_KEY);
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${key}`,
-    "X-Origin": "pi-web",
-  };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  const requestUrl = firecrawlUrl(path);
-  let response: Response;
-  let raw: string;
-  try {
-    response = await fetch(requestUrl, {
-      method,
-      headers,
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: requestSignal,
-    });
-    raw = await readBoundedResponse(response);
-  } catch (error) {
-    if (error instanceof ResponseTooLargeError) throw error;
-    if (signal?.aborted)
-      throw new Error("Web request was cancelled.", { cause: error });
-    if (timeout.aborted)
-      throw new Error("Firecrawl request timed out.", { cause: error });
-    throw new Error("Could not reach Firecrawl.", { cause: error });
-  }
-  let payload: unknown;
-  try {
-    payload = raw ? JSON.parse(raw) : {};
-  } catch (error) {
-    throw new Error(`Firecrawl returned invalid JSON (${response.status}).`, {
-      cause: error,
-    });
-  }
-  if (!response.ok || (isRecord(payload) && payload.success === false)) {
-    const message =
-      providerMessage(payload) ?? response.statusText ?? "request failed";
-    throw new Error(
-      `Firecrawl request failed (${response.status}): ${clipText(message.replaceAll(key, "[redacted]"), 500)}`,
-    );
-  }
-  if (!isRecord(payload))
-    throw new Error("Firecrawl returned an invalid response.");
-  return payload;
 }
 
 function contentString(value: unknown): string | undefined {
@@ -1265,17 +1110,6 @@ export function shapeCrawlResponse(
   };
 }
 
-function toolResult(
-  text: string,
-  details: JsonRecord,
-  maximum = MAX_TOOL_OUTPUT_CHARS,
-) {
-  return {
-    content: [{ type: "text" as const, text: clipText(text, maximum) }],
-    details,
-  };
-}
-
 function renderSearch(query: string, results: JsonRecord[]): string {
   if (results.length === 0)
     return `Web search (external content is untrusted data)\n\nQuery: ${query}\n\nNo results returned.`;
@@ -1346,6 +1180,9 @@ function renderCrawl(result: ShapedCrawlResponse): string {
     `Progress: ${result.completed}/${result.total || "?"} pages`,
     `Credits used: ${result.credits_used}`,
     result.job_error ? `Job error: ${result.job_error}` : undefined,
+    result.status === "failed" || result.status === "cancelled"
+      ? "Partial results only: the remote job stopped before completing successfully."
+      : undefined,
     result.next_cursor
       ? "More crawl data may be available. Continue with:"
       : undefined,
@@ -1419,10 +1256,14 @@ export default function webTools(pi: ExtensionAPI): void {
         signal,
       );
       const results = shapeSearchResponse(payload);
-      return toolResult(renderSearch(request.query as string, results), {
-        query: request.query,
-        results,
-      });
+      return toolResult(
+        renderSearch(request.query as string, results),
+        {
+          query: request.query,
+          results,
+        },
+        payload,
+      );
     },
   });
 
@@ -1443,10 +1284,14 @@ export default function webTools(pi: ExtensionAPI): void {
         signal,
       );
       const links = shapeMapResponse(payload, request.limit as number);
-      return toolResult(renderMap(request.url as string, links), {
-        url: request.url,
-        links,
-      });
+      return toolResult(
+        renderMap(request.url as string, links),
+        {
+          url: request.url,
+          links,
+        },
+        payload,
+      );
     },
   });
 
@@ -1490,6 +1335,7 @@ export default function webTools(pi: ExtensionAPI): void {
           url: page.url,
           ...(page.title ? { title: page.title } : {}),
         },
+        payload,
       );
     },
   });
@@ -1506,7 +1352,7 @@ export default function webTools(pi: ExtensionAPI): void {
       const built = buildCrawlRequest(params);
       let crawlId = built.crawlId;
       try {
-        if (built.request) {
+        if (built.kind === "start") {
           const started = await firecrawlRequestForContext(
             ctx,
             "/crawl",
@@ -1564,9 +1410,18 @@ export default function webTools(pi: ExtensionAPI): void {
           built.maximumCharsPerPage,
           polled.timedOut,
         );
+        if (
+          (result.status === "failed" || result.status === "cancelled") &&
+          result.pages.length === 0
+        )
+          throw new Error(
+            result.job_error ??
+              `Crawl ${result.status} without usable documents`,
+          );
         return toolResult(
           renderCrawl(result),
           { ...result },
+          polled.payload,
           MAX_CRAWL_OUTPUT_CHARS,
         );
       } catch (error) {
@@ -1610,6 +1465,7 @@ export default function webTools(pi: ExtensionAPI): void {
           data: page.data,
           truncated: page.truncated,
         },
+        payload,
         MAX_EXTRACT_OUTPUT_CHARS,
       );
     },

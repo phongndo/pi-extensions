@@ -1,12 +1,13 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
+import { withPreferenceLock, writePreferenceJson } from "../../src/preference-file.ts";
 
 const ENV_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-const OVERLAY_MODE = 0o600;
 
 export type McpTransport = "http" | "sse" | "stdio";
 
@@ -105,7 +106,14 @@ export function isValidServerName(name: string): boolean {
 }
 
 export function mcpToolName(server: string, tool: string): string {
-  return `mcp__${sanitizeName(server)}__${sanitizeName(tool)}`;
+  const name = `mcp__${sanitizeName(server)}__${sanitizeName(tool)}`;
+  if (name.length <= 64) return name;
+  // Keep existing short names stable; hash the original pair, not its lossy sanitization.
+  const suffix = createHash("sha256")
+    .update(JSON.stringify([server, tool]))
+    .digest("hex")
+    .slice(0, 16);
+  return `${name.slice(0, 47)}_${suffix}`;
 }
 
 export function sanitizeName(value: string): string {
@@ -157,11 +165,7 @@ export async function setServerDisabled(
   name: string,
   disabled: boolean,
 ): Promise<void> {
-  // Canonicalize the parent before queue registration, so a new file keeps the
-  // same queue key after creation (notably /var vs /private/var on macOS).
-  await mkdir(dirname(overlayPath), { recursive: true });
-  const queuePath = join(await realpath(dirname(overlayPath)), basename(overlayPath));
-  await withFileMutationQueue(queuePath, async () => {
+  await withPreferenceLock(overlayPath, async (overlayPath, assertOwned) => {
     const current = (await readJsonObject(overlayPath)) ?? {};
     if (current.mcpServers !== undefined && !isRecord(current.mcpServers))
       throw new Error(`Invalid mcpServers object in ${overlayPath}.`);
@@ -172,7 +176,7 @@ export async function setServerDisabled(
       Object.hasOwn(servers, name) && isRecord(servers[name]) ? { ...servers[name] } : {};
     existing.disabled = disabled;
     servers[name] = existing;
-    await writeJsonAtomic(overlayPath, { ...current, mcpServers: servers });
+    await writePreferenceJson(overlayPath, { ...current, mcpServers: servers }, assertOwned);
   });
 }
 
@@ -314,27 +318,6 @@ async function readJsonObject(path: string): Promise<RawMcpFile | undefined> {
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") return undefined;
     throw new Error(`Could not read ${path}: ${errorMessage(error)}`, { cause: error });
-  }
-}
-
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tempPath = `${path}.${randomUUID()}.tmp`;
-  const payload = `${JSON.stringify(value, null, 2)}\n`;
-  // Only clean up a file we successfully created; never unlink somebody else's
-  // file if exclusive creation fails.
-  const file = await open(tempPath, "wx", OVERLAY_MODE);
-  try {
-    await file.writeFile(payload, "utf8");
-    await file.chmod(OVERLAY_MODE);
-    await file.close();
-    await rename(tempPath, path);
-  } finally {
-    try {
-      await file.close();
-    } finally {
-      await rm(tempPath, { force: true });
-    }
   }
 }
 

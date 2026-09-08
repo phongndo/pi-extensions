@@ -87,63 +87,97 @@ function installFastModeRuntime(runtime: ModelRuntime, registration: Registratio
   };
 }
 
+interface RegistryFastModeInstallation {
+  registrations: Set<Registration>;
+  restore: () => void;
+}
+
+const registryFastModeInstallations = new WeakMap<ModelRegistry, RegistryFastModeInstallation>();
+
 /** Compatibility seam until Pi exposes a public policy hook for host AND child runtimes. */
 export function installFastModeProviderLookup(
   registry: ModelRegistry,
   readEnabled: FastModeReader,
   hooks?: FastModeHooks,
 ): () => void {
-  const originalGetProvider = registry.getProvider;
-  const originalGetNativeProvider = registry.getRegisteredNativeProvider;
   const runtime = (registry as unknown as { runtime?: ModelRuntime }).runtime;
-  if (!runtime) throw new Error("Fast mode could not access the model runtime.");
+  if (
+    !runtime ||
+    typeof runtime.stream !== "function" ||
+    typeof runtime.streamSimple !== "function" ||
+    typeof runtime.getProvider !== "function" ||
+    typeof runtime.getRegisteredNativeProvider !== "function" ||
+    typeof registry.getProvider !== "function" ||
+    typeof registry.getRegisteredNativeProvider !== "function"
+  ) {
+    throw new Error(
+      "Fast mode requires the Pi 0.85.1-compatible model runtime interface (including child streams). No decorators were installed.",
+    );
+  }
   let active = true;
-  const activeHooks = hooks
-    ? { ...hooks, isActive: () => active && hooks.isActive?.() !== false }
-    : undefined;
-  const removeRuntimeDecorator = installFastModeRuntime(runtime, {
+  const registration: Registration = {
     readEnabled,
-    hooks: activeHooks,
-  });
-  const decoratedProviders = new WeakMap<Provider, Provider>();
-  const readWhileActive = (): Promise<boolean> => (active ? readEnabled() : Promise.resolve(false));
-
-  function decorate(provider: Provider | undefined): Provider | undefined {
-    if (!provider || isFastModeProvider(provider)) return provider;
-    const existing = decoratedProviders.get(provider);
-    if (existing) return existing;
-    const decorated = decorateCodexProvider(provider, readWhileActive, activeHooks);
-    decoratedProviders.set(provider, decorated);
-    return decorated;
-  }
-
-  const getProvider = (providerId: string) => {
-    const provider = originalGetProvider.call(registry, providerId);
-    return providerId === "openai-codex" ? decorate(provider) : provider;
+    hooks: { ...hooks, isActive: () => active && hooks?.isActive?.() !== false },
   };
-  const getNativeProvider = (providerId: string) => {
-    const provider = originalGetNativeProvider.call(registry, providerId);
-    return providerId === "openai-codex" ? decorate(provider) : provider;
-  };
-  try {
-    registry.getProvider = getProvider;
-    registry.getRegisteredNativeProvider = getNativeProvider;
-    registry.getProvider("openai-codex");
-    registry.getRegisteredNativeProvider("openai-codex");
-  } catch (error) {
-    if (registry.getProvider === getProvider) registry.getProvider = originalGetProvider;
-    if (registry.getRegisteredNativeProvider === getNativeProvider)
-      registry.getRegisteredNativeProvider = originalGetNativeProvider;
-    active = false;
-    removeRuntimeDecorator();
-    throw new Error("Could not install the Fast provider decorator.", { cause: error });
-  }
+  const removeRuntimeDecorator = installFastModeRuntime(runtime, registration);
+  let installation = registryFastModeInstallations.get(registry);
+  if (!installation) {
+    const registrations = new Set([registration]);
+    const originalGetProvider = registry.getProvider;
+    const originalGetNativeProvider = registry.getRegisteredNativeProvider;
+    const caches = new WeakMap<Registration, WeakMap<Provider, Provider>>();
+    const decorate = (provider: Provider | undefined): Provider | undefined => {
+      const current = registrations.values().next().value;
+      if (!current || !provider || isFastModeProvider(provider)) return provider;
+      let cache = caches.get(current);
+      if (!cache) {
+        cache = new WeakMap();
+        caches.set(current, cache);
+      }
+      let decorated = cache.get(provider);
+      if (!decorated) {
+        decorated = decorateCodexProvider(provider, current.readEnabled, current.hooks);
+        cache.set(provider, decorated);
+      }
+      return decorated;
+    };
+    const getProvider = (providerId: string) => {
+      const provider = originalGetProvider.call(registry, providerId);
+      return providerId === "openai-codex" ? decorate(provider) : provider;
+    };
+    const getNativeProvider = (providerId: string) => {
+      const provider = originalGetNativeProvider.call(registry, providerId);
+      return providerId === "openai-codex" ? decorate(provider) : provider;
+    };
+    const restore = () => {
+      if (registry.getProvider === getProvider) registry.getProvider = originalGetProvider;
+      if (registry.getRegisteredNativeProvider === getNativeProvider)
+        registry.getRegisteredNativeProvider = originalGetNativeProvider;
+    };
+    try {
+      registry.getProvider = getProvider;
+      registry.getRegisteredNativeProvider = getNativeProvider;
+      registry.getProvider("openai-codex");
+      registry.getRegisteredNativeProvider("openai-codex");
+    } catch (error) {
+      active = false;
+      registrations.clear();
+      restore();
+      removeRuntimeDecorator();
+      throw new Error("Could not install the Fast provider decorator.", { cause: error });
+    }
+    installation = { registrations, restore };
+    registryFastModeInstallations.set(registry, installation);
+  } else installation.registrations.add(registration);
 
   return () => {
+    if (!active) return;
     active = false;
-    if (registry.getProvider === getProvider) registry.getProvider = originalGetProvider;
-    if (registry.getRegisteredNativeProvider === getNativeProvider)
-      registry.getRegisteredNativeProvider = originalGetNativeProvider;
+    installation.registrations.delete(registration);
+    if (installation.registrations.size === 0) {
+      installation.restore();
+      registryFastModeInstallations.delete(registry);
+    }
     removeRuntimeDecorator();
   };
 }

@@ -19,11 +19,15 @@
     "typecheck": "bun run --bun tsc --noEmit",
     "lsp": "bun run --bun typescript-language-server --stdio"
   },
+  "dependencies": {
+    "proper-lockfile": "4.1.2"
+  },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.85.1",
     "@earendil-works/pi-coding-agent": "^0.85.1",
     "@earendil-works/pi-tui": "^0.85.1",
     "@types/node": "^24.12.4",
+    "@types/proper-lockfile": "^4.1.4",
     "bun-types": "1.4.2",
     "oxfmt": "^0.61.0",
     "oxlint": "^1.76.0",

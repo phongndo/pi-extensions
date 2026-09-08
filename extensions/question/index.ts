@@ -9,7 +9,7 @@ import {
   type QuestionChoice,
 } from "./ui.ts";
 
-const MAX_CUSTOM_ANSWER_LENGTH = 4_000;
+import { choiceAnswer, MAX_CUSTOM_ANSWER_LENGTH } from "./answers.ts";
 const CUSTOM_CHOICE = "Type your own answer…";
 
 const OptionSchema = Type.Object(
@@ -216,10 +216,11 @@ async function promptSingleChoice(
     );
     if (selectedIndex === undefined) return undefined;
     const option = question.options[selectedIndex];
-    if (option) return [option.label];
+    if (option) return choiceAnswer(question.options, new Set([option.label]));
     if (selectedIndex !== question.options.length) continue;
     const custom = await promptForText(ctx, question.question, signal);
-    if (custom !== undefined) return [custom];
+    if (custom !== undefined)
+      return choiceAnswer(question.options, new Set(), { kind: "answer", text: custom });
   }
 }
 
@@ -258,11 +259,11 @@ async function promptMultipleChoice(
         ctx.ui.notify("Select at least one answer or press Escape to cancel.", "warning");
         continue;
       }
-      const ordered = question.options
-        .filter((option) => selectedLabels.has(option.label))
-        .map((option) => option.label);
-      if (customAnswer) ordered.push(customAnswer);
-      return [...new Set(ordered)];
+      return choiceAnswer(
+        question.options,
+        selectedLabels,
+        customAnswer ? { kind: "answer", text: customAnswer } : undefined,
+      );
     }
 
     if (selectedIndex === customIndex) {
