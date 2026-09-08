@@ -161,10 +161,16 @@ bun test
 
 The installed-Pi smoke test verifies every native skill command, argument expansion, and absence of shorthand skill aliases.
 
+### CI
+
+[GitHub Actions checks](.github/workflows/checks.yml) run on pull requests, pushes to `main`, and manual dispatch. Bun 1.4.2 installs the frozen lockfile, then runs `bun run check` (formatting, lint, typechecks, skill tests, and all workspace tests) and the offline Pi smoke test using the locked Pi dependency with Node 24.
+
+CI caches dependency downloads, runs workspace checks in parallel, avoids a duplicate full test run, and cancels superseded runs. The live MCP executor test remains opt-in; CI needs no provider credentials or external executor. Nix remains development-environment-only.
+
 ### Git hooks
 
 [hk](https://hk.jdx.dev/) configuration lives in `hk.pkl`. `hk install --global` installs hooks; `hk check` checks and `hk fix` applies fixes. Pre-commit formats/lints and typechecks; pre-push runs check-only validation.
 
 ### Adding an extension
 
-Create `extensions/<name>/`, expose its entry point in `package.json` under `pi.extensions`, and add it to the root check script. Keep Pi runtime packages in peer and development dependencies; other runtime dependencies belong in `dependencies`. Add focused tests and a README, run checks, and smoke-test with Pi and `/reload`.
+Create `extensions/<name>/`, expose its entry point in `package.json` under `pi.extensions`, and define its `check` script; Bun automatically includes it in workspace checks. Keep Pi runtime packages in peer and development dependencies; other runtime dependencies belong in `dependencies`. Add focused tests and a README, run checks, and smoke-test with Pi and `/reload`.
