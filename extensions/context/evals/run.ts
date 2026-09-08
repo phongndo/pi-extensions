@@ -19,7 +19,7 @@ import {
 import { createContextExtension } from "../index.ts";
 import { diagnostics } from "../diagnostics.ts";
 import { scoreAnswer } from "./score.ts";
-import { evidenceFor, isCheckpointData, CHECKPOINT_TYPE } from "../model.ts";
+import { evidenceFor, currentNotes } from "../model.ts";
 import { IMPLEMENTATION_VERSION } from "../diagnostics.ts";
 
 const scenarios = [
@@ -173,7 +173,7 @@ async function main() {
         sessionManager: sm,
         settingsManager,
         resourceLoader: loader,
-        tools: ["recall", "notes"],
+        tools: ["recall", "notes", "new_context"],
       });
       let extensionErrors = 0;
       await session.bindExtensions({ onError: () => extensionErrors++ });
@@ -264,7 +264,7 @@ async function main() {
           const before = sm.getBranch().filter((e) => e.type === "compaction").length;
           await session.prompt(
             strategy === "exp"
-              ? "Staging transition: save a faithful structured notes checkpoint with reset:true, alone. Preserve the task, failures and latest constraints, linking evidence. Set nextSteps to reply READY after reset and wait for the final question. Do not request another reset during the continuation."
+              ? "Staging transition: save a concise handoff in notes preserving the task, failures and latest constraints, linking evidence. Then call new_context with no arguments. After rollover, recover requirements through recall, reply READY and wait for the final question. Do not request another rollover during the continuation."
               : "Staging transition: preserve the task, exact failure evidence and latest constraints for later. Use available memory tools if useful. Reply READY; the harness will compact next.",
           );
           await settle();
@@ -314,26 +314,20 @@ async function main() {
       const archived = SessionManager.open(sm.getSessionFile()!);
       const record = {
         implementation: IMPLEMENTATION_VERSION,
-        checkpoints: sm.getBranch().flatMap((entry) =>
-          entry.type === "custom" &&
-          entry.customType === CHECKPOINT_TYPE &&
-          isCheckpointData(entry.data)
-            ? [
-                {
-                  state: entry.data.checkpoint,
-                  sources: entry.data.references.map((id) => {
-                    const source = evidenceFor(sm.getEntry(id)!);
-                    return {
-                      entryId: id,
-                      role: source?.role,
-                      toolName: source?.toolName,
-                      isError: source?.isError,
-                    };
-                  }),
-                },
-              ]
-            : [],
-        ),
+        notes: [...currentNotes(sm.getBranch()).values()].map((note) => ({
+          name: note.data.name,
+          text: note.data.text,
+          entryId: note.entryId,
+          sources: note.data.references.map((id) => {
+            const source = evidenceFor(sm.getEntry(id)!);
+            return {
+              entryId: id,
+              role: source?.role,
+              toolName: source?.toolName,
+              isError: source?.isError,
+            };
+          }),
+        })),
         persistedOriginalsIntact:
           originals.length > 0 &&
           originals.every(
@@ -363,6 +357,7 @@ async function main() {
         })),
         recallCalls: calls.filter((name) => name === "recall").length,
         notesCalls: calls.filter((name) => name === "notes").length,
+        newContextCalls: calls.filter((name) => name === "new_context").length,
         diagnostics: diagnostics(sm.getBranch()),
       };
       results.push(record);

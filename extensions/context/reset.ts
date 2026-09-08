@@ -1,4 +1,4 @@
-type Request = { checkpointId: string; compacted: boolean };
+type Request = { requestId: string; compacted: boolean };
 type State =
   | { status: "idle" | "closed" }
   | { status: "requested"; request: Request }
@@ -12,13 +12,17 @@ export class ResetController {
     return this.state.status === "closed";
   }
 
+  get requested(): boolean {
+    return this.state.status === "requested";
+  }
+
   cancel(close = false): void {
     this.state = { status: close || this.closed ? "closed" : "idle" };
   }
 
-  request(checkpointId: string, signal?: AbortSignal): void {
+  request(requestId: string, signal?: AbortSignal): void {
     if (this.closed || signal?.aborted) return;
-    const pending: State = { status: "requested", request: { checkpointId, compacted: false } };
+    const pending: State = { status: "requested", request: { requestId, compacted: false } };
     this.state = pending;
     signal?.addEventListener(
       "abort",
@@ -29,11 +33,11 @@ export class ResetController {
     );
   }
 
-  /** Stock fallback compaction also permits continuation. */
+  /** Only a confirmed summary-free rollover permits continuation. */
   compacted(): string | undefined {
     if (this.state.status !== "requested") return undefined;
     this.state.request.compacted = true;
-    return this.state.request.checkpointId;
+    return this.state.request.requestId;
   }
 
   take(): Request | undefined {

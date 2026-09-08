@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,17 +18,18 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { createContextExtension } from "../index.ts";
+import { createContextExtension, type ContextOptions } from "../index.ts";
 import { recall } from "../model.ts";
 import { diagnostics } from "../diagnostics.ts";
 import { saveMode, type ContextMode } from "../state.ts";
-import { assistant, checkpoint, model, temporary } from "./helpers.ts";
+import { assistant, model, temporary } from "./helpers.ts";
 
 async function host(
   t: TestContext,
   respond: (context: Context) => AssistantMessage,
   auto = false,
   mode: ContextMode = "exp",
+  options: ContextOptions = {},
 ) {
   const root = await temporary(t);
   await saveMode(join(root, "context.json"), mode);
@@ -40,7 +42,7 @@ async function host(
   });
   await modelRuntime.setRuntimeApiKey("openai", "offline-test-only");
   const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: auto, keepRecentTokens: 90, reserveTokens: 16_384 },
+    compaction: { enabled: auto, keepRecentTokens: 64, reserveTokens: 16_384 },
     retry: { enabled: false },
     quietStartup: true,
   });
@@ -55,7 +57,7 @@ async function host(
     noContextFiles: true,
     systemPromptOverride: () => "Follow the user's task. Never deploy.",
     extensionFactories: [
-      createContextExtension({ statePath: join(root, "context.json"), pollMs: 0 }),
+      createContextExtension({ statePath: join(root, "context.json"), pollMs: 0, ...options }),
     ],
   });
   await loader.reload();
@@ -69,17 +71,22 @@ async function host(
     sessionManager: sm,
     settingsManager,
     resourceLoader: loader,
-    tools: ["recall", "notes"],
+    tools: ["recall", "notes", "new_context"],
   });
   const errors: unknown[] = [];
   const compactionReasons: string[] = [];
+  const failures: string[] = [];
   session.subscribe((event) => {
     if (event.type === "compaction_end" && event.result) compactionReasons.push(event.reason);
-    if (event.type === "compaction_end" && event.errorMessage) t.diagnostic(event.errorMessage);
+    if (event.type === "compaction_end" && event.errorMessage) failures.push(event.errorMessage);
   });
   await session.bindExtensions({ onError: (error) => errors.push(error) });
-  session.agent.streamFunction = (_model, context) => {
-    const result = respond(context);
+  session.agent.streamFunction = (_model, context, options) => {
+    // Pi can enter the provider path once more after turn_end abort. A real
+    // transport receives this aborted signal; do not invent a successful reply.
+    const result: AssistantMessage = options?.signal?.aborted
+      ? { ...assistant([]), stopReason: "aborted", errorMessage: "Request aborted" }
+      : respond(context);
     // An instantaneous fake provider can share the compaction's millisecond. Pi
     // deliberately ignores usage at/before that boundary as stale. Model the
     // causal ordering of a real response without sleeps or a timing-dependent test.
@@ -105,7 +112,7 @@ async function host(
     await session.abort();
     session.dispose();
   });
-  return { session, sm, errors, compactionReasons };
+  return { session, sm, errors, compactionReasons, failures, settingsManager, modelRuntime };
 }
 
 async function eventually(check: () => boolean) {
@@ -131,11 +138,12 @@ for (const automatic of [false, true]) {
           if (calls <= 2)
             return assistant(
               [
+                { type: "text", text: "Synthetic investigation before rollover. ".repeat(100) },
                 {
                   type: "toolCall",
-                  id: `checkpoint-${calls}`,
-                  name: "notes",
-                  arguments: { action: "checkpoint", checkpoint, reset: true },
+                  id: `window-${calls}`,
+                  name: "new_context",
+                  arguments: {},
                 },
               ],
               automatic ? 115_000 : 100,
@@ -171,7 +179,7 @@ for (const automatic of [false, true]) {
       );
       for (const context of payloads.slice(1)) {
         const text = JSON.stringify(context.messages);
-        assert.match(text, /First fix failed/);
+        assert.match(text, /recall/);
         assert.doesNotMatch(text, /ORIGINAL USER PAYLOAD|"toolResult"|"toolCall"/);
       }
       const firstUser = app.sm
@@ -186,7 +194,7 @@ for (const automatic of [false, true]) {
 }
 
 test(
-  "real Pi overflow with no checkpoint falls back to stock compaction and retries",
+  "real Pi overflow with no notes rolls over without summarization and retries",
   { timeout: 10_000 },
   async (t) => {
     let calls = 0;
@@ -224,11 +232,11 @@ test(
     await app.session.prompt("Continue the fix");
     await eventually(() => app.session.isIdle);
     assert.deepEqual(app.errors, []);
-    assert.ok(summaries > 0);
+    assert.equal(summaries, 0);
     assert.equal(calls, 2);
     const entry = app.sm.getBranch().find((item) => item.type === "compaction");
     assert.ok(entry?.type === "compaction");
-    assert.notEqual(entry.fromHook, true);
+    assert.equal(entry.fromHook, true);
   },
 );
 
@@ -244,15 +252,15 @@ test(
         return assistant([
           {
             type: "toolCall",
-            id: "checkpoint",
-            name: "notes",
-            arguments: { action: "checkpoint", checkpoint, reset: true },
+            id: "window",
+            name: "new_context",
+            arguments: {},
           },
         ]);
       return assistant([{ type: "text", text: "Handled the latest steering." }]);
     });
     app.session.subscribe((event) => {
-      if (event.type === "tool_execution_end" && event.toolName === "notes")
+      if (event.type === "tool_execution_end" && event.toolName === "new_context")
         void app.session.steer("LATEST STEERING: leave the database unchanged.");
     });
     await app.session.prompt("ORIGINAL TASK: fix the bug without deploying.");
@@ -266,7 +274,7 @@ test(
 );
 
 for (const mode of ["default", "exp"] as const) {
-  test(`real Pi ${mode} uses stock compaction with the expected provider-visible tools and guidance`, async (t) => {
+  test(`real Pi ${mode} uses its own compaction policy with expected tools and guidance`, async (t) => {
     const payloads: Context[] = [];
     let summaries = 0;
     const app = await host(
@@ -294,7 +302,7 @@ for (const mode of ["default", "exp"] as const) {
       "Original user requirement: no deployment. " + "Synthetic context. ".repeat(100),
     );
     await app.session.compact();
-    assert.ok(summaries > 0);
+    assert.equal(summaries > 0, mode === "default");
     assert.deepEqual(app.errors, []);
     const context = payloads[0]!;
     const names = context.tools?.map((tool) => tool.name) ?? [];
@@ -303,13 +311,13 @@ for (const mode of ["default", "exp"] as const) {
       assert.doesNotMatch(context.systemPrompt ?? "", /Context memory|Recall saved|Save durable/);
       assert.doesNotMatch(JSON.stringify(context.messages), /\[evidence:/);
     } else {
-      assert.deepEqual(new Set(names), new Set(["recall", "notes"]));
+      assert.deepEqual(new Set(names), new Set(["recall", "notes", "new_context"]));
       assert.match(context.systemPrompt ?? "", /Context memory/);
       assert.match(JSON.stringify(context.messages), /\[evidence:/);
     }
     assert.equal(
       diagnostics(app.sm.getBranch()).find((event) => event.event === "compaction")?.outcome,
-      "normal",
+      mode === "default" ? "normal" : "fresh",
     );
     assert.equal(
       diagnostics(app.sm.getBranch()).find((event) => event.event === "compaction")?.mode,
@@ -368,6 +376,8 @@ test("real Pi resource loader imports the registered extension from disk", async
   assert.ok(loaded.extensions[0]!.commands.has("context"));
   assert.ok(loaded.extensions[0]!.tools.has("recall"));
   assert.ok(loaded.extensions[0]!.tools.has("notes"));
+  assert.ok(loaded.extensions[0]!.tools.has("new_context"));
+  assert.ok(!loaded.extensions[0]!.tools.has("checkpoint"));
 });
 
 test(
@@ -378,7 +388,10 @@ test(
     let evidenceId = "";
     const payloads: Context[] = [];
     const tool = (name: string, args: Record<string, unknown>) =>
-      assistant([{ type: "toolCall", id: `call-${calls}`, name, arguments: args }]);
+      assistant([
+        { type: "text", text: "Synthetic work between windows. ".repeat(100) },
+        { type: "toolCall", id: `call-${calls}`, name, arguments: args },
+      ]);
     const app = await host(t, (context) => {
       payloads.push({ ...context, messages: structuredClone(context.messages) });
       calls++;
@@ -394,8 +407,7 @@ test(
           references: [evidenceId],
         });
       }
-      if (calls === 2 || calls === 3)
-        return tool("notes", { action: "checkpoint", checkpoint, reset: true });
+      if (calls === 2 || calls === 3) return tool("new_context", {});
       if (calls === 4) return tool("recall", { source: "notes" });
       if (calls === 5) return tool("recall", { entryId: evidenceId });
       return assistant([
@@ -446,3 +458,218 @@ test(
     );
   },
 );
+
+for (const auto of [false, true]) {
+  for (const trigger of ["budget", "overflow"] as const) {
+    test(`real Pi ${trigger} rolls over without notes or new_context (native auto ${auto})`, async (t) => {
+      let calls = 0;
+      const payloads: Context[] = [];
+      const app = await host(
+        t,
+        (context) => {
+          assert.doesNotMatch(context.systemPrompt ?? "", /summarization/);
+          payloads.push({ ...context, messages: structuredClone(context.messages) });
+          if (++calls === 1) {
+            if (trigger === "overflow")
+              return {
+                ...assistant([]),
+                stopReason: "error",
+                errorMessage: "maximum context length exceeded",
+              };
+            return assistant(
+              [
+                { type: "text", text: "Synthetic investigation. ".repeat(100) },
+                {
+                  type: "toolCall",
+                  id: "r",
+                  name: "recall",
+                  arguments: { role: "user", source: "original" },
+                },
+              ],
+              115_000,
+            );
+          }
+          return assistant([{ type: "text", text: "Finished" }]);
+        },
+        auto,
+      );
+      app.sm.appendMessage({ role: "user", content: "Previous work", timestamp: Date.now() });
+      app.sm.appendMessage(assistant([{ type: "text", text: "Prior findings. ".repeat(100) }]));
+      app.session.agent.state.messages = app.sm.buildSessionContext().messages;
+      await app.session.prompt("LATEST TASK PAYLOAD: fix without deploying");
+      await eventually(() => calls >= 2 && app.session.isIdle);
+      assert.equal(calls, 2);
+      assert.deepEqual(app.errors, []);
+      assert.deepEqual(app.failures, []);
+      assert.equal(app.sm.getBranch().filter((e) => e.type === "compaction").length, 1);
+      assert.doesNotMatch(
+        JSON.stringify(payloads[1]!.messages),
+        /LATEST TASK PAYLOAD|Prior findings|toolResult|toolCall/,
+      );
+      assert.match(JSON.stringify(payloads[1]!.messages), /recall/);
+    });
+  }
+}
+
+test("real Pi mixed sibling batch finishes all tools then rolls over without another old-context reply", async (t) => {
+  let calls = 0;
+  const app = await host(t, (context) => {
+    if (++calls === 1)
+      return assistant([
+        { type: "text", text: "Findings. ".repeat(200) },
+        {
+          type: "toolCall",
+          id: "note",
+          name: "notes",
+          arguments: { action: "write", name: "finding", text: "Keep this finding" },
+        },
+        { type: "toolCall", id: "window", name: "new_context", arguments: {} },
+      ]);
+    assert.doesNotMatch(
+      JSON.stringify(context.messages),
+      /Findings\.|Keep this finding|toolCall|toolResult/,
+    );
+    return assistant([{ type: "text", text: "Continued" }]);
+  });
+  await app.session.prompt("Investigate");
+  await eventually(() => calls >= 2 && app.session.isIdle);
+  assert.equal(calls, 2);
+  assert.equal(app.sm.getBranch().filter((e) => e.type === "compaction").length, 1);
+  assert.ok(app.sm.getBranch().some((e) => e.type === "custom" && e.customType === "context.note"));
+  assert.equal(
+    app.sm.getBranch().filter((e) => e.type === "message" && e.message.role === "toolResult")
+      .length,
+    2,
+  );
+  assert.deepEqual(app.errors, []);
+});
+
+for (const auto of [false, true]) {
+  test(`real Pi fresh overflow stops after one recovery (native auto ${auto})`, async (t) => {
+    let calls = 0;
+    const app = await host(
+      t,
+      (context) => {
+        assert.doesNotMatch(context.systemPrompt ?? "", /summarization/);
+        calls++;
+        return {
+          ...assistant([]),
+          stopReason: "error",
+          errorMessage: "maximum context length exceeded",
+        };
+      },
+      auto,
+    );
+    app.sm.appendMessage({ role: "user", content: "Previous work", timestamp: Date.now() });
+    app.sm.appendMessage(assistant([{ type: "text", text: "Prior findings. ".repeat(100) }]));
+    app.session.agent.state.messages = app.sm.buildSessionContext().messages;
+    await app.session.prompt("Continue the task");
+    await eventually(() => calls >= 2 && app.session.isIdle);
+    assert.equal(calls, 2);
+    assert.equal(app.sm.getBranch().filter((e) => e.type === "compaction").length, 1);
+    assert.deepEqual(app.errors, []);
+  });
+}
+
+test("real Pi budget rollover after a final answer does not answer twice with auto disabled", async (t) => {
+  let calls = 0;
+  const app = await host(t, () => {
+    calls++;
+    return assistant([{ type: "text", text: "Completed. ".repeat(200) }], 115_000);
+  });
+  await app.session.prompt("Finish the task");
+  await eventually(() => app.compactionReasons.length === 1 && app.session.isIdle);
+  assert.equal(calls, 1);
+  assert.deepEqual(app.failures, []);
+});
+
+test("real Pi custom summary instructions in exp cancel without calling the summarizer", async (t) => {
+  let calls = 0;
+  const app = await host(t, () => {
+    calls++;
+    return assistant([{ type: "text", text: "Findings. ".repeat(200) }]);
+  });
+  await app.session.prompt("Investigate");
+  await assert.rejects(app.session.compact("Summarize deployment details"), /cancel/i);
+  assert.equal(calls, 1);
+  assert.equal(app.sm.getBranch().filter((e) => e.type === "compaction").length, 0);
+});
+
+test("real Pi missing auth reports rollover failure without generating a summary", async (t) => {
+  let calls = 0;
+  const app = await host(t, () => {
+    calls++;
+    return assistant([{ type: "text", text: "Findings. ".repeat(200) }]);
+  });
+  await app.session.prompt("Investigate");
+  await app.modelRuntime.removeRuntimeApiKey("openai");
+  // Pi deliberately bypasses required auth for custom stream functions. Exercise
+  // its stock pre-hook auth gate, with auth forced absent (including environment).
+  // This must reject before any provider call.
+  app.modelRuntime.getAuth = async () => undefined;
+  app.session.agent.streamFunction = streamSimple;
+  await assert.rejects(app.session.compact(), /API key|auth/i);
+  assert.equal(calls, 1);
+  assert.equal(app.sm.getBranch().filter((e) => e.type === "compaction").length, 0);
+});
+
+test("real Pi abort during archive verification never continues the task", async (t) => {
+  let calls = 0;
+  let abort = () => {};
+  const app = await host(
+    t,
+    () => {
+      calls++;
+      return assistant([
+        { type: "text", text: "Findings. ".repeat(200) },
+        { type: "toolCall", id: "window", name: "new_context", arguments: {} },
+      ]);
+    },
+    false,
+    "exp",
+    {
+      verify: async (_path, _branch, signal) => {
+        abort();
+        signal!.throwIfAborted();
+      },
+    },
+  );
+  abort = () => app.session.abortCompaction();
+  await app.session.prompt("Investigate");
+  await eventually(() => app.session.isIdle);
+  assert.equal(calls, 1);
+  assert.equal(app.sm.getBranch().filter((e) => e.type === "compaction").length, 0);
+  assert.ok(diagnostics(app.sm.getBranch()).some((e) => e.event === "cancelled"));
+});
+
+for (const failure of ["tiny", "archive"] as const) {
+  test(`real Pi ${failure} rollover failure stops instead of resuming unchanged history`, async (t) => {
+    let calls = 0;
+    const app = await host(
+      t,
+      () => {
+        calls++;
+        return assistant([
+          ...(failure === "archive"
+            ? [{ type: "text" as const, text: "Findings. ".repeat(200) }]
+            : []),
+          { type: "toolCall", id: "window", name: "new_context", arguments: {} },
+        ]);
+      },
+      false,
+      "exp",
+      failure === "archive"
+        ? {
+            verify: async () => {
+              throw new Error("Synthetic archive failure");
+            },
+          }
+        : {},
+    );
+    await app.session.prompt("Investigate");
+    await eventually(() => app.session.isIdle);
+    assert.equal(calls, 1);
+    assert.equal(app.sm.getBranch().filter((e) => e.type === "compaction").length, 0);
+    assert.ok(diagnostics(app.sm.getBranch()).some((e) => e.event === "compaction_failed"));
+  });
+}

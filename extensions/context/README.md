@@ -1,6 +1,6 @@
 # Context
 
-Two context modes for Pi **0.85.1**: ordinary Pi compaction (`default`) or checkpoint-based fresh windows with recall/notes (`exp`). No external service, embeddings, or additional summarization model calls for a successful fresh reset.
+Two context modes for Pi **0.85.1**: stock Pi summaries (`default`) or **summary-free context rollover** with `recall`, `notes`, and `new_context` (`exp`). No external service, embeddings, or background summarizer.
 
 ## Control
 
@@ -10,75 +10,52 @@ Two context modes for Pi **0.85.1**: ordinary Pi compaction (`default`) or check
 /context status
 ```
 
-| Mode      | Compaction                                          | Recall / notes      | Memory guidance / evidence markers     |
-| --------- | --------------------------------------------------- | ------------------- | -------------------------------------- |
-| `default` | Ordinary Pi                                         | Hidden and disabled | None                                   |
-| `exp`     | Verified checkpoint fresh windows, with Pi fallback | Available           | Enabled, plus reset guidance/reminders |
+| Mode      | Compaction                                 | Memory tools        | Guidance / evidence markers |
+| --------- | ------------------------------------------ | ------------------- | --------------------------- |
+| `default` | Ordinary Pi summaries                      | Hidden and disabled | None                        |
+| `exp`     | Summary-free rollover; no summary fallback | Available           | Enabled                     |
 
-Bare `/context` shows the selected mode, last recorded compaction outcome and subsequent successful input usage when available. The native footer uses `ctxt default` or `ctxt exp`; a preference error adds `!`. Local diagnostics remain available in both modes but add no model-visible messages.
+Bare `/context` shows the mode, last recorded compaction outcome and subsequent successful input usage when available. The native footer shows `ctxt default` or `ctxt exp`; a preference error adds `!`.
 
-The preference is **global**, stored atomically in `getAgentDir()/context.json` (normally `~/.pi/agent/context.json`) as `{"version":3,"mode":"exp"}`. Running sessions refresh it periodically. **No saved preference now means `default` (ordinary Pi), not fresh mode.** Select `exp` explicitly to opt in. An unreadable/corrupt preference fails closed to `default`; any valid mode command repairs it.
+The preference is **global**, stored atomically in `getAgentDir()/context.json` (normally `~/.pi/agent/context.json`) as `{"version":3,"mode":"exp"}`. Running sessions refresh it periodically. **No saved preference means `default`.** A corrupt/unreadable preference blocks memory operations and compaction rather than silently switching a running experiment to summaries; a valid mode command repairs it.
 
-Older files are read without rewriting them: `version:1` enabled true/false maps to `exp`/`default`; `version:2` `exp-2` maps to `exp`, while the removed `exp-1` maps to `default`. No notes are deleted by migration. Hidden aliases `/context on` and `/context off` now mean `exp` and `default`. The old `exp-1`/`exp-2` commands are no longer accepted.
+Legacy preferences are read without rewriting: version 1 enabled true/false maps to `exp`/`default`; version 2 `exp-2` maps to `exp`, while `exp-1` maps to `default`. `/context on` and `/context off` remain aliases. The `exp-1`/`exp-2` commands are removed.
 
-Tool schemas change only when idle (and suppression is released on shutdown). An active-turn switch to default blocks stale memory calls immediately; schema changes wait for settlement. Other tools and pre-existing tool exclusions are preserved: `exp` restores only memory tools this extension hid. If recall/notes were excluded by your host/tool allowlist, the mode does not force them on.
+Schemas change only when idle. A mid-turn switch to default blocks stale memory calls immediately and changes schemas at settlement. Existing tool exclusions are respected: exp restores only tools this extension hid. Rollover needs all three memory tools. Switching modes never deletes saved history or notes, and cannot undo an earlier rollover. Use separate sessions for clean policy comparisons.
 
-Switching modes never deletes saved history or notes and cannot undo a previous reset. Switch back to `exp` to read retained notes. For a clean stock-versus-memory comparison, start separate sessions; an already-compacted conversation retains its previous bootstrap/history.
-
-## How it works
+## Summary-free rollover
 
 ```text
-work → save notes + evidence IDs → budget reminder
-                                      ↓
-                          save a structured checkpoint
-                                      ↓
-                       verify coverage + on-disk archive
-                                      ↓
-                  fresh window: checkpoint + note pointers
-                                      ↓
-                        continue; recall original evidence
+work → save useful findings/handoff in notes → new_context()
+                         or budget/overflow trigger
+                                     ↓
+                         verify persisted archive
+                                     ↓
+                  fresh window: recovery pointers only
+                                     ↓
+                    recover task with recall → continue
 ```
 
-In `exp`, the model receives a reminder when estimated remaining context falls below the smaller of 32,768 tokens and one-third of the model's window. It is asked to checkpoint **before** Pi's emergency threshold. This estimate is not a tokenizer guarantee; a large tool result can jump past the reminder. Missing or stale checkpoints use ordinary Pi compaction instead.
+Notes are encouraged but **not a prerequisite**. Neither a structured checkpoint nor a generated summary is required for requested, threshold, or overflow rollover in exp.
 
-The extension never starts reentrant compaction inside a tool. A solo checkpoint tool call with `reset:true` saves and verifies its record, then returns Pi's `terminate` hint. At `agent_settled`, it requests compaction and continues the existing task through a hidden extension message. If automatic threshold compaction already handled the checkpoint, it continues without a second compaction. Cancellation does not restart the agent; queued or already-handled steering takes precedence.
+- A reminder appears when estimated remaining space falls below the smaller of 32,768 tokens and one-third of the model window.
+- The extension's budget trigger runs after completed turns, at a reserve of the smaller of 16,384 tokens and one-eighth of the window. It also detects context overflow. This works even with Pi auto-compaction disabled.
+- `new_context()` requests a transition and returns Pi's `terminate` hint. It does not compact reentrantly inside the tool. Pi's hint terminates a batch only when all finalized results agree; the extension also aborts mixed batches after all receipts are saved. Calling it alone avoids that extra cancellation path.
+- Automatic budget rollover aborts the completed run, then requests compaction at `agent_settled`. Pi may enter the provider path with an already-aborted signal before settling; transports must honor cancellation.
+- Pi's own threshold/overflow compaction is intercepted too. If Pi already rolled over, no second compaction is requested; native overflow retry owns its continuation.
+- Requested rollover and interrupted work continue through a hidden recovery message. Rollover after a completed final answer does **not** produce another answer. Queued or newer user input takes precedence. Failures and cancellation stop rather than resuming unchanged history.
 
-### Fresh means no retained conversation tail
+These are estimates, not tokenizer guarantees. A large prompt or tool result can jump past the budget. A fresh window that immediately overflows again stops rather than repeatedly rolling over.
 
-The compaction hook supplies a deterministic bootstrap containing the saved checkpoint and note IDs. It appends an invisible session entry as Pi's `firstKeptEntryId`, so **no earlier user, assistant, or tool-result messages remain in the active window**. The ordinary system prompt and tools remain available. Pi's required `summary` field carries the bootstrap; no generated conversation summary is requested on this path.
+### No retained conversation tail
 
-The original JSONL history is not rewritten or deleted. `recall` can still read evidence before any number of resets. Ordinary compaction still has its normal summary/model costs when used as fallback.
+The hook appends an invisible boundary and uses it as Pi's `firstKeptEntryId`. **All earlier user, assistant and tool-result messages leave active context.** System instructions, tools, files and environment remain unchanged.
+
+Pi's required `summary` field contains only deterministic recovery instructions, the first and newest eight user-entry IDs, and the current note-name/ID index. It contains **no conversation summary, note bodies, or checkpoint prose**. A legacy checkpoint, if present, gets a pointer explicitly marked potentially stale. The agent must use `recall` to recover requirements, latest permissions and relevant findings before acting.
+
+Original JSONL history is not rewritten or deleted. Evidence remains accessible across repeated windows, reloads and resume.
 
 ## Tools
-
-### `recall`: read-only
-
-```javascript
-recall({ query: "First fix", limit: 5 });
-recall({ query: "First fix", cursor: "<nextCursor>", limit: 5 });
-recall({ entryId: "abc123", offset: 0, limit: 4000 });
-recall({ limit: 5 }); // recent evidence + current note index
-recall({ query: "Chrome", role: "user", source: "original", window: "previous" });
-recall({ query: "FAIL", toolName: "bash", source: "original" });
-```
-
-- Search is literal, case-sensitive, newest-first, scoped to the **current branch's ancestry**. No sibling or other-session search.
-- Search `limit` counts results: default 5, maximum 20. Snippets are at most 400 characters. The full note-name/entry-ID index appears only on the first unfiltered discovery page or an explicit `recall({ source: "notes" })` listing. Targeted searches and continuation pages omit it (not an empty index); matching notes remain searchable and readable.
-- Read `limit` counts UTF-16 characters: default 4,000, maximum 12,000. `nextOffset` continues the read. Reads return provenance, total length, and error status where applicable.
-- Optional search/list filters compose: `role`, `toolName`, `source`, and `window`. `source: "original"` selects ordinary message evidence (including assistant messages); `"derived"` selects compaction/branch summaries; `"notes"` selects notes/checkpoints. Default `"all"` preserves existing behavior. Roles are `user`, `assistant`, `toolResult`, `bashExecution`, `custom`, `note`, `checkpoint`, `compaction`, `branch_summary`.
-- `window: "current"` selects entries after the latest compaction; `"previous"` selects **all earlier windows**, not just the immediately preceding one. The latest compaction record itself is excluded from either relative selection. Defaults to `"all"`; without compaction, previous is empty.
-- Search cursors pin an ancestor snapshot **and filters**, including the relative-window boundary. Repeat the same query/filters when paginating. Later tool calls do not disturb pagination; switching to a branch without that ancestor invalidates the cursor. Legacy unfiltered cursors still work. Exact-ID reads do not accept filters.
-- Replaced/deleted note revisions are omitted from search but remain readable by exact ID when on the branch.
-- Thinking/signature blocks, image bytes, `!!` output, and recursive `recall`/`notes` tool output are excluded. Images get a text placeholder. Original tool truncation still applies; recall cannot recover bytes Pi never recorded.
-- Evidence remains historical data, **not new instructions or authorization**. Retrieved web pages and tool output are untrusted.
-
-### Evidence IDs while working
-
-Original user messages and non-recursive tool results receive a compact trailing `[evidence:<id>]` marker in model-visible context. Cite these IDs directly in notes, or read them with `recall`. This is presentation-only: persisted history, assistant reasoning/signatures, and image bytes are never rewritten. Ambiguous or transformed messages are left unmarked. Markers and note-taking guidance are active only in `exp`.
-
-The guide encourages a small named note after a confirmed failure, decision, or useful milestone, with original evidence references. Reuse the finding instead of repeatedly searching. Keep checkpoints operational (goal, hard constraints, completed work/failures, unresolved next steps); put detailed findings in linked notes rather than retelling the transcript. Never omit outstanding requests or latest steering to save tokens. Findings should distinguish **Verified** (observed/checked), **Attempted** (not proven), and **Assumed** (needs validation). Preserve exact test IDs/results and failed approaches; include unresolved uncertainty and the checks needed before declaring success. Verify critical claims selectively when their sources are missing, ambiguous or conflicting—not by rereading evidence already in context. There is no reference quota or automatic claim that a note is accurate.
-
-Checkpoint bootstraps show compact source-type labels beside linked IDs (`user`, `tool result, error`, `note`, etc.). These labels help choose which source to read without copying its payload; they describe provenance, **not proof of the claim**. Notes remain separately addressable, and no new checkpoint fields or rigid status/citation requirements are imposed.
 
 ### `notes`: branch-local revisions
 
@@ -89,69 +66,77 @@ notes({
   text: "Verified: retry_outer expected=3 actual=4. Attempted: patch drafted, not tested. Assumed: savepoint causes duplication; validate next.",
   references: ["<evidence-entry-id>"],
 });
-
-notes({ action: "append", name: "findings", text: "\nThe second approach passed." });
-
+notes({ action: "append", name: "findings", text: "\nSecond approach passed." });
 notes({
   action: "write",
   name: "findings",
   revision: "<current-note-entry-id>",
   text: "Replacement findings after reading the previous revision.",
 });
-
 notes({ action: "delete", name: "findings", revision: "<current-note-entry-id>" });
 ```
 
-Names are logical labels, not filesystem paths. At most 64 live notes, 12,000 characters each. Replacement/deletion requires the current revision; append joins text verbatim and merges evidence references. References must be readable entries on the active branch.
+Names are logical labels, not paths. Maximum 64 live notes, 12,000 characters each. Replacement/deletion requires the current revision; append joins verbatim and merges evidence references. References must be readable entries on the current branch.
 
-Notes are custom entries in Pi's session file, not a shared working-directory file. Resume, reload, fork and tree navigation reconstruct note state from ancestry. A fork inherits only revisions up to its fork point. Memory-only sessions can keep temporary notes, but cannot make durable fresh-reset checkpoints.
+Save concise findings after meaningful failures, decisions and milestones. Distinguish **Verified**, **Attempted** and **Assumed**; preserve exact test IDs/results and failed approaches. A handoff is just another note: include outstanding requests, latest steering/permissions, completed work, uncertainty and next checks. Put evidence IDs in `references`, not only prose. Links are not proof; verify critical claims selectively, without citation quotas or repeatedly rereading available evidence.
 
-### Checkpoint and continue
+Notes live in the session JSONL, not shared working-directory files. Resume, reload, fork and tree navigation reconstruct revisions from ancestry. Memory-only sessions can hold temporary notes but cannot roll over durably.
 
-Call this **alone**, with no sibling tools:
+### `new_context`: no arguments
 
 ```javascript
-notes({
-  action: "checkpoint",
-  checkpoint: {
-    goal: "Finish the requested retry fix.",
-    constraints: "Do not deploy or change database semantics. Include latest user steering.",
-    progress:
-      "Verified: retry_outer expected=3 actual=4. Attempted: second patch drafted, not tested. Assumed: savepoint causes duplication; verify next.",
-    nextSteps: "Run regression tests, inspect the diff, and report the result.",
-  },
-  references: ["<failure-output-id>", "<implementation-evidence-id>"],
-  reset: true,
-});
+new_context({});
 ```
 
-Each field must be nonempty and at most 3,000 characters. Put cited IDs in the `references` array, not only inline prose; inline citations are not automatically promoted to structured references. Omit `reset` to save without requesting a transition. The latest user entry is automatically included as an evidence reference.
+Save useful notes first, then request a fresh window. No handoff fields, references, reset flag or mandatory saved note. The request records the current user boundary so later steering can cancel an obsolete continuation.
 
-Before dropping active history, the extension checks:
+Before dropping active history the hook checks:
 
-1. The checkpoint's shape, evidence ancestry and coverage boundary.
-2. No later conversation, tool output, note revision, branch summary, compaction, or injected message invalidated that coverage. Only its own successful tool receipt may follow it.
-3. No queued user input is awaiting handling.
-4. The checkpoint is on disk, and **every current-branch entry matches the persisted archive**. Verification fsyncs the session and streams its JSONL records; a missing/changed record prevents a fresh reset.
-5. The session/branch and preference did not change during verification, both tools remain enabled, and the bootstrap leaves estimated model headroom.
+1. A persisted session and all three memory tools are available; preferences are readable and exp remains selected.
+2. No queued input or changed preparation branch would be dropped.
+3. Every current-branch entry, including the new boundary, matches the on-disk archive. Verification fsyncs and streams the JSONL; missing, changed or duplicate records block rollover.
+4. The branch, mode, tools and pending-input state remain valid after verification, and recovery instructions leave estimated context headroom.
 
-These are structural/persistence checks, **not proof that the model wrote a faithful checkpoint**. The model must preserve all outstanding requests, constraints, failures and next actions. Evidence IDs allow checking and recovery but do not replace good notes.
+These checks establish recoverability, not semantic accuracy of notes.
 
-## Local diagnostics
+**Upgrading:** neither `checkpoint(...)` nor `notes({action:"checkpoint", ...})` is registered anymore. Save handoffs using `notes`, then call `new_context({})`. Existing notes and legacy checkpoint records remain readable without migration. Reload Pi to replace the old schemas.
 
-Versioned `context.event` custom entries include the selected mode and record activation, reminder (once per window), reset request, actual compaction outcome (`fresh`, `normal`, or another hook's `other`), cancellation/failure, continuation, and subsequent input usage. Fallback reasons use fixed codes; raw errors, prompts, queries and credentials are not stored in diagnostics. They are excluded from recall evidence and do not enter model context.
+### `recall`: read-only evidence
 
-Outcome writes wait for Pi's terminal compaction hooks, so telemetry cannot invalidate the prepared branch. Input accounting sums `input + cacheRead + cacheWrite` from the next successful post-compaction assistant response; unmeasured boundaries survive reload and remain branch-local. This is **not billing**, and is not directly comparable to Pi's pre-compaction token estimate. Older sessions without these records have unknown activation/outcome history.
+```javascript
+recall({ query: "First fix", limit: 5 });
+recall({ query: "First fix", cursor: "<nextCursor>", limit: 5 });
+recall({ entryId: "abc123", offset: 0, limit: 4000 });
+recall({ limit: 5 }); // recent evidence + complete note index
+recall({ source: "notes" });
+recall({ query: "Chrome", role: "user", source: "original", window: "previous" });
+recall({ query: "FAIL", toolName: "bash", source: "original" });
+```
 
-## Fallback and limits
+- Literal, case-sensitive, newest-first search over **current-branch ancestry** only; no siblings or other sessions.
+- Search/list limit: default 5, maximum 20; snippets at most 400 characters. The complete note index appears on the first unfiltered discovery page or explicit notes listing, not on targeted searches or continuation pages.
+- Exact-ID read limit: default 4,000, maximum 12,000 UTF-16 characters; continue with `nextOffset`. Returns provenance, total length and applicable error status.
+- Filters compose: `role`, `toolName`, `source`, `window`. Sources: `original` (ordinary messages), `derived` (compaction/branch summaries), `notes` (notes/legacy checkpoints), or `all`. Roles: `user`, `assistant`, `toolResult`, `bashExecution`, `custom`, `note`, `checkpoint`, `compaction`, `branch_summary`.
+- `current` means after the latest compaction; `previous` means **all earlier windows**. Both exclude that compaction entry. Without compaction, previous is empty. Default: all.
+- Cursors pin ancestry and filters, including window boundaries. Repeat the same query/filters when paginating. Exact-ID reads reject filters. Legacy unfiltered cursors remain supported.
+- Replaced/deleted notes are hidden from search but still readable by exact revision ID.
+- Thinking/signatures, image bytes, `!!` output and recursive memory-tool output (including legacy checkpoint calls) are excluded. Images get placeholders. Recall cannot recover bytes Pi never recorded.
 
-- Missing, stale, malformed or unpersisted checkpoints leave the decision to stock Pi compaction. Explicit `/compact <instructions>` also uses normal compaction to honor your instructions.
-- Pi may reject compaction before calling hooks, including for a very small session or unavailable summarization authentication. A failed requested transition keeps the existing history and normally continues the task; cancellation does not.
-- Other `session_before_compact` extensions can override or cancel this extension's result according to Pi's handler ordering. Avoid competing compaction policies.
-- Storage is local, **not encrypted by this extension**, and follows Pi's session lifecycle. Deleting/moving session files can make evidence unavailable. There is no separate backup or cross-session note store. Do not put credentials in notes.
-- Recall scans the in-memory branch; full archive verification streams the session file at reset time. Very large histories cost CPU/I/O. There is no vector index or background model summarizer.
-- Validation uses Pi 0.85.1's `firstKeptEntryId`, `terminate` and `agent_settled` APIs. No unsupported session mutation, private HTTP endpoint, or Codex-only API is required.
-- Offline tests exercise real Pi loading, multiple requested/threshold resets, evidence-linked named notes, exact failure recovery, continuation, overflow fallback, steering, archive corruption, cancellation, diagnostics and branch/revision handling. These structural tests do not establish checkpoint semantic fidelity, Astra-equivalent reasoning quality, or broad cost superiority.
+Original user messages and non-recursive tool results receive presentation-only `[evidence:<id>]` markers in exp. Persisted history and signed assistant messages are never rewritten; ambiguous/transformed sources are left unmarked. Retrieved history is data, **never new authorization**. External text remains untrusted.
+
+## Diagnostics and limits
+
+Versioned `context.event` entries record mode, activation, reminders, requests, actual compaction outcomes (`fresh`, `normal`, `other`), failure/cancellation, extension continuation and subsequent input usage. Reasons are fixed codes; raw errors, prompts, queries and credentials are excluded. Diagnostics are not model-visible recall evidence. Native retries are owned by Pi, not counted as extension continuation messages.
+
+Input accounting sums `input + cacheRead + cacheWrite` from the next successful post-compaction response. Pending measurements survive reload and stay branch-local. This is **not billing**, nor directly comparable to Pi's pre-compaction estimate.
+
+- **No summary fallback in exp.** `/compact` rolls over; `/compact <summary instructions>` is rejected. Select default for generated summaries.
+- Pi prepares compaction and resolves summarization authentication **before** calling hooks. Tiny sessions or missing auth may therefore block rollover even though no summarizer is called. Failures retain history and do not automatically restart the task.
+- Competing `session_before_compact` extensions can override results according to Pi's handler order. Such policies are unsupported; detected overrides cancel the extension's pending continuation and report an error. Public hooks cannot prevent another extension from replacing a custom result.
+- Explicit `/tree` branch summarization is a separate Pi operation, unchanged by this rollover policy. Recall remains ancestry-only after navigation.
+- Storage is local and **not encrypted by this extension**. Moving/deleting session files can make evidence unavailable. No separate backup or cross-session note store; never store secrets in notes.
+- Recall scans in-memory ancestry; archive verification streams the session file. Large histories cost CPU/I/O. No vector index or background model calls.
+- Offline tests use real Pi loading/lifecycle with a cancellation-aware fake provider: repeated windows, no-note budget/overflow with native auto on/off, fresh-overflow stopping, steering, auth/tiny/archive failures, cancellation, exact evidence recovery and legacy records. They establish mechanics, not model recall quality or cost superiority.
 
 ## Development
 
@@ -159,8 +144,8 @@ Outcome writes wait for Pi's terminal compaction hooks, so telemetry cannot inva
 bun run --filter pi-context check
 
 # Opt-in: consumes xAI subscription allowance; requires existing OAuth, never an API key.
-# --output is required; results are disposable and existing files are not overwritten.
+# Disposable output is required; existing files are not overwritten.
 bun extensions/context/evals/run.ts --run-subscription --output=/tmp/context-eval-new.json
 ```
 
-The current evaluation uses six isolated synthetic tasks (three scenarios × default/exp), two transitions per task, Grok 4.5 with low thinking, a 14-call/1,600-output-token-per-call ceiling and a three-minute deadline per task. No user sessions, context files, extensions or filesystem/network tools are exposed to the model. Credentials stay in memory; user auth/settings files are not modified. Normal checks never make provider calls. For one bounded follow-up cell, add `--only=failure:exp` (or another scenario:mode pair).
+The evaluation uses six isolated synthetic tasks (three scenarios × default/exp), two transitions per task, Grok 4.5 low thinking, a 14-call/1,600-output-token-per-call ceiling and a three-minute deadline. No user sessions, context files, extensions or filesystem/network tools are exposed to the model. Credentials stay in memory; user auth/settings are not modified. Normal checks never make provider calls. Select one cell with `--only=failure:exp` (or another scenario:mode pair).

@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { CHECKPOINT_TYPE, currentNotes, latestCheckpoint, recall } from "../model.ts";
+import { currentNotes, recall } from "../model.ts";
 import { saveEnabled } from "../state.ts";
 import { diagnostics } from "../diagnostics.ts";
-import { assistant, checkpoint, harness, receipt, toolCall, user } from "./helpers.ts";
+import { assistant, harness, toolCall, user } from "./helpers.ts";
 
 test("/context default|exp|status persists globally and preserves notes while disabled", async (t) => {
   const app = await harness(t);
@@ -18,7 +18,7 @@ test("/context default|exp|status persists globally and preserves notes while di
     references: [request],
   });
   const id = (note.details as { entryId: string }).entryId;
-  await app.saveCheckpoint();
+  await app.newContext();
   await app.command("off");
   assert.equal(app.notifications.at(-1), "Context default");
   await assert.rejects(app.execute("recall", { entryId: id }), /disabled/);
@@ -51,11 +51,11 @@ test("external preference changes refresh the status while idle", async (t) => {
 test("corrupt preferences fail safe and /context on repairs them", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  await app.saveCheckpoint();
+  await app.newContext();
   await writeFile(app.path, "bad json");
-  assert.equal(await app.beforeCompact(), undefined);
-  assert.equal(app.statuses.get("context"), "ctxt default !");
-  assert.ok(!app.controls.tools.includes("recall"));
+  assert.deepEqual(await app.beforeCompact(), { cancel: true });
+  assert.equal(app.statuses.get("context"), "ctxt exp !");
+  await assert.rejects(app.execute("recall", {}), /disabled/);
   await app.command("on");
   assert.equal(app.statuses.get("context"), "ctxt exp");
 });
@@ -136,8 +136,7 @@ test("fresh reset drops every old active message but retains exact evidence over
     timestamp: Date.now(),
   });
   for (let i = 0; i < 3; i++) {
-    const saved = await app.saveCheckpoint(false, `checkpoint-${i}`);
-    assert.equal(saved.terminate, undefined);
+    // Manual/automatic rollover needs no note, checkpoint or model-authored handoff.
     const result = await app.beforeCompact();
     assert.ok(result?.compaction);
     const compact = result.compaction;
@@ -150,7 +149,7 @@ test("fresh reset drops every old active message but retains exact evidence over
     );
     await app.emit("session_compact", { compactionEntry: app.sm.getEntry(id) });
     const active = JSON.stringify(app.sm.buildSessionContext().messages);
-    assert.match(active, /First fix failed/);
+    assert.match(active, /recall/);
     assert.doesNotMatch(
       active,
       /ORIGINAL USER REQUEST|OLD ASSISTANT TEXT|ARCHIVED ORIGINAL TOOL OUTPUT|toolCall|toolResult/,
@@ -163,7 +162,11 @@ test("fresh reset drops every old active message but retains exact evidence over
       JSON.stringify(recall(app.sm.getBranch(), { entryId: original })),
       /ORIGINAL USER REQUEST/,
     );
-    assert.equal(await app.beforeCompact(), undefined, "cannot reuse a consumed checkpoint");
+    assert.deepEqual(
+      await app.beforeCompact({ reason: "overflow" }),
+      { cancel: true },
+      "fresh overflow cannot loop",
+    );
     user(app.sm, `Continue iteration ${i}`);
   }
   const reopened = SessionManager.open(app.sm.getSessionFile()!);
@@ -174,73 +177,57 @@ test("fresh reset drops every old active message but retains exact evidence over
   assert.equal(reopened.getBranch().filter((entry) => entry.type === "compaction").length, 3);
 });
 
-test("checkpoint must be solo, references latest user, and stale/failed saves use normal compaction", async (t) => {
+test("sibling batches can request rollover, newer steering cancels continuation, verification failure cancels compaction", async (t) => {
   const app = await harness(t);
-  const request = user(app.sm);
-  toolCall(app.sm, "checkpoint-call", [
+  user(app.sm);
+  toolCall(app.sm, "window-call", [
     { type: "toolCall", id: "sibling", name: "bash", arguments: {} },
   ]);
-  await assert.rejects(
-    app.execute("notes", { action: "checkpoint", checkpoint, reset: true }),
-    /alone/,
-  );
-  assert.equal(latestCheckpoint(app.sm.getBranch()), undefined);
-  assert.equal(await app.beforeCompact(), undefined);
-  await app.saveCheckpoint();
-  assert.ok(latestCheckpoint(app.sm.getBranch())!.data.references.includes(request));
+  assert.equal((await app.execute("new_context", {})).terminate, true);
   user(app.sm, "Late steering: do not touch the database");
-  assert.equal(await app.beforeCompact(), undefined);
+  await app.emit("agent_settled");
+  assert.equal(app.compactions.length, 0);
+  assert.equal(app.sent.length, 0);
   const broken = await harness(t, {
     verify: async () => {
       throw new Error("disk full");
     },
   });
   user(broken.sm);
-  toolCall(broken.sm);
-  await assert.rejects(
-    broken.execute("notes", { action: "checkpoint", checkpoint, reset: true }),
-    /disk full/,
-  );
-  receipt(broken.sm, "checkpoint-call", true);
-  assert.equal(await broken.beforeCompact(), undefined);
-  await broken.emit("agent_settled");
-  assert.equal(broken.compactions.length, 0);
+  await broken.newContext();
+  assert.deepEqual(await broken.beforeCompact(), { cancel: true });
+  assert.match(broken.notifications.at(-1)!, /disk full.*No summary/);
 });
 
-test("in-memory sessions never discard history through a fresh checkpoint", async (t) => {
+test("in-memory sessions never discard history or fall back to a summary", async (t) => {
   const app = await harness(t, {}, SessionManager.inMemory());
   user(app.sm);
   toolCall(app.sm);
-  await assert.rejects(
-    app.execute("notes", { action: "checkpoint", checkpoint, reset: true }),
-    /persisted session/,
-  );
-  receipt(app.sm);
-  assert.equal(await app.beforeCompact(), undefined);
+  await assert.rejects(app.execute("new_context", {}), /persisted session/);
+  assert.deepEqual(await app.beforeCompact(), { cancel: true });
 });
 
 test("compaction rechecks disk, current branch, cancellation, tools, and custom instructions", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  await app.saveCheckpoint();
-  assert.equal(
-    await app.beforeCompact({ customInstructions: "Preserve the deployment log" }),
-    undefined,
-  );
+  await app.newContext();
+  assert.deepEqual(await app.beforeCompact({ customInstructions: "Preserve the deployment log" }), {
+    cancel: true,
+  });
   app.controls.tools = ["notes"];
-  assert.equal(await app.beforeCompact(), undefined);
-  app.controls.tools = ["notes", "recall"];
+  assert.deepEqual(await app.beforeCompact(), { cancel: true });
+  app.controls.tools = ["notes", "recall", "new_context"];
   const abort = new AbortController();
   abort.abort();
   assert.deepEqual(await app.beforeCompact({ signal: abort.signal }), { cancel: true });
   await writeFile(app.sm.getSessionFile()!, "");
-  assert.equal(await app.beforeCompact(), undefined);
+  assert.deepEqual(await app.beforeCompact(), { cancel: true });
 });
 
 test("reset is deferred until agent_settled; callbacks continue only the same idle task", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  const result = await app.saveCheckpoint(true);
+  const result = await app.newContext();
   assert.equal(result.terminate, true);
   assert.equal(app.compactions.length, 0);
   await app.emit("turn_end");
@@ -257,7 +244,7 @@ test("reset is deferred until agent_settled; callbacks continue only the same id
 test("automatic threshold reset continues once without a second manual compaction", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  await app.saveCheckpoint(true);
+  await app.newContext();
   const compact = (await app.beforeCompact())!.compaction!;
   const id = app.sm.appendCompaction(
     compact.summary,
@@ -276,7 +263,7 @@ test("cancellation, tree navigation, shutdown and queued steering never spurious
   for (const mode of ["abort", "tree", "shutdown", "pending", "busy"]) {
     const app = await harness(t);
     user(app.sm);
-    await app.saveCheckpoint(true);
+    await app.newContext();
     await app.emit("agent_settled");
     if (mode === "abort") await app.emit("session_compact_failed", { aborted: true });
     if (mode === "tree") await app.emit("session_tree");
@@ -288,16 +275,55 @@ test("cancellation, tree navigation, shutdown and queued steering never spurious
   }
 });
 
-test("failed manual transition resumes unchanged history, but an aborted one does not", async (t) => {
+test("failed and aborted transitions both stop without restarting unchanged history", async (t) => {
   for (const error of [new Error("No API key"), new Error("Compaction cancelled")]) {
     const app = await harness(t);
     user(app.sm);
-    await app.saveCheckpoint(true);
+    await app.newContext();
     await app.emit("agent_settled");
     app.compactions[0]!.onError!(error);
-    assert.equal(app.sent.length, error.message.includes("cancelled") ? 0 : 1);
+    assert.equal(app.sent.length, 0);
     assert.equal(app.sm.getBranch().filter((entry) => entry.type === "compaction").length, 0);
   }
+});
+
+test("late user input between verification and completion prevents continuation", async (t) => {
+  const app = await harness(t);
+  user(app.sm);
+  await app.newContext();
+  await app.emit("agent_settled");
+  const compact = (await app.beforeCompact())!.compaction!;
+  user(app.sm, "Actually stop here");
+  app.compactions[0]!.onComplete!(compact);
+  assert.equal(app.sent.length, 0);
+});
+
+test("a competing compaction result cannot consume a summary-free continuation", async (t) => {
+  const app = await harness(t);
+  user(app.sm);
+  await app.newContext();
+  await app.emit("agent_settled");
+  await app.beforeCompact();
+  const id = app.sm.appendCompaction("another policy", app.sm.getLeafId()!, 100, {}, true);
+  await app.emit("session_compact", { compactionEntry: app.sm.getEntry(id) });
+  app.compactions[0]!.onComplete!({
+    summary: "another policy",
+    firstKeptEntryId: id,
+    tokensBefore: 100,
+  });
+  assert.equal(app.sent.length, 0);
+  assert.match(app.notifications.at(-1)!, /overrode/);
+});
+
+test("unavailable memory tools at the budget limit stop instead of silently continuing", async (t) => {
+  const app = await harness(t);
+  app.controls.tools = ["read"];
+  app.controls.tokens = 120_000;
+  await app.emit("turn_end", { message: assistant([{ type: "text", text: "Done" }], 120_000) });
+  assert.equal(app.controls.aborts, 1);
+  assert.match(app.notifications.at(-1)!, /unavailable/);
+  await app.emit("agent_settled");
+  assert.equal(app.compactions.length, 0);
 });
 
 test("branch changes during asynchronous disk verification prevent replacement", async (t) => {
@@ -308,15 +334,10 @@ test("branch changes during asynchronous disk verification prevent replacement",
     },
   });
   user(app.sm);
-  await app.saveCheckpoint();
+  await app.newContext();
   mutate = () => {
     user(app.sm, "steering arrived during verification");
   };
-  assert.equal(await app.beforeCompact(), undefined);
+  assert.deepEqual(await app.beforeCompact(), { cancel: true });
   assert.equal(app.sm.getBranch().filter((entry) => entry.type === "compaction").length, 0);
-  assert.ok(
-    app.sm
-      .getBranch()
-      .some((entry) => entry.type === "custom" && entry.customType === CHECKPOINT_TYPE),
-  );
 });

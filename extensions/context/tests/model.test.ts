@@ -4,8 +4,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   CHECKPOINT_TYPE,
   NOTE_TYPE,
-  bootstrap,
-  checkpointProblem,
+  windowBootstrap,
   currentNotes,
   evidenceFor,
   latestCheckpoint,
@@ -133,49 +132,22 @@ test("text recall excludes hidden reasoning, images bytes, !! output, and recurs
   assert.doesNotMatch(text, /PRIVATE|SECRET|Saved/);
 });
 
-test("checkpoint rejects late steering, sibling tool results, errors, new notes, and repeated resets", () => {
-  for (const change of ["user", "assistant", "tool", "error", "custom", "note", "compaction"]) {
-    const sm = SessionManager.inMemory();
-    const request = user(sm);
-    const through = toolCall(sm);
-    sm.appendCustomEntry(CHECKPOINT_TYPE, {
-      version: 1,
-      checkpoint,
-      references: [request],
-      coveredThrough: through,
-      toolCallId: "checkpoint-call",
-    });
-    const saved = latestCheckpoint(sm.getBranch())!;
-    receipt(sm);
-    assert.equal(checkpointProblem(sm.getBranch(), saved), undefined);
-    const boot = bootstrap(saved, sm.getBranch());
-    assert.match(boot, /First fix failed/);
-    assert.match(boot, new RegExp(request));
-    if (change === "user") user(sm, "Actually, do not change the database");
-    if (change === "assistant")
-      sm.appendMessage(assistant([{ type: "text", text: "One more thing" }]));
-    if (change === "tool")
-      sm.appendMessage({
-        role: "toolResult",
-        toolCallId: "other",
-        toolName: "bash",
-        content: [{ type: "text", text: "New finding" }],
-        isError: false,
-        timestamp: Date.now(),
-      });
-    if (change === "error") receipt(sm, "checkpoint-call", true);
-    if (change === "custom") sm.appendCustomMessageEntry("other", "new instruction", false);
-    if (change === "note")
-      sm.appendCustomEntry(NOTE_TYPE, {
-        version: 1,
-        name: "extra",
-        text: "new",
-        references: [],
-        deleted: false,
-      });
-    if (change === "compaction") sm.appendCompaction(boot, saved.entryId, 1000);
-    assert.ok(checkpointProblem(sm.getBranch(), saved), change);
-  }
+test("deterministic bootstrap contains recovery pointers, not conversation or note payloads", () => {
+  const sm = SessionManager.inMemory();
+  const first = user(sm, "Original private task payload");
+  const ids = Array.from({ length: 12 }, (_, i) => user(sm, `Steering payload ${i}`));
+  const note = sm.appendCustomEntry(NOTE_TYPE, {
+    version: 1,
+    name: "finding",
+    text: "Detailed note payload",
+    references: [first],
+    deleted: false,
+  });
+  const boot = windowBootstrap(sm.getBranch());
+  assert.equal(windowBootstrap(sm.getBranch()), boot);
+  for (const id of [first, ...ids.slice(-8), note]) assert.ok(boot.includes(id));
+  assert.doesNotMatch(boot, /Original private|Steering payload|Detailed note payload/);
+  assert.match(boot, /finding/);
 });
 
 test("corrupt checkpoint cannot revive an older checkpoint", () => {

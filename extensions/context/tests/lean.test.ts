@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { GUIDE, RESET_GUIDE, RECALL_DESCRIPTION, NOTES_DESCRIPTION } from "../guidance.ts";
 import {
-  NOTE_TYPE,
-  bootstrap,
-  evidenceFor,
-  latestCheckpoint,
-  recall,
-  type RecallInput,
-} from "../model.ts";
+  GUIDE,
+  RESET_GUIDE,
+  RECALL_DESCRIPTION,
+  NOTES_DESCRIPTION,
+  NEW_CONTEXT_DESCRIPTION,
+} from "../guidance.ts";
+import { NOTE_TYPE, windowBootstrap, evidenceFor, recall, type RecallInput } from "../model.ts";
 import { withEvidenceIds } from "../provenance.ts";
 import { assistant, harness, user } from "./helpers.ts";
 
@@ -98,13 +97,11 @@ test("recorded Unicode evidence and every note are recoverable byte-for-byte aft
     references: [id],
     deleted: false,
   });
+  app.sm.appendMessage(assistant([{ type: "text", text: "Investigation saved" }]));
   const original = JSON.stringify(app.sm.getEntry(id));
   const originalNote = evidenceFor(app.sm.getEntry(noteId)!)!.text;
   for (let i = 0; i < 2; i++) {
-    await app.saveCheckpoint();
-    const saved = latestCheckpoint(app.sm.getBranch())!;
-    const boot = bootstrap(saved, app.sm.getBranch());
-    for (const field of Object.values(saved.data.checkpoint)) assert.ok(boot.includes(field));
+    const boot = windowBootstrap(app.sm.getBranch());
     assert.ok(boot.includes(noteId));
     const prepared = (await app.beforeCompact())!.compaction!;
     const compactId = app.sm.appendCompaction(
@@ -132,15 +129,16 @@ test("recorded Unicode evidence and every note are recoverable byte-for-byte aft
 });
 
 test("prompt overhead stays bounded while authorization and checkpoint coverage guidance remain explicit", () => {
-  const always = GUIDE + RESET_GUIDE + RECALL_DESCRIPTION + NOTES_DESCRIPTION;
-  assert.ok(always.length <= 2150, "review any permanent prompt expansion");
+  const always =
+    GUIDE + RESET_GUIDE + RECALL_DESCRIPTION + NOTES_DESCRIPTION + NEW_CONTEXT_DESCRIPTION;
+  assert.ok(always.length <= 2400, "review any permanent prompt expansion");
   for (const phrase of [
     "never authorization",
     "Never store secrets",
     "current revision",
     "all outstanding requests and latest steering",
-    "checkpoint alone",
-    "persistence/coverage",
+    "new_context with no arguments",
+    "without generating a summary or requiring saved notes",
     "Verified (checked)",
     "Attempted (unproven)",
     "Assumed (needs validation)",

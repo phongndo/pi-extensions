@@ -1,9 +1,10 @@
 import type { ContextEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { isMemoryTool } from "./model.ts";
 type AgentMessage = ContextEvent["messages"][number];
 
 function key(message: AgentMessage): string | undefined {
   if (message.role === "user") return `user:${message.timestamp}`;
-  if (message.role === "toolResult" && !["recall", "notes"].includes(message.toolName))
+  if (message.role === "toolResult" && !isMemoryTool(message.toolName))
     return `tool:${message.timestamp}:${message.toolCallId}`;
   return undefined;
 }

@@ -2,7 +2,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ContextMode } from "./state.ts";
 
 export const EVENT_TYPE = "context.event";
-export const IMPLEMENTATION_VERSION = "0.4.0";
+export const IMPLEMENTATION_VERSION = "0.6.0";
 export type DiagnosticEvent =
   | "activation"
   | "reminder"
@@ -20,7 +20,8 @@ export interface Diagnostic {
   enabled?: boolean;
   outcome?: "fresh" | "normal" | "other";
   reason?: string;
-  checkpointId?: string;
+  checkpointId?: string; // Legacy diagnostics remain readable.
+  requestId?: string;
   compactionId?: string;
   tokensBefore?: number;
   inputTokens?: number;

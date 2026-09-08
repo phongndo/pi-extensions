@@ -58,7 +58,10 @@ test("mode switches retain notes and restore only memory tools hidden by this ex
   const app = await harness(t, { initialMode: "default" });
   const id = user(app.sm);
   await app.command("exp");
-  assert.deepEqual(new Set(app.controls.tools), new Set(["read", "bash", "recall", "notes"]));
+  assert.deepEqual(
+    new Set(app.controls.tools),
+    new Set(["read", "bash", "recall", "notes", "new_context"]),
+  );
   const note = await app.execute("notes", {
     action: "write",
     name: "decision",
@@ -93,7 +96,7 @@ test("shutdown releases suppression even when the old runtime is aborting", asyn
 test("only exp permits a verified fresh window; removed commands are rejected", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  await app.saveCheckpoint();
+  await app.newContext();
   await app.command("default");
   const leaf = app.sm.getLeafId();
   assert.equal(await app.beforeCompact(), undefined);
@@ -110,7 +113,7 @@ test("only exp permits a verified fresh window; removed commands are rejected", 
 test("mid-turn switches block stale memory calls and defer schema changes until idle", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  await app.saveCheckpoint(true);
+  await app.newContext();
   app.controls.idle = false;
   await app.command("default");
   assert.ok(app.controls.tools.includes("notes"));
@@ -119,7 +122,7 @@ test("mid-turn switches block stale memory calls and defer schema changes until 
   await app.emit("agent_settled");
   assert.ok(!app.controls.tools.includes("notes"));
   assert.equal(app.compactions.length, 0);
-  assert.equal(app.sent.length, 1, "do not strand a terminating checkpoint");
+  assert.equal(app.sent.length, 0, "mode changes stop rather than silently resume old history");
 });
 
 test("external mode changes synchronize when idle; corrupt preferences fail closed", async (t) => {

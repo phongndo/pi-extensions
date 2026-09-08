@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ResetController } from "../reset.ts";
 
-test("requests are consumed once and any successful compaction permits continuation", () => {
+test("requests are consumed once and confirmed rollover permits continuation", () => {
   const reset = new ResetController();
   assert.equal(reset.take(), undefined);
   reset.request("checkpoint");
   assert.equal(reset.compacted(), "checkpoint");
-  assert.deepEqual(reset.take(), { checkpointId: "checkpoint", compacted: true });
+  assert.deepEqual(reset.take(), { requestId: "checkpoint", compacted: true });
   assert.equal(reset.take(), undefined);
   assert.equal(reset.compacted(), undefined);
 });
@@ -18,7 +18,7 @@ test("aborting an older request cannot cancel its replacement", () => {
   reset.request("old", abort.signal);
   reset.request("new");
   abort.abort();
-  assert.deepEqual(reset.take(), { checkpointId: "new", compacted: false });
+  assert.deepEqual(reset.take(), { requestId: "new", compacted: false });
   reset.request("aborted", abort.signal);
   assert.equal(reset.take(), undefined);
 });

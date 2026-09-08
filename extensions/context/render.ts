@@ -140,8 +140,14 @@ export function renderNotesCall(args: Args, theme: Theme): Component {
     theme.fg("toolTitle", theme.bold("notes")) +
       " " +
       theme.fg("muted", inline(args.action)) +
-      (args.name ? " " + theme.fg("accent", inline(args.name)) : "") +
-      (args.reset ? theme.fg("dim", " · fresh window requested") : ""),
+      (args.name ? " " + theme.fg("accent", inline(args.name)) : ""),
+  ]);
+}
+
+export function renderNewContextCall(_args: object, theme: Theme): Component {
+  return view(() => [
+    theme.fg("toolTitle", theme.bold("new_context")) +
+      theme.fg("muted", " · summary-free rollover requested"),
   ]);
 }
 
@@ -154,7 +160,7 @@ export function renderNotesResult(
   return view(() => {
     if (options.isPartial) return [theme.fg("muted", "Saving…")];
     const raw = clean(output(result));
-    // Preserve checkpoint caveats: requested is not the same as completed.
+    // Preserve rollover caveats: requested is not the same as completed.
     const compact = raw.replace(/\. Read this entryId with recall\.$/, ".");
     return [
       theme.fg(isError ? "error" : "success", isError ? "" : "✓ ") +

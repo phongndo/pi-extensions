@@ -1,18 +1,18 @@
 # Pi Extensions
 
-A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, checkpoint-based context management, bounded web access, MCP tools, twelve skills, and the `origin` theme.
+A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, summary-free context rollover, bounded web access, MCP tools, twelve skills, and the `origin` theme.
 
 This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md) distributes compatible skill copies to other agents through their existing adapters. Chezmoi retains the single native `~/.pi/agent/settings.json` template and package pointer; it does not generate a Pi mirror or write into this checkout. Other agents keep their own native config/skill roots, not Pi package copies.
 
 ## Extension suite
 
-| Extension                                   | Entry points                                         | Side effects                                                                                  |
-| ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Question](extensions/question/README.md)   | `question`                                           | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
-| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`          | Global preference; eligible Codex requests ask for priority service, which may affect billing |
-| [Context](extensions/context/README.md)     | `/context [default\|exp\|status]`, `recall`, `notes` | Opt-in checkpoint fresh windows; ordinary Pi compaction by default                            |
-| [Web Tools](extensions/web-tools/README.md) | `search`, `map`, `fetch`, `crawl`, `extract`         | Calls Firecrawl and spends provider credits                                                   |
-| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                          | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
+| Extension                                   | Entry points                                                        | Side effects                                                                                  |
+| ------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [Question](extensions/question/README.md)   | `question`                                                          | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
+| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`                         | Global preference; eligible Codex requests ask for priority service, which may affect billing |
+| [Context](extensions/context/README.md)     | `/context [default\|exp\|status]`, `recall`, `notes`, `new_context` | Opt-in summary-free rollover; ordinary Pi compaction by default                               |
+| [Web Tools](extensions/web-tools/README.md) | `search`, `map`, `fetch`, `crawl`, `extract`                        | Calls Firecrawl and spends provider credits                                                   |
+| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                                         | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
 
 Native footer slots display minimal, separated labels such as `ctxt exp · speed fast · mcp 1/2`. Fast is hidden when off. Context displays `ctxt default` or `ctxt exp`; memory tools are available only in `exp`.
 
@@ -92,20 +92,20 @@ Treat returned web content as untrusted data. Crawl and extraction can cost subs
 /context exp
 ```
 
-In `exp`, the agent saves notes and a verified checkpoint before replacing its active history with a fresh window. Original evidence remains accessible through `recall`. `default` uses ordinary Pi compaction and disables memory tools without deleting saved notes or history. See [Context](extensions/context/README.md) for persistence checks, continuation, and fallback behavior.
+In `exp`, `notes` saves reusable findings and handoffs, `new_context({})` requests a fresh window, and `recall` recovers archived evidence. Budget and overflow also trigger rollover without requiring notes or generating summaries. Failures stop rather than falling back to summaries. `default` keeps ordinary Pi compaction and disables memory tools without deleting notes or history. See [Context](extensions/context/README.md) for persistence checks, continuation, and limits.
 
 ## Configuration and persisted data
 
 Paths assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature       | Location                                  | Contents                                                     |
-| ------------- | ----------------------------------------- | ------------------------------------------------------------ |
-| Theme         | `themes/origin.json`                      | Packaged TUI theme; select `origin` in settings              |
-| Fast Mode     | `~/.pi/agent/fast-mode.json`              | Global on/off preference                                     |
-| Context       | `~/.pi/agent/context.json`; session JSONL | Global preference; branch-local notes, checkpoints, evidence |
-| Firecrawl key | `~/.pi/agent/auth.json`                   | Native credential store, created with `0600` permissions     |
-| MCP servers   | `~/.config/mcp/mcp.json`                  | Shared server definitions                                    |
-| MCP overlay   | `~/.pi/agent/mcp.json`                    | Pi-only enable/disable flags, not copied shared secrets      |
+| Feature       | Location                                  | Contents                                                          |
+| ------------- | ----------------------------------------- | ----------------------------------------------------------------- |
+| Theme         | `themes/origin.json`                      | Packaged TUI theme; select `origin` in settings                   |
+| Fast Mode     | `~/.pi/agent/fast-mode.json`              | Global on/off preference                                          |
+| Context       | `~/.pi/agent/context.json`; session JSONL | Global preference; branch-local notes, rollover records, evidence |
+| Firecrawl key | `~/.pi/agent/auth.json`                   | Native credential store, created with `0600` permissions          |
+| MCP servers   | `~/.config/mcp/mcp.json`                  | Shared server definitions                                         |
+| MCP overlay   | `~/.pi/agent/mcp.json`                    | Pi-only enable/disable flags, not copied shared secrets           |
 
 ## Security model
 

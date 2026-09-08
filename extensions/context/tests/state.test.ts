@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { loadEnabled, saveEnabled, verifySavedEntry } from "../state.ts";
-import { temporary } from "./helpers.ts";
+import { loadEnabled, saveEnabled, verifyArchive } from "../state.ts";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { assistant, temporary, user } from "./helpers.ts";
 
 test("global preference defaults to Pi, writes atomically, and rejects corruption", async (t) => {
   const root = await temporary(t);
@@ -31,20 +32,19 @@ test("global preference defaults to Pi, writes atomically, and rejects corruptio
   }
 });
 
-test("checkpoint verification checks persisted data, rejects memory-only, and bounds disk reads", async (t) => {
-  const path = join(await temporary(t), "session.jsonl");
-  const data = { version: 1, text: "A\u0000".repeat(6000) };
-  await writeFile(
-    path,
-    JSON.stringify({ id: "old", data: "x".repeat(300_000) }) +
-      "\n" +
-      JSON.stringify({ id: "checkpoint", data }) +
-      "\n",
-  );
-  await verifySavedEntry(path, "checkpoint", data);
-  await assert.rejects(verifySavedEntry(path, "checkpoint", { version: 2 }));
-  await assert.rejects(verifySavedEntry(undefined, "checkpoint", data), /persisted session/);
-  await assert.rejects(verifySavedEntry(path, "missing", data));
-  await writeFile(path, '{"id":"checkpoint",');
-  await assert.rejects(verifySavedEntry(path, "checkpoint", data));
+test("archive verification streams large records and rejects missing, changed, aborted and memory-only archives", async (t) => {
+  const root = await temporary(t);
+  const sm = SessionManager.create(root, join(root, "sessions"));
+  user(sm, "A\u0000".repeat(150_000));
+  sm.appendMessage(assistant([{ type: "text", text: "Persist" }]));
+  const path = sm.getSessionFile()!;
+  await verifyArchive(path, sm.getBranch());
+  await assert.rejects(verifyArchive(undefined, sm.getBranch()), /persisted session/);
+  const signal = AbortSignal.abort();
+  await assert.rejects(verifyArchive(path, sm.getBranch(), signal));
+  const saved = await readFile(path, "utf8");
+  for (const corrupt of ["", saved.replace("Persist", "Changed"), '{"id":"broken",']) {
+    await writeFile(path, corrupt);
+    await assert.rejects(verifyArchive(path, sm.getBranch()));
+  }
 });

@@ -9,34 +9,28 @@ import { Type } from "typebox";
 import { setFooterStatus } from "../../src/footer-status.ts";
 import {
   NOTE_TYPE,
-  CHECKPOINT_TYPE,
   WINDOW_TYPE,
   MAX_NOTE_CHARS,
   MAX_NOTES,
-  bootstrap,
-  checkpointProblem,
+  MEMORY_TOOLS,
+  windowBootstrap,
   currentNotes,
-  isCheckpoint,
-  latestCheckpoint,
   recall,
   validateReferences,
   type NoteData,
-  type CheckpointData,
 } from "./model.ts";
-import { MODES, isMode, loadMode, saveMode, verifySavedEntry, type ContextMode } from "./state.ts";
+import { MODES, isMode, loadMode, saveMode, verifyArchive, type ContextMode } from "./state.ts";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 import {
   renderRecallCall,
   renderRecallResult,
   renderNotesCall,
   renderNotesResult,
+  renderNewContextCall,
 } from "./render.ts";
 
 const strict = { additionalProperties: false };
-const text = () => Type.String({ minLength: 1, maxLength: 3000 });
-const checkpointSchema = Type.Object(
-  { goal: text(), constraints: text(), progress: text(), nextSteps: text() },
-  strict,
-);
+const REQUEST_TYPE = "context.request";
 const referenceSchema = Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
   maxItems: 50,
   uniqueItems: true,
@@ -49,14 +43,16 @@ import {
   CONTINUE,
   RECALL_DESCRIPTION,
   NOTES_DESCRIPTION,
+  NEW_CONTEXT_DESCRIPTION,
 } from "./guidance.ts";
 
 export interface ContextOptions {
   statePath?: string;
   pollMs?: number;
   reminderTokens?: number;
+  rolloverTokens?: number;
   /** Test/embedding seam; no model calls are made by this extension. */
-  verify?: typeof verifySavedEntry;
+  verify?: typeof verifyArchive;
 }
 
 import { ResetController } from "./reset.ts";
@@ -77,32 +73,49 @@ interface Runtime {
   suppressedTools: Set<string>;
   error: string | undefined;
   revision: number;
+  refreshing: { revision: number; promise: Promise<boolean> } | undefined;
   reset: ResetController;
   timer: ReturnType<typeof setInterval> | undefined;
-  attempt: { reason: string; checkpointId?: string; windowId?: string } | undefined;
+  attempt:
+    | { reason: string; exp: boolean; windowId?: never }
+    | { reason: "summary_free"; exp: true; windowId: string }
+    | undefined;
   pendingUsage: string | undefined;
   requestedId: string | undefined;
+  abortingForRollover: boolean;
   failureRecorded: boolean;
   diagnosticError: boolean;
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-function checkpointCall(branch: readonly SessionEntry[], callId: string): SessionEntry {
-  const last = branch.filter((entry) => entry.type === "message").at(-1);
-  if (last?.type !== "message" || last.message.role !== "assistant")
-    throw new Error("Checkpoint must follow its assistant tool call.");
-  const calls = last.message.content.filter((block) => block.type === "toolCall");
-  if (calls.length !== 1 || calls[0]?.id !== callId || calls[0].name !== "notes")
-    throw new Error(
-      "Call notes checkpoint alone, without sibling tools, so every earlier tool result is covered.",
+function latestUser(branch: readonly SessionEntry[]): string | undefined {
+  return branch.filter((entry) => entry.type === "message" && entry.message.role === "user").at(-1)
+    ?.id;
+}
+
+function freshWindowWithoutProgress(branch: readonly SessionEntry[]): boolean {
+  const boundary = branch.map((entry) => entry.type).lastIndexOf("compaction");
+  const entry = branch[boundary];
+  if (
+    entry?.type !== "compaction" ||
+    (entry.details as { context?: { version?: number } } | undefined)?.context?.version !== 2
+  )
+    return false;
+  return !branch
+    .slice(boundary + 1)
+    .some(
+      (item) =>
+        item.type === "message" &&
+        (item.message.role === "user" ||
+          (item.message.role === "assistant" &&
+            !["error", "aborted"].includes(item.message.stopReason))),
     );
-  return last;
 }
 
 export function createContextExtension(options: ContextOptions = {}): (pi: ExtensionAPI) => void {
   const statePath = options.statePath ?? join(getAgentDir(), "context.json");
-  const verify = options.verify ?? verifySavedEntry;
+  const verify = options.verify ?? verifyArchive;
   return (pi) => {
     let runtime: Runtime | undefined;
 
@@ -118,7 +131,17 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
       if (active(session) && session.ctx.hasUI)
         setFooterStatus(session.ctx, "context", `ctxt ${session.mode}${session.error ? " !" : ""}`);
     }
-    async function refresh(session: Runtime): Promise<boolean> {
+    function refresh(session: Runtime): Promise<boolean> {
+      // Sibling tools and the poller share one read. Explicit preference writes
+      // invalidate its revision, so callers after a write never join a stale read.
+      if (session.refreshing?.revision === session.revision) return session.refreshing.promise;
+      const promise = readPreference(session).finally(() => {
+        if (session.refreshing?.promise === promise) session.refreshing = undefined;
+      });
+      session.refreshing = { revision: session.revision, promise };
+      return promise;
+    }
+    async function readPreference(session: Runtime): Promise<boolean> {
       const revision = ++session.revision;
       try {
         const mode = await loadMode(statePath);
@@ -128,7 +151,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
         }
       } catch (error) {
         if (active(session) && revision === session.revision) {
-          session.mode = "default";
+          // A broken preference must not turn a running experiment into summarization.
           session.error = message(error);
         }
       }
@@ -167,7 +190,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
         session.requestedId &&
         session.ctx.sessionManager.getBranch().some((entry) => entry.id === session.requestedId)
       )
-        record(session, "cancelled", { reason, checkpointId: session.requestedId });
+        record(session, "cancelled", { reason, requestId: session.requestedId });
       session.requestedId = undefined;
     }
     // Change schemas only at idle boundaries, never underneath an executing tool batch.
@@ -176,10 +199,10 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
       if (!restore && !session.ctx.isIdle()) return;
       const current = pi.getActiveTools();
       if (session.mode === "default" && !restore) {
-        const memory = current.filter((name) => name === "recall" || name === "notes");
+        const memory = current.filter((name) => MEMORY_TOOLS.includes(name));
         for (const name of memory) session.suppressedTools.add(name);
         if (memory.length)
-          pi.setActiveTools(current.filter((name) => name !== "recall" && name !== "notes"));
+          pi.setActiveTools(current.filter((name) => !MEMORY_TOOLS.includes(name)));
       } else if (session.suppressedTools.size) {
         pi.setActiveTools([...new Set([...current, ...session.suppressedTools])]);
         session.suppressedTools.clear();
@@ -190,7 +213,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
     }
     function toolsAvailable(): boolean {
       const tools = pi.getActiveTools();
-      return tools.includes("recall") && tools.includes("notes");
+      return MEMORY_TOOLS.every((name) => tools.includes(name));
     }
     function close() {
       if (!runtime) return;
@@ -213,17 +236,22 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
       return entry.id;
     }
     function continueTask(session: Runtime, text: string) {
-      if (!active(session) || !session.ctx.isIdle() || session.ctx.hasPendingMessages()) return;
+      if (!active(session)) return;
+      if (!session.ctx.isIdle() || session.ctx.hasPendingMessages()) {
+        cancelRequest(session, "continuation_superseded");
+        return;
+      }
       pi.sendMessage(
         { customType: "context.continue", content: text, display: false },
         { triggerTurn: true },
       );
-      record(session, "resumed", session.requestedId ? { checkpointId: session.requestedId } : {});
+      record(session, "resumed", session.requestedId ? { requestId: session.requestedId } : {});
       session.requestedId = undefined;
     }
 
     pi.registerCommand("context", {
-      description: "Global context mode: default (Pi), exp (fresh + recall/notes), status",
+      description:
+        "Global context mode: default (Pi summaries), exp (summary-free rollover), status",
       getArgumentCompletions: (prefix) =>
         [...MODES, "status"]
           .filter((value) => value.startsWith(prefix))
@@ -312,6 +340,68 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
       },
     });
 
+    function requestWindow(session: Runtime, ctx: ExtensionContext, reason: string, resume = true) {
+      if (session.requestedId) return session.requestedId;
+      const entryId = persistedAppend(ctx, REQUEST_TYPE, {
+        version: 1,
+        reason,
+        resume,
+        userId: latestUser(ctx.sessionManager.getBranch()),
+      });
+      session.reset.request(entryId);
+      session.requestedId = entryId;
+      record(session, "reset_requested", { reason, requestId: entryId });
+      return entryId;
+    }
+
+    pi.registerTool({
+      name: "new_context",
+      label: "New context",
+      renderCall: renderNewContextCall,
+      renderResult: (result, options, theme, context) =>
+        renderNotesResult(result, options, theme, context.isError),
+      description: NEW_CONTEXT_DESCRIPTION,
+      promptSnippet: "Start a fresh context window without summarizing history",
+      parameters: Type.Object({}, strict),
+      async execute(_callId, _params, signal, _onUpdate, ctx) {
+        signal?.throwIfAborted();
+        const session = runtime;
+        if (!session || !(await refresh(session)))
+          throw new Error("Memory tools are unavailable; select exp with a readable preference.");
+        signal?.throwIfAborted();
+        if (!toolsAvailable()) throw new Error("recall, notes, and new_context must be active.");
+        if (!ctx.sessionManager.getSessionFile())
+          throw new Error("Rollover requires a persisted session archive.");
+        if (ctx.hasPendingMessages())
+          throw new Error("Handle queued input before requesting a new window.");
+        const entryId = requestWindow(session, ctx, "requested");
+        signal?.addEventListener(
+          "abort",
+          () => {
+            if (
+              session.requestedId === entryId &&
+              session.reset.requested &&
+              !session.abortingForRollover
+            ) {
+              session.reset.cancel();
+              cancelRequest(session, "signal_aborted");
+            }
+          },
+          { once: true },
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Fresh context window requested after this tool batch, without summarization. Files, environment and archived history are unchanged. The task will continue automatically.",
+            },
+          ],
+          details: { entryId },
+          terminate: true,
+        };
+      },
+    });
+
     pi.registerTool({
       name: "notes",
       label: "Notes",
@@ -319,111 +409,24 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
       renderResult: (result, options, theme, context) =>
         renderNotesResult(result, options, theme, context.isError),
       description: NOTES_DESCRIPTION,
-      promptSnippet: "Save durable task notes and verified continuation checkpoints",
+      promptSnippet: "Save, update, or delete reusable task notes",
       parameters: Type.Object(
         {
-          action: Type.String({ enum: ["write", "append", "delete", "checkpoint"] }),
-          name: Type.Optional(Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$" })),
+          action: Type.String({ enum: ["write", "append", "delete"] }),
+          name: Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$" }),
           text: Type.Optional(Type.String({ maxLength: MAX_NOTE_CHARS })),
           revision: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           references: Type.Optional(referenceSchema),
-          checkpoint: Type.Optional(checkpointSchema),
-          reset: Type.Optional(Type.Boolean()),
         },
         strict,
       ),
-      async execute(callId, params, signal, _onUpdate, ctx) {
+      async execute(_callId, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
         if (!memoryAvailable())
           throw new Error("Memory tools are disabled in default mode; select exp.");
-        const originalSession = runtime;
         const branch = ctx.sessionManager.getBranch();
         const refs = [...(params.references ?? [])];
         validateReferences(refs, branch);
-        if (params.action === "checkpoint") {
-          if (
-            !isCheckpoint(params.checkpoint) ||
-            params.name !== undefined ||
-            params.text !== undefined ||
-            params.revision !== undefined
-          )
-            throw new Error(
-              "checkpoint needs the structured checkpoint object, references, and optional reset only.",
-            );
-          const through = checkpointCall(branch, callId);
-          const lastUser = branch
-            .filter((entry) => entry.type === "message" && entry.message.role === "user")
-            .at(-1);
-          if (!lastUser)
-            throw new Error("Cannot checkpoint a task without a recorded user request.");
-          if (!refs.includes(lastUser.id)) refs.push(lastUser.id);
-          const data: CheckpointData = {
-            version: 1,
-            checkpoint: params.checkpoint,
-            references: refs,
-            coveredThrough: through.id,
-            toolCallId: callId,
-          };
-          const entryId = persistedAppend(ctx, CHECKPOINT_TYPE, data);
-          await verify(ctx.sessionManager.getSessionFile(), entryId, data);
-          signal?.throwIfAborted();
-          const session = originalSession;
-          if (params.reset && session && (await refresh(session))) {
-            signal?.throwIfAborted();
-            if (!active(session) || !toolsAvailable())
-              throw new Error("recall and notes must remain active before resetting context.");
-            if (ctx.hasPendingMessages()) {
-              record(session, "cancelled", { reason: "queued_input", checkpointId: entryId });
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Checkpoint ${entryId} saved. Handle the queued user input before checkpointing again; no reset requested.`,
-                  },
-                ],
-                details: { entryId },
-              };
-            }
-            const problem = checkpointProblem(
-              ctx.sessionManager.getBranch(),
-              { entryId, data },
-              true,
-            );
-            if (problem) throw new Error(problem);
-            session.reset.request(entryId, signal);
-            session.requestedId = entryId;
-            record(session, "reset_requested", { checkpointId: entryId });
-            signal?.addEventListener(
-              "abort",
-              () => {
-                if (active(session) && session.requestedId === entryId)
-                  cancelRequest(session, "signal_aborted");
-              },
-              { once: true },
-            );
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Checkpoint ${entryId} saved and verified. Fresh-window reset requested after this tool batch; the task will continue automatically.`,
-                },
-              ],
-              details: { entryId },
-              terminate: true,
-            };
-          }
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Checkpoint ${entryId} saved and verified.${params.reset ? " Context resets are off/unavailable; continue in the existing window." : ""}`,
-              },
-            ],
-            details: { entryId },
-          };
-        }
-        if (params.checkpoint !== undefined || params.reset !== undefined)
-          throw new Error("checkpoint/reset are only valid with action checkpoint.");
         if (!params.name || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(params.name))
           throw new Error("Use a logical note name, not a filesystem path.");
         const notes = currentNotes(branch);
@@ -488,11 +491,13 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
         suppressedTools: new Set(),
         error: undefined,
         revision: 0,
+        refreshing: undefined,
         reset: new ResetController(),
         timer: undefined,
         attempt: undefined,
         pendingUsage: pendingUsage(ctx.sessionManager.getBranch()),
         requestedId: undefined,
+        abortingForRollover: false,
         failureRecorded: false,
         diagnosticError: false,
       };
@@ -539,7 +544,7 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
           GUIDE +
           (enabled && ctx.sessionManager.getSessionFile()
             ? RESET_GUIDE
-            : "Fresh-window resets are off/unavailable. Continue using normal pi compaction.\n"),
+            : "Rollover needs a persisted archive; report unavailable rollover, never substitute a summary.\n"),
       };
     });
     pi.on("context", (event, ctx) => {
@@ -583,127 +588,120 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
       const session = runtime;
       if (!session) return;
       session.failureRecorded = false;
-      session.attempt = { reason: "disabled" };
-      if (!(await refresh(session))) {
-        session.attempt = { reason: session.error ? "preference_error" : session.mode };
-        return;
-      }
-      // Defer durable outcome writes until after compaction: changing the leaf in this hook
-      // would invalidate Pi's preparation and our on-disk verification snapshot.
-      const fallback = (reason: string, code: string) => {
-        session.attempt = { reason: code };
-        notify(ctx, `Context: ${reason} Using normal pi compaction.`, "warning");
-      };
-      if (event.customInstructions?.trim()) {
-        session.attempt = { reason: "custom_instructions" };
-        return;
-      }
-      if (!toolsAvailable()) {
-        fallback("recall/notes are not both active.", "tools_unavailable");
-        return;
-      }
-      if (ctx.hasPendingMessages()) {
-        fallback("Queued user input is not checkpointed.", "queued_input");
-        return;
-      }
-      const saved = latestCheckpoint(event.branchEntries);
-      if (!saved) {
-        fallback("No valid checkpoint.", "missing_checkpoint");
-        return;
-      }
-      const problem = checkpointProblem(event.branchEntries, saved);
-      if (problem) {
-        fallback(problem, "invalid_checkpoint");
-        return;
-      }
-      const beforeLeaf = ctx.sessionManager.getLeafId();
-      if (event.branchEntries.at(-1)?.id !== beforeLeaf) {
-        fallback(
-          "Another handler changed the branch after compaction preparation.",
-          "branch_changed",
-        );
-        return;
-      }
+      // Never let an error in the experimental path fall through to Pi's summarizer.
+      const wasExp = session.mode === "exp";
       try {
+        await refresh(session);
+        session.attempt = { reason: session.mode, exp: session.mode === "exp" };
+        if (!active(session)) return { cancel: true };
+        if (session.mode === "default" && !session.error) return;
+        if (session.error)
+          throw new Error("Context preference could not be read; rollover stopped.");
+        if (!toolsAvailable())
+          throw new Error("recall, notes, and new_context must all be active.");
+        if (ctx.hasPendingMessages())
+          throw new Error("Queued user input must be handled before rollover.");
+        if (event.customInstructions?.trim())
+          throw new Error(
+            "Summary instructions are unavailable in exp; use /compact without instructions or select default.",
+          );
+        if (event.reason === "overflow" && freshWindowWithoutProgress(event.branchEntries))
+          throw new Error(
+            "Fresh context already overflowed; another rollover cannot remove more history.",
+          );
+        const beforeLeaf = ctx.sessionManager.getLeafId();
+        if (event.branchEntries.at(-1)?.id !== beforeLeaf)
+          throw new Error("Session branch changed after rollover preparation.");
         event.signal.throwIfAborted();
-        await verify(
-          ctx.sessionManager.getSessionFile(),
-          saved.entryId,
-          saved.data,
-          event.branchEntries,
-          event.signal,
-        );
-        if (!(await refresh(session))) return;
-        event.signal.throwIfAborted();
-        if (
-          !active(session) ||
-          !toolsAvailable() ||
-          ctx.hasPendingMessages() ||
-          ctx.sessionManager.getLeafId() !== beforeLeaf
-        )
-          throw new Error("Session branch or queued input changed during checkpoint validation.");
-        const summary = bootstrap(saved, event.branchEntries);
+        const summary = windowBootstrap(event.branchEntries);
         if (
           !ctx.model ||
           (Buffer.byteLength(summary) + Buffer.byteLength(ctx.getSystemPrompt())) / 3 + 1024 >
             ctx.model.contextWindow * 0.75
         )
-          throw new Error("Checkpoint and system prompt leave insufficient context headroom.");
-        // A real non-message entry is a legal kept boundary. It contributes no tail messages.
-        const boundary = persistedAppend(ctx, WINDOW_TYPE, {
-          version: 1,
-          checkpointId: saved.entryId,
-        });
-        session.attempt = {
-          reason: "verified_checkpoint",
-          checkpointId: saved.entryId,
-          windowId: boundary,
-        };
+          throw new Error(
+            "Recovery instructions and system prompt leave insufficient context headroom.",
+          );
+        // This marker adds no retained conversation tail. Verification covers both it
+        // and every original branch entry; notes/checkpoints are never prerequisites.
+        const boundary = persistedAppend(ctx, WINDOW_TYPE, { version: 2, through: beforeLeaf });
+        await verify(
+          ctx.sessionManager.getSessionFile(),
+          ctx.sessionManager.getBranch(),
+          event.signal,
+        );
+        if (
+          !(await refresh(session)) ||
+          !active(session) ||
+          !toolsAvailable() ||
+          ctx.hasPendingMessages() ||
+          ctx.sessionManager.getLeafId() !== boundary
+        )
+          throw new Error(
+            "Session, preference, or pending input changed during rollover verification.",
+          );
+        event.signal.throwIfAborted();
+        session.attempt = { reason: "summary_free", windowId: boundary, exp: true };
         return {
           compaction: {
-            summary,
+            // Pi's required field carries deterministic recovery pointers, NOT a summary.
+            summary: `Window ${boundary}. ${summary}`,
             firstKeptEntryId: boundary,
             tokensBefore: event.preparation.tokensBefore,
-            details: {
-              context: { version: 1, checkpointId: saved.entryId, windowId: boundary },
-              readFiles: [...event.preparation.fileOps.read],
-              modifiedFiles: [
-                ...new Set([
-                  ...event.preparation.fileOps.written,
-                  ...event.preparation.fileOps.edited,
-                ]),
-              ],
-            },
+            details: { context: { version: 2, windowId: boundary } },
           },
         };
       } catch (error) {
-        if (event.signal.aborted) return { cancel: true };
-        fallback(message(error), "verification_failed");
-        return;
+        session.attempt = {
+          reason: event.signal.aborted ? "rollover_aborted" : "rollover_blocked",
+          exp: wasExp || session.mode === "exp",
+        };
+        if (!event.signal.aborted)
+          notify(
+            ctx,
+            `Context rollover failed: ${message(error)} No summary was generated.`,
+            "error",
+          );
+        return { cancel: true };
       }
     });
     pi.on("session_compact", (event) => {
       const session = runtime;
       if (!session) return;
-      session.reset.compacted();
       const entry = event.compactionEntry;
-      const details = entry.details as { context?: { checkpointId?: string } } | undefined;
-      const checkpointId = details?.context?.checkpointId;
+      const details = entry.details as
+        | { context?: { version?: number; windowId?: string } }
+        | undefined;
       const fresh =
+        session.attempt?.windowId !== undefined &&
         entry.fromHook === true &&
-        checkpointId !== undefined &&
-        checkpointId === session.attempt?.checkpointId &&
+        details?.context?.version === 2 &&
+        details.context.windowId === session.attempt?.windowId &&
         entry.firstKeptEntryId === session.attempt?.windowId;
+      if (fresh && event.willRetry) {
+        // Pi's overflow loop retries before agent_settled. Do not schedule a
+        // second continuation when that already-retried run eventually settles.
+        session.reset.cancel();
+        session.requestedId = undefined;
+      } else if (fresh) session.reset.compacted();
+      else if (session.attempt?.exp) {
+        session.reset.cancel();
+        cancelRequest(session, "overridden");
+        notify(
+          session.ctx,
+          "Another extension overrode summary-free rollover. Disable competing compaction policies.",
+          "error",
+        );
+      }
       record(session, "compaction", {
         outcome: fresh ? "fresh" : entry.fromHook ? "other" : "normal",
         reason: fresh
-          ? "verified_checkpoint"
-          : session.attempt?.checkpointId
+          ? "summary_free"
+          : session.attempt?.exp
             ? "overridden"
             : (session.attempt?.reason ?? "unknown"),
         compactionId: entry.id,
         tokensBefore: entry.tokensBefore,
-        ...(fresh ? { checkpointId } : {}),
       });
       session.attempt = undefined;
       session.pendingUsage = entry.id;
@@ -712,15 +710,28 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
     pi.on("session_compact_failed", (event) => {
       const session = runtime;
       if (!session) return;
-      record(session, event.aborted ? "cancelled" : "compaction_failed", {
-        reason: event.aborted ? "compaction_aborted" : (session.attempt?.reason ?? "host_rejected"),
-      });
+      record(
+        session,
+        event.aborted && session.attempt?.reason !== "rollover_blocked"
+          ? "cancelled"
+          : "compaction_failed",
+        {
+          reason:
+            session.attempt?.reason ?? (event.aborted ? "compaction_aborted" : "host_rejected"),
+        },
+      );
+      if (session.mode === "exp" && !event.aborted)
+        notify(
+          session.ctx,
+          "Context rollover failed; history is retained. No summary fallback is allowed in exp.",
+          "error",
+        );
       session.failureRecorded = true;
       session.attempt = undefined;
-      if (event.aborted) {
-        session.reset.cancel();
-        session.requestedId = undefined;
-      }
+      // Every terminal failure consumes the request, not just user aborts.
+      // Otherwise agent_settled retries a failed native compaction implicitly.
+      session.reset.cancel();
+      session.requestedId = undefined;
     });
     pi.on("turn_end", (event) => {
       const session = runtime;
@@ -755,6 +766,75 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
       record(session, "post_reset_usage", { compactionId: session.pendingUsage, inputTokens });
       session.pendingUsage = undefined;
     });
+    // Own the budget trigger too: exp does not depend on Pi's auto-compaction setting.
+    // End a completed tool batch before another model request; never compact reentrantly.
+    pi.on("turn_end", (event, ctx) => {
+      const session = runtime;
+      // Pi's terminate hint requires every sibling result to agree. End a mixed
+      // batch here too, after all receipts are persisted, without treating our
+      // own abort as user cancellation of the requested window.
+      if (
+        session?.requestedId &&
+        session.reset.requested &&
+        event.message?.role === "assistant" &&
+        event.message.stopReason === "toolUse" &&
+        event.toolResults?.length > 1 &&
+        !ctx.hasPendingMessages()
+      ) {
+        session.abortingForRollover = true;
+        ctx.abort();
+        return;
+      }
+      if (
+        !session ||
+        session.mode !== "exp" ||
+        session.requestedId ||
+        !ctx.model ||
+        ctx.hasPendingMessages() ||
+        event.message?.role !== "assistant" ||
+        event.message.stopReason === "aborted"
+      )
+        return;
+      const overflow = isContextOverflow(event.message, ctx.model.contextWindow);
+      const tokens = ctx.getContextUsage()?.tokens ?? 0;
+      const reserve = Math.min(options.rolloverTokens ?? 16_384, ctx.model.contextWindow / 8);
+      if (!overflow && tokens < ctx.model.contextWindow - reserve) return;
+      if (session.error || !toolsAvailable()) {
+        notify(
+          ctx,
+          "Automatic rollover is unavailable: repair the context preference and enable all memory tools. No summary fallback.",
+          "error",
+        );
+        ctx.abort();
+        return;
+      }
+      if (overflow && freshWindowWithoutProgress(ctx.sessionManager.getBranch())) {
+        notify(
+          ctx,
+          "Fresh context still exceeds the model limit; reduce overhead or use a larger window. No summary fallback.",
+          "error",
+        );
+        ctx.abort();
+        return;
+      }
+      if (!ctx.sessionManager.getSessionFile()) {
+        notify(
+          ctx,
+          "Automatic rollover needs a persisted archive; no summary fallback in exp.",
+          "error",
+        );
+        ctx.abort();
+        return;
+      }
+      requestWindow(
+        session,
+        ctx,
+        overflow ? "overflow" : "budget",
+        overflow || event.message.stopReason === "toolUse",
+      );
+      ctx.abort();
+    });
+
     pi.on("agent_settled", (_event, ctx) => {
       const session = runtime;
       if (session) {
@@ -762,50 +842,54 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
         syncTools(session);
       }
       const pending = session?.reset.take();
+      if (session) session.abortingForRollover = false;
       if (!session || !pending) return;
       session.ctx = ctx;
       if (ctx.hasPendingMessages()) {
         cancelRequest(session, "queued_input");
         return;
       }
+      const branch = ctx.sessionManager.getBranch();
+      const request = branch.find((entry) => entry.id === pending.requestId);
+      const data =
+        request?.type === "custom" && request.customType === REQUEST_TYPE
+          ? (request.data as { userId?: string; resume?: boolean })
+          : undefined;
+      if (!data || data.userId !== latestUser(branch)) {
+        cancelRequest(session, "newer_input");
+        return;
+      }
+      const resume = () => {
+        if (data.userId !== latestUser(ctx.sessionManager.getBranch())) {
+          cancelRequest(session, "newer_input");
+          return;
+        }
+        if (data.resume) continueTask(session, CONTINUE);
+        else session.requestedId = undefined;
+      };
       if (pending.compacted) {
-        continueTask(session, CONTINUE);
+        resume();
         return;
       }
       if (session.mode !== "exp" || session.error) {
-        continueTask(
-          session,
-          "Context resets were switched off or became unavailable. Continue the existing task in the current conversation without resetting.",
+        cancelRequest(session, "mode_unavailable");
+        notify(
+          ctx,
+          "Rollover stopped because exp became unavailable; original history remains active.",
+          "warning",
         );
-        return;
-      }
-      const saved = latestCheckpoint(ctx.sessionManager.getBranch());
-      if (
-        !saved ||
-        saved.entryId !== pending.checkpointId ||
-        checkpointProblem(ctx.sessionManager.getBranch(), saved)
-      ) {
-        // The agent already handled newer work; do not restart a completed/steered task.
-        cancelRequest(session, "newer_work");
         return;
       }
       const finish = session.reset.begin();
       session.failureRecorded = false;
-      const workLeaf = () =>
-        ctx.sessionManager
-          .getBranch()
-          .filter((entry) => !(entry.type === "custom" && entry.customType === EVENT_TYPE))
-          .at(-1)?.id;
-      const leaf = workLeaf();
       ctx.compact({
         onComplete: () => {
           if (!finish()) return;
-          continueTask(session, CONTINUE);
+          resume();
         },
         onError: (error) => {
           if (!finish()) return;
           if (!active(session)) return;
-          const unchanged = workLeaf() === leaf;
           const aborted = /abort|cancel/i.test(message(error));
           if (!session.failureRecorded)
             record(session, aborted ? "cancelled" : "compaction_failed", {
@@ -816,12 +900,12 @@ export function createContextExtension(options: ContextOptions = {}): (pi: Exten
             session.requestedId = undefined;
             return;
           }
-          notify(ctx, `Context reset failed: ${message(error)}`, "warning");
-          if (unchanged)
-            continueTask(
-              session,
-              "The context reset failed; the original conversation is still available. Continue the existing task. Do not request another reset until more work has been completed.",
-            );
+          session.requestedId = undefined;
+          notify(
+            ctx,
+            `Context rollover failed: ${message(error)} Original history remains; no summary fallback.`,
+            "error",
+          );
         },
       });
     });

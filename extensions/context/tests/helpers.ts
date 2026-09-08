@@ -60,19 +60,16 @@ export function assistant(
 export function user(sm: SessionManager, text = "Fix the bug without deploying") {
   return sm.appendMessage({ role: "user", content: text, timestamp: Date.now() });
 }
-export function toolCall(sm: SessionManager, id = "checkpoint-call", siblings: ToolCall[] = []) {
+export function toolCall(sm: SessionManager, id = "window-call", siblings: ToolCall[] = []) {
   return sm.appendMessage(
-    assistant([
-      { type: "toolCall", id, name: "notes", arguments: { action: "checkpoint", checkpoint } },
-      ...siblings,
-    ]),
+    assistant([{ type: "toolCall", id, name: "new_context", arguments: {} }, ...siblings]),
   );
 }
-export function receipt(sm: SessionManager, id = "checkpoint-call", isError = false) {
+export function receipt(sm: SessionManager, id = "window-call", isError = false) {
   return sm.appendMessage({
     role: "toolResult",
     toolCallId: id,
-    toolName: "notes",
+    toolName: "new_context",
     content: [{ type: "text", text: "Saved" }],
     isError,
     timestamp: Date.now(),
@@ -108,7 +105,8 @@ export async function harness(
     tokens: 100,
     pending: false,
     idle: true,
-    tools: ["recall", "notes", "read", "bash"],
+    tools: ["recall", "notes", "new_context", "read", "bash"],
+    aborts: 0,
   };
   const ctx = {
     cwd: root,
@@ -129,6 +127,9 @@ export async function harness(
     isIdle: () => controls.idle,
     hasPendingMessages: () => controls.pending,
     compact: (options: CompactOptions) => compactions.push(options),
+    abort: () => {
+      controls.aborts++;
+    },
   } as unknown as ExtensionContext;
   const api = {
     on(name: string, handler: Handler) {
@@ -161,12 +162,12 @@ export async function harness(
   const execute = (
     name: string,
     params: Record<string, unknown>,
-    id = "checkpoint-call",
+    id = "window-call",
     signal = new AbortController().signal,
   ) => tools.get(name)!.execute(id, params, signal, undefined, ctx);
-  async function saveCheckpoint(reset = false, id = "checkpoint-call") {
+  async function newContext(id = "window-call") {
     toolCall(sm, id);
-    const result = await execute("notes", { action: "checkpoint", checkpoint, reset }, id);
+    const result = await execute("new_context", {}, id);
     receipt(sm, id);
     return result;
   }
@@ -182,6 +183,7 @@ export async function harness(
       settings: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 16 },
     };
     return (await emit("session_before_compact", {
+      reason: "manual",
       branchEntries,
       preparation,
       signal: new AbortController().signal,
@@ -204,7 +206,7 @@ export async function harness(
     compactions,
     emit,
     execute,
-    saveCheckpoint,
+    newContext,
     beforeCompact,
     command,
   };

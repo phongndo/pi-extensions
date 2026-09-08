@@ -152,10 +152,10 @@ test("exp provenance and milestone guidance encourage source-backed notes withou
   assert.match(JSON.stringify(guidance), /Do not reread evidence already available/);
 });
 
-test("durable diagnostics pair outcomes with usage and do not invalidate a fresh checkpoint", async (t) => {
+test("durable diagnostics pair rollover outcomes with usage", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  await app.saveCheckpoint(true);
+  await app.newContext();
   const preparationLeaf = app.sm.getLeafId();
   const prepared = (await app.beforeCompact())!.compaction!;
   assert.ok(prepared);
@@ -192,20 +192,14 @@ test("durable diagnostics pair outcomes with usage and do not invalidate a fresh
   assert.deepEqual(diagnostics(reopened.getBranch()), events);
 });
 
-test("fallback metadata is deferred until terminal outcome; raw errors stay out of diagnostics and failures still resume", async (t) => {
+test("failure diagnostics exclude raw errors, record once and never resume", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  const leaf = app.sm.getLeafId();
-  assert.equal(await app.beforeCompact(), undefined);
-  assert.equal(app.sm.getLeafId(), leaf, "fallback must not invalidate preparation");
-  const id = app.sm.appendCompaction("stock", leaf!, 100);
-  await app.emit("session_compact", { compactionEntry: app.sm.getEntry(id) });
-  assert.equal(diagnostics(app.sm.getBranch()).at(-1)!.reason, "missing_checkpoint");
-  await app.saveCheckpoint(true);
+  await app.newContext();
   await app.emit("agent_settled");
   await app.emit("session_compact_failed", { aborted: false, errorMessage: "SECRET" });
   app.compactions[0]!.onError!(new Error("SECRET"));
-  assert.equal(app.sent.length, 1);
+  assert.equal(app.sent.length, 0);
   assert.equal(
     diagnostics(app.sm.getBranch()).filter((e) => e.event === "compaction_failed").length,
     1,

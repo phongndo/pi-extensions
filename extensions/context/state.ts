@@ -20,7 +20,6 @@ export async function loadMode(path: string): Promise<ContextMode> {
   const value: unknown = JSON.parse(text);
   if (value && typeof value === "object" && "version" in value) {
     if (value.version === 3 && "mode" in value && isMode(value.mode)) return value.mode;
-    // Read older modes without rewriting user files. Removed memory-only mode falls back to Pi.
     if (value.version === 2 && "mode" in value) {
       if (value.mode === "exp-2") return "exp";
       if (value.mode === "default" || value.mode === "exp-1") return "default";
@@ -28,9 +27,7 @@ export async function loadMode(path: string): Promise<ContextMode> {
     if (value.version === 1 && "enabled" in value && typeof value.enabled === "boolean")
       return value.enabled ? "exp" : "default";
   }
-  throw new Error(
-    "Invalid context preference file; using default Pi compaction without memory tools.",
-  );
+  throw new Error("Invalid context preference file; repair with /context default or /context exp.");
 }
 
 /** Explicit mode writes need no read-modify-write lock. Last atomic rename wins. */
@@ -52,86 +49,48 @@ export async function saveMode(path: string, mode: ContextMode): Promise<void> {
   }
 }
 
-/** Compatibility helpers for old embeddings; enabled now selects the single experiment. */
 export const loadEnabled = async (path: string): Promise<boolean> =>
   (await loadMode(path)) === "exp";
 export const saveEnabled = (path: string, enabled: boolean): Promise<void> =>
   saveMode(path, enabled ? "exp" : "default");
 
-/** Verify the actual session record, not just an in-memory append that failed to persist. */
-export async function verifySavedEntry(
+/** Verify all recoverable branch state before dropping active history; no checkpoint required. */
+export async function verifyArchive(
   path: string | undefined,
-  id: string,
-  data: unknown,
-  branch?: readonly SessionEntry[],
+  branch: readonly SessionEntry[],
   signal?: AbortSignal,
 ): Promise<void> {
-  if (!path)
-    throw new Error(
-      "Fresh-window resets require a persisted session; normal compaction remains available.",
-    );
+  if (!path) throw new Error("Rollover requires a persisted session archive.");
+  if (!branch.length) throw new Error("No session history to roll over.");
+  const digest = (value: unknown) =>
+    createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  // Capture expected bytes before the first await; a concurrent mutation cannot redefine them.
+  const expected = new Map(branch.map((entry) => [entry.id, digest(entry)]));
+  const found = new Set<string>();
   const file = await open(path, "r");
   try {
     await file.sync();
     signal?.throwIfAborted();
-    if (branch) {
-      const digest = (value: unknown) =>
-        createHash("sha256").update(JSON.stringify(value)).digest("hex");
-      const expected = new Map(branch.map((entry) => [entry.id, digest(entry)]));
-      const found = new Set<string>();
-      const stream = file.createReadStream({ autoClose: false, ...(signal ? { signal } : {}) });
-      const lines = createInterface({ input: stream, crlfDelay: Infinity });
-      try {
-        for await (const line of lines) {
-          signal?.throwIfAborted();
-          if (!line.trim()) continue;
-          const entry = JSON.parse(line) as { id?: string; data?: unknown };
-          if (!entry?.id || !expected.has(entry.id)) continue;
-          if (found.has(entry.id) || digest(entry) !== expected.get(entry.id))
-            throw new Error(
-              "Persisted branch differs from the in-memory archive; refusing a fresh reset.",
-            );
-          found.add(entry.id);
-          if (entry.id === id && JSON.stringify(entry.data) !== JSON.stringify(data))
-            throw new Error("Persisted checkpoint data changed.");
-        }
-      } finally {
-        lines.close();
-        stream.destroy();
+    const stream = file.createReadStream({ autoClose: false, ...(signal ? { signal } : {}) });
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        signal?.throwIfAborted();
+        if (!line.trim()) continue;
+        const entry = JSON.parse(line) as { id?: string };
+        if (!entry?.id || !expected.has(entry.id)) continue;
+        if (found.has(entry.id) || digest(entry) !== expected.get(entry.id))
+          throw new Error(
+            "Persisted branch differs from the in-memory archive; refusing rollover.",
+          );
+        found.add(entry.id);
       }
-      if (!found.has(id) || found.size !== expected.size)
-        throw new Error("Some branch evidence is missing from disk; refusing a fresh reset.");
-      return;
+    } finally {
+      lines.close();
+      stream.destroy();
     }
-    const { size } = await file.stat();
-    const start = Math.max(0, size - 256 * 1024);
-    const buffer = Buffer.alloc(size - start);
-    let bytesRead = 0;
-    while (bytesRead < buffer.length) {
-      const result = await file.read(
-        buffer,
-        bytesRead,
-        buffer.length - bytesRead,
-        start + bytesRead,
-      );
-      if (result.bytesRead === 0) break;
-      bytesRead += result.bytesRead;
-    }
-    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
-    if (start > 0) lines.shift();
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let entry: { id?: unknown; data?: unknown };
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (entry?.id === id && JSON.stringify(entry.data) === JSON.stringify(data)) return;
-    }
-    throw new Error(
-      "Checkpoint was not found in the persisted session tail; refusing a fresh reset.",
-    );
+    if (found.size !== expected.size)
+      throw new Error("Some branch evidence is missing from disk; refusing rollover.");
   } finally {
     await file.close();
   }

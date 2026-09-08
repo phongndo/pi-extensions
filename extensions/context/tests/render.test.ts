@@ -7,6 +7,7 @@ import {
   renderRecallResult,
   renderNotesCall,
   renderNotesResult,
+  renderNewContextCall,
 } from "../render.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as Theme;
@@ -68,7 +69,8 @@ test("headers tolerate partial args; all views fit narrow terminals and strip es
       theme,
     ),
     renderNotesCall({}, theme),
-    renderNotesCall({ action: "write", name: "plan", reset: true }, theme),
+    renderNotesCall({ action: "write", name: "plan" }, theme),
+    renderNewContextCall({}, theme),
     renderRecallResult(result(data), options, theme),
     renderRecallResult(result(data), { ...options, expanded: true }, theme),
   ];
@@ -113,7 +115,14 @@ test("errors, pending, empty, and legacy results remain readable", () => {
   );
 });
 
-test("notes shorten boilerplate without hiding reset caveats", () => {
+test("new_context header describes summary-free rollover", () => {
+  assert.equal(
+    renderNewContextCall({}, theme).render(100).join(""),
+    "new_context · summary-free rollover requested",
+  );
+});
+
+test("saved-memory results shorten boilerplate without hiding reset caveats", () => {
   const text =
     "Checkpoint abc saved and verified. Context resets are off/unavailable; continue in the existing window.";
   assert.match(
