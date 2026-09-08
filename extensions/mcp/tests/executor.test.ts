@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { connectMcpServer } from "../connect.ts";
 import type { ResolvedMcpServer } from "../config.ts";
 
@@ -37,35 +37,23 @@ async function loadLocalExecutor(): Promise<ResolvedMcpServer | undefined> {
   return server;
 }
 
-test("connects to the local executor MCP and runs execute", async (t) => {
-  if (process.env.PI_MCP_LIVE_TEST !== "1") {
-    t.skip("set PI_MCP_LIVE_TEST=1 to use the real shared executor config");
-    return;
-  }
-  const server = await loadLocalExecutor();
-  if (!server) {
-    t.skip("shared executor MCP config is not present");
-    return;
-  }
+// Opting in requires a working executor; configuration/connection failures must fail the test.
+test.skipIf(process.env.PI_MCP_LIVE_TEST !== "1")(
+  "connects to the local executor MCP and runs execute",
+  async () => {
+    const server = await loadLocalExecutor();
+    assert.ok(server, "shared executor MCP config is not present");
+    const session = await connectMcpServer(server);
 
-  let session;
-  try {
-    session = await connectMcpServer(server);
-  } catch (error) {
-    t.skip(
-      `executor MCP is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return;
-  }
-
-  try {
-    const names = session.tools.map((tool) => tool.name);
-    assert.ok(names.includes("execute"), `expected execute, got ${names.join(", ")}`);
-    assert.ok(names.includes("resume"), `expected resume, got ${names.join(", ")}`);
-    const result = await session.call("execute", { code: "return 1 + 1" }, undefined);
-    assert.equal(result.isError, false, result.text);
-    assert.match(result.text, /\b2\b/);
-  } finally {
-    await session.close();
-  }
-});
+    try {
+      const names = session.tools.map((tool) => tool.name);
+      assert.ok(names.includes("execute"), `expected execute, got ${names.join(", ")}`);
+      assert.ok(names.includes("resume"), `expected resume, got ${names.join(", ")}`);
+      const result = await session.call("execute", { code: "return 1 + 1" }, undefined);
+      assert.equal(result.isError, false, result.text);
+      assert.match(result.text, /\b2\b/);
+    } finally {
+      await session.close();
+    }
+  },
+);

@@ -2,24 +2,29 @@
   "name": "dp-pi-extensions",
   "version": "0.0.0",
   "private": true,
+  "workspaces": [
+    "extensions/*"
+  ],
   "type": "module",
   "scripts": {
-    "check": "pnpm run check:root && pnpm --filter pi-question check && pnpm --filter pi-fast-mode check && pnpm --filter pi-web-tools check && pnpm --filter pi-mcp check && pnpm --filter pi-context check",
-    "check:root": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:skills",
-    "test:skills": "node --test tests/skills.test.mjs",
-    "test:pi-skills": "node tests/pi-skills-smoke.mjs",
-    "format": "oxfmt .",
-    "format:check": "oxfmt --check .",
-    "lint": "oxlint .",
-    "lint:fix": "oxlint --fix .",
-    "typecheck": "tsc --noEmit",
-    "lsp": "typescript-language-server --stdio"
+    "check": "bun run check:root && bun run --workspaces check",
+    "check:root": "bun run format:check && bun run lint && bun run typecheck && bun run test:skills",
+    "test": "bun test",
+    "test:skills": "bun test ./tests/skills.test.mjs",
+    "test:pi-skills": "bun run ./tests/pi-skills-smoke.mjs",
+    "format": "bun run --bun oxfmt .",
+    "format:check": "bun run --bun oxfmt --check .",
+    "lint": "bun run --bun oxlint .",
+    "lint:fix": "bun run --bun oxlint --fix .",
+    "typecheck": "bun run --bun tsc --noEmit",
+    "lsp": "bun run --bun typescript-language-server --stdio"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.85.1",
     "@earendil-works/pi-coding-agent": "^0.85.1",
     "@earendil-works/pi-tui": "^0.85.1",
     "@types/node": "^24.12.4",
+    "bun-types": "1.4.2",
     "oxfmt": "^0.61.0",
     "oxlint": "^1.76.0",
     "typebox": "^1.1.38",
@@ -32,7 +37,10 @@
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
-  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "bun": "1.4.2"
+  },
+  "packageManager": "bun@1.4.2",
   "pi": {
     "extensions": [
       "./src/index.ts",
@@ -48,5 +56,9 @@
     "themes": [
       "./themes"
     ]
-  }
+  },
+  "trustedDependencies": [
+    "@google/genai",
+    "protobufjs"
+  ]
 }

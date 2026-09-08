@@ -11,16 +11,16 @@
   ],
   "type": "module",
   "scripts": {
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --deny-warnings --tsconfig tsconfig.json index.ts tests",
-    "lint:fix": "pnpm lint --fix",
-    "format": "oxfmt --write .",
-    "format:check": "oxfmt --check .",
-    "lsp": "typescript-language-server --stdio",
-    "lsp:oxformat": "oxfmt --lsp",
-    "lsp:oxlint": "oxlint --lsp",
-    "test": "node --test tests/*.test.ts"
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
+    "typecheck": "bun run --bun tsc --noEmit",
+    "lint": "bun run --bun oxlint --deny-warnings --tsconfig tsconfig.json index.ts tests",
+    "lint:fix": "bun run lint --fix",
+    "format": "bun run --bun oxfmt --write .",
+    "format:check": "bun run --bun oxfmt --check .",
+    "lsp": "bun run --bun typescript-language-server --stdio",
+    "lsp:oxformat": "bun run --bun oxfmt --lsp",
+    "lsp:oxlint": "bun run --bun oxlint --lsp",
+    "test": "bun test ./tests"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.82.1",
@@ -40,7 +40,7 @@
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "pnpm@11.17.0",
+  "packageManager": "bun@1.4.2",
   "pi": {
     "extensions": [
       "./index.ts"

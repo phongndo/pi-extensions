@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { jest } from "bun:test";
 import { FastStateMonitor } from "../monitor.ts";
 import { loadFastMode, saveFastMode, setFastMode } from "../state.ts";
 import { eventually } from "./helpers.ts";
@@ -101,7 +102,8 @@ test("late reads cannot overwrite newer state and shutdown prevents late UI writ
 });
 
 test("slow polling reads do not overlap or starve snapshot publication", async (t) => {
-  t.mock.timers.enable({ apis: ["setInterval"] });
+  jest.useFakeTimers();
+  t.after(() => jest.useRealTimers());
   const pending: Array<(value: boolean) => void> = [];
   const monitor = new FastStateMonitor(
     () => {},
@@ -110,12 +112,12 @@ test("slow polling reads do not overlap or starve snapshot publication", async (
   );
   t.after(() => monitor.close());
   monitor.start(10);
-  t.mock.timers.tick(30);
+  jest.advanceTimersByTime(30);
   assert.equal(pending.length, 1, "poll ticks must share the outstanding background read");
   pending[0]!(true);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(monitor.snapshot.enabled, true);
-  t.mock.timers.tick(10);
+  jest.advanceTimersByTime(10);
   assert.equal(pending.length, 2, "polling resumes after completion");
   pending[1]!(false);
   await new Promise<void>((resolve) => setImmediate(resolve));

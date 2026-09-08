@@ -106,5 +106,5 @@ For extension development, load contract changes before a session becomes large 
 ## Development
 
 ```bash
-pnpm --filter pi-question check
+bun run --filter pi-question check
 ```

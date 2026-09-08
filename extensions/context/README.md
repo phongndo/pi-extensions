@@ -127,7 +127,7 @@ These are structural/persistence checks, **not proof that the model wrote a fait
 ## Development
 
 ```bash
-pnpm --filter pi-context check
+bun run --filter pi-context check
 ```
 
 See the [primary-source research](../../docs/astra-context-management-research.md) and [interactive visual walkthrough](../../docs/show-me-context-recall.html).

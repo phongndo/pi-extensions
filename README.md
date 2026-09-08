@@ -49,12 +49,12 @@ Examples:
 
 ## Quick start
 
-Requirements: Pi 0.85.1 or newer, Node.js 22.19 or newer, pnpm 11, and provider credentials for the models you use. Firecrawl credentials are needed only for web tools. Wizard-generated GitHub secret writes require `gh`.
+Requirements: Pi 0.85.1 or newer (with its supported runtime), Bun 1.4.2, and provider credentials for the models you use. Firecrawl credentials are needed only for web tools. Wizard-generated GitHub secret writes require `gh`.
 
 ```bash
 git clone <repository-url> pi-extensions
 cd pi-extensions
-pnpm install
+bun install --frozen-lockfile
 pi install "$(pwd)"
 ```
 
@@ -123,34 +123,40 @@ extensions/               # Question, Fast Mode, Context, Web Tools, MCP
 skills/                   # The ten bundles listed above
 themes/origin.json        # Packaged TUI theme
 THIRD_PARTY_NOTICES.md     # Skill provenance and licenses
-package.json              # Pi resource manifest and workspace checks
-pnpm-workspace.yaml       # Extension workspace packages
+package.json              # Pi resource manifest, Bun workspaces, and checks
+bun.lock                  # Locked workspace dependencies
 ```
 
 ## Development
 
 ```bash
 nix develop
-pnpm install
-pnpm check
-pnpm test:pi-skills # Installed Pi, disposable HOME, no model/network execution
-nix flake check    # Sandboxed checks
+bun install --frozen-lockfile
+bun run check
+bun run test:pi-skills # Installed Pi, disposable HOME, no model/network execution
 ```
 
-Without Nix, install the required Node.js and pnpm versions directly. Format Nix with `nix fmt`.
+Bun handles runtime, package management, workspace orchestration, tests, and direct TypeScript script execution (`bun run path/to/script.ts`). Oxc provides `oxlint` and `oxfmt`; TypeScript checks types with `tsc --noEmit`.
+
+Nix provides only the reproducible development environment, with Bun 1.4.2 pinned by verified release hashes in `flake.nix` and other tools pinned by `flake.lock`; validation runs through `bun run check`, not `nix flake check`. Without Nix, install Bun directly. Format Nix with `nix fmt`. The installed-Pi smoke test separately requires `pi` and its supported Node runtime on `PATH`; repository CLI scripts explicitly use Bun without overriding the host runtime.
+
+When switching an existing pnpm checkout, remove the old `node_modules` directories (root and extensions) before installing with Bun.
+
+Existing tests use Bun's `node:test` compatibility; timer mocking and conditional skipping use `bun:test`. Test typechecks load `bun-types/test` without Bun's global types so extension APIs stay compatible with Pi's host runtime.
 
 Focused checks:
 
 ```bash
-pnpm check:root
-pnpm --filter pi-question check
-pnpm --filter pi-fast-mode check
-pnpm --filter pi-context check
-pnpm --filter pi-web-tools check
-pnpm --filter pi-mcp check
-pnpm format
-pnpm lint
-pnpm typecheck
+bun run check:root
+bun run --filter pi-question check
+bun run --filter pi-fast-mode check
+bun run --filter pi-context check
+bun run --filter pi-web-tools check
+bun run --filter pi-mcp check
+bun run format
+bun run lint
+bun run typecheck
+bun test
 ```
 
 The installed-Pi smoke test verifies every native skill command, argument expansion, and absence of shorthand skill aliases.

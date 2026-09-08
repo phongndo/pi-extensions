@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
   outputs =
-    { self, nixpkgs }:
+    { nixpkgs, ... }:
     let
       systems = [
         "aarch64-darwin"
@@ -14,70 +14,43 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
-      checks = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-          pnpm = pkgs.pnpm_11;
-        in
-        {
-          default = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
-            pname = "pi-extensions-check";
-            version = "0.0.0";
-            src = self;
-
-            nativeBuildInputs = [
-              pkgs.git
-              pkgs.nodejs_22
-              pkgs.unixtools.ps
-              pnpm
-              pkgs.pnpmConfigHook
-            ];
-
-            pnpmDeps = pkgs.fetchPnpmDeps {
-              inherit (finalAttrs) pname version src;
-              inherit pnpm;
-              fetcherVersion = 4;
-              hash = "sha256-Y+XKFBdyt2QZjQdwVehaDZ9f2URdGUdv+NCscb+A3yY=";
-            };
-
-            # A sandboxed Darwin build cannot write to the user's Keychain.
-            NODE_OPTIONS = pkgs.lib.optionalString pkgs.stdenv.isDarwin "--test-skip-pattern=^Keychain storage works through the stdin-only security process$";
-
-            buildPhase = ''
-              runHook preBuild
-              pnpm check
-              runHook postBuild
-            '';
-
-            installPhase = ''
-              runHook preInstall
-              touch "$out"
-              runHook postInstall
-            '';
-          });
-        }
-      );
-
       devShells = forAllSystems (
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          # Keep Bun exact without moving the rest of the pinned development environment.
+          bun = pkgs.bun.overrideAttrs (_: {
+            version = "1.4.2";
+            src = pkgs.fetchurl {
+              url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/${sources.${system}.archive}.zip";
+              hash = sources.${system}.hash;
+            };
+          });
+          sources = {
+            aarch64-darwin = {
+              archive = "bun-darwin-aarch64";
+              hash = "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=";
+            };
+            aarch64-linux = {
+              archive = "bun-linux-aarch64";
+              hash = "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=";
+            };
+            x86_64-linux = {
+              archive = "bun-linux-x64-baseline";
+              hash = "sha256-xngEDxT+BEDrg503y9DOTAUaMtpygGrJfeamqra/co8=";
+            };
+          };
         in
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
+            packages = [
+              bun
+            ]
+            ++ (with pkgs; [
               git
               hk
               nixd
-              nodejs_22
-              pnpm_11
-              typescript-language-server
-            ];
-
-            shellHook = ''
-              export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-            '';
+            ]);
           };
         }
       );

@@ -75,12 +75,12 @@ The command takes no arguments. Use the menu to enable or disable servers.
 ## Development
 
 ```bash
-pnpm --filter pi-mcp check
+bun run --filter pi-mcp check
 ```
 
 After editing, run `/reload` in Pi. Tests cover the native settings menu and result renderer, live counts, Fast Mode composition and teardown, concurrent overlay writes, stale lifecycle work, output limits, and a local SDK-backed stdio fixture. Normal checks do not read real MCP credentials or call configured servers.
 
-An optional live executor check is available with `PI_MCP_LIVE_TEST=1 pnpm --filter pi-mcp test`.
+An optional live executor check is available with `PI_MCP_LIVE_TEST=1 bun run --filter pi-mcp test`.
 
 ### Scope and remaining limitations
 

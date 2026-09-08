@@ -160,6 +160,6 @@ Ordinary requests have a 60-second timeout; crawl polling has a 90-second local 
 ## Development
 
 ```bash
-pnpm --filter pi-web-tools check
-pnpm --filter pi-web-tools format
+bun run --filter pi-web-tools check
+bun run --filter pi-web-tools format
 ```

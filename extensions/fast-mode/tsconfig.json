@@ -11,7 +11,7 @@
     "noUncheckedIndexedAccess": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node", "bun-types/test"]
   },
   "include": ["*.ts", "tests/**/*.ts"]
 }
