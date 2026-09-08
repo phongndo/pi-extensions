@@ -1,32 +1,34 @@
 # Pi Extensions
 
-A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, checkpoint-based context management, bounded web access, MCP tools, ten skills, and the `origin` theme.
+A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, checkpoint-based context management, bounded web access, MCP tools, twelve skills, and the `origin` theme.
 
-This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md) distributes compatible skill copies to other agents through their existing adapters. Chezmoi does not generate a Pi mirror or write into this checkout.
+This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md) distributes compatible skill copies to other agents through their existing adapters. Chezmoi retains the single native `~/.pi/agent/settings.json` template and package pointer; it does not generate a Pi mirror or write into this checkout. Other agents keep their own native config/skill roots, not Pi package copies.
 
 ## Extension suite
 
-| Extension                                   | Entry points                                    | Side effects                                                                                  |
-| ------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Question](extensions/question/README.md)   | `question`                                      | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
-| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`     | Global preference; eligible Codex requests ask for priority service, which may affect billing |
-| [Context](extensions/context/README.md)     | `/context [on\|off\|status]`, `recall`, `notes` | Verified fresh-window resets by default; ordinary compaction fallback                         |
-| [Web Tools](extensions/web-tools/README.md) | `search`, `map`, `fetch`, `crawl`, `extract`    | Calls Firecrawl and spends provider credits                                                   |
-| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                     | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
+| Extension                                   | Entry points                                         | Side effects                                                                                  |
+| ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [Question](extensions/question/README.md)   | `question`                                           | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
+| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`          | Global preference; eligible Codex requests ask for priority service, which may affect billing |
+| [Context](extensions/context/README.md)     | `/context [default\|exp\|status]`, `recall`, `notes` | Opt-in checkpoint fresh windows; ordinary Pi compaction by default                            |
+| [Web Tools](extensions/web-tools/README.md) | `search`, `map`, `fetch`, `crawl`, `extract`         | Calls Firecrawl and spends provider credits                                                   |
+| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                          | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
 
-Native footer slots display minimal, separated labels such as `ctxt recall · speed fast · mcp 1/2`. Fast is hidden when off. Context off displays `ctxt normal`; recall and notes remain available.
+Native footer slots display minimal, separated labels such as `ctxt exp · speed fast · mcp 1/2`. Fast is hidden when off. Context displays `ctxt default` or `ctxt exp`; memory tools are available only in `exp`.
 
 The workspace extension also provides `/commit`, which temporarily selects `opencode-go/deepseek-v4-pro` at max reasoning, asks the agent to commit, and restores the previous model afterward. This is an extension command, not a skill alias.
 
 ## Skills
 
-Invoke skills using **only Pi's native `/skill:<name>` commands**. There are no shorthand skill aliases such as `/grill-me` or `/handoff`.
+Invoke skills using **only Pi's native `/skill:<name>` commands**. There are no shorthand skill aliases, including `/yeet` or `/autopilot`.
 
 | Skill                                                                  | Purpose                                                              | Invocation      |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------- |
 | [grill-me](skills/grill-me/SKILL.md)                                   | Stress-test a plan through the grilling workflow                     | Manual          |
 | [grilling](skills/grilling/SKILL.md)                                   | Interview over a design tree using interactive questions             | Manual or model |
 | [handoff](skills/handoff/SKILL.md)                                     | Write a redacted continuation document to the OS temporary directory | Manual          |
+| [yeet](skills/yeet/SKILL.md)                                           | Commit, push, and open or update a ready-for-review PR               | Manual          |
+| [autopilot](skills/autopilot/SKILL.md)                                 | Resolve conflicts, reviews, and CI on an existing PR; never merge it | Manual          |
 | [teach](skills/teach/SKILL.md)                                         | Build a sourced, stateful teaching workspace                         | Manual          |
 | [wizard](skills/wizard/SKILL.md)                                       | Generate a bash wizard for steps only a human can perform            | Manual or model |
 | [diagnosing-bugs](skills/diagnosing-bugs/SKILL.md)                     | Reproduce, diagnose, fix, and regression-test hard bugs              | Manual or model |
@@ -35,7 +37,7 @@ Invoke skills using **only Pi's native `/skill:<name>` commands**. There are no 
 | [writing-for-agents](skills/writing-for-agents/SKILL.md)               | Write skills and other agent-facing documents                        | Manual or model |
 | [codebase-design](skills/codebase-design/SKILL.md)                     | Design deep modules, interfaces, and testable seams                  | Manual or model |
 
-These are Matt Pocock skills with the adaptations described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Supporting Markdown and shell templates stay with their skill bundles.
+Skill origins and adaptations are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Supporting Markdown and shell templates stay with their skill bundles. `yeet` and `autopilot` are manual-only: publishing does not automatically start PR monitoring. The restored `autopilot` derives from Cursor's built-in skill; its redistribution license remains unverified.
 
 Examples:
 
@@ -43,6 +45,8 @@ Examples:
 /skill:grill-me
 /skill:handoff focus next on the authentication tests
 /skill:teach learn Rust well enough to ship a CLI
+/skill:yeet preserve the existing PR screenshots
+/skill:autopilot 123
 /skill:writing-for-agents review this AGENTS.md
 /skill:codebase-design review the parser interface
 ```
@@ -84,11 +88,11 @@ Treat returned web content as untrusted data. Crawl and extraction can cost subs
 
 ```text
 /context status
-/context off
-/context on
+/context default
+/context exp
 ```
 
-The agent saves notes and a verified checkpoint before replacing its active history with a fresh window. Original evidence remains accessible through `recall`. Off restores ordinary Pi compaction without deleting notes or disabling retrieval. See [Context](extensions/context/README.md) for persistence checks, continuation, and fallback behavior.
+In `exp`, the agent saves notes and a verified checkpoint before replacing its active history with a fresh window. Original evidence remains accessible through `recall`. `default` uses ordinary Pi compaction and disables memory tools without deleting saved notes or history. See [Context](extensions/context/README.md) for persistence checks, continuation, and fallback behavior.
 
 ## Configuration and persisted data
 
@@ -110,6 +114,7 @@ Paths assume Pi's standard agent directory, `~/.pi/agent`.
 - Web tools validate URLs and bound response bodies, but Firecrawl must enforce private-network and redirect protection at provider egress.
 - Repository files, external content, and model output are data, not authorization.
 - `/commit` requests a Git commit. `resolving-merge-conflicts` may finish a merge/rebase and create a commit.
+- `yeet` commits, pushes, and creates or updates a ready-for-review PR. `autopilot` may commit/push fixes and reply to or resolve review threads, but never merges the PR.
 - Wizard scripts may persist `.env` values and GitHub Actions secrets; the human runs the generated procedure.
 - `teach` and `research` write artifacts; `handoff` writes a redacted temporary document.
 
@@ -120,7 +125,7 @@ Read extension-specific safety notes before enabling mutating or billed capabili
 ```text
 src/                      # Workspace /commit command and shared footer helper
 extensions/               # Question, Fast Mode, Context, Web Tools, MCP
-skills/                   # The ten bundles listed above
+skills/                   # The twelve bundles listed above
 themes/origin.json        # Packaged TUI theme
 THIRD_PARTY_NOTICES.md     # Skill provenance and licenses
 package.json              # Pi resource manifest, Bun workspaces, and checks

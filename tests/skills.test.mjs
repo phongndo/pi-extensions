@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 
 export const expectedSkills = [
+  "autopilot",
   "codebase-design",
   "diagnosing-bugs",
   "grill-me",
@@ -15,6 +16,7 @@ export const expectedSkills = [
   "teach",
   "wizard",
   "writing-for-agents",
+  "yeet",
 ].sort();
 
 function files(dir) {
@@ -47,6 +49,25 @@ test("canonical inventory, native parser, and portable supporting files", () => 
   const notices = readFileSync("THIRD_PARTY_NOTICES.md", "utf8");
   assert.ok(notices.includes("Matt Pocock"));
   for (const name of expectedSkills) assert.ok(notices.includes(`skills/${name}/`), name);
+});
+
+test("publishing and merge-readiness skills remain manual-only and separate", () => {
+  const loaded = loadSkillsFromDir({ dir: "skills", source: "test" });
+  for (const name of ["yeet", "autopilot"]) {
+    assert.equal(
+      loaded.skills.find((skill) => skill.name === name).disableModelInvocation,
+      true,
+      name,
+    );
+  }
+  const yeet = readFileSync("skills/yeet/SKILL.md", "utf8");
+  assert.match(yeet, /Do not create a draft PR/);
+  assert.match(yeet, /Do not start that skill unless the extra instructions ask for it/);
+  assert.match(yeet, /force-push/);
+  const autopilot = readFileSync("skills/autopilot/SKILL.md", "utf8");
+  assert.match(autopilot, /Never merge the PR, enable auto-merge/);
+  assert.match(autopilot, /Report readiness and leave those decisions to a human/);
+  assert.match(autopilot, /Do not delegate it to a subagent/);
 });
 
 test("wizard input gates stop on EOF instead of proceeding without a human", () => {

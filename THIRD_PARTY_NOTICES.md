@@ -1,6 +1,6 @@
 # Third-party notices
 
-The bundled skills originate from [Matt Pocock's `mattpocock/skills`](https://github.com/mattpocock/skills), under the MIT license reproduced below.
+The imported Matt Pocock skills below originate from [`mattpocock/skills`](https://github.com/mattpocock/skills), under the MIT license reproduced below. The restored `yeet` and `autopilot` workflows are listed separately.
 
 ## grill-me and grilling
 
@@ -25,6 +25,14 @@ These skills originate from commit [`3cca18b368ae95cdbdebbff572ccafa662551015`](
 - [`skills/writing-for-agents/`](skills/writing-for-agents/) contains the Markdown from upstream `skills/productivity/writing-for-agents`, including `SKILL-MECHANICS.md`.
 
 The two newly imported bundles preserve substantive wording; repository formatting may differ. Their upstream Codex display-metadata sidecars are not included: agent-specific distribution remains owned by nix-config's existing chezmoi adapters.
+
+## yeet
+
+[`skills/yeet/`](skills/yeet/) restores this repository's manual publishing workflow, introduced in commit [`7b3b497`](https://github.com/phongndo/pi-extensions/commit/7b3b497e5191aba899a9c31e76190f7d1134ca01). It is not a Matt Pocock import. The restoration requires full staged-diff inspection; publishing remains separate from the explicitly requested `autopilot` merge-readiness workflow.
+
+## autopilot
+
+[`skills/autopilot/SKILL.md`](skills/autopilot/SKILL.md) is adapted from Cursor's built-in `autopilot` skill, as confirmed by the owner and compared with the installed Cursor Agent `2026.09.02-c22c1a3` copy at `~/.cursor/skills-cursor/autopilot/SKILL.md`. See [Cursor's built-in skills documentation](https://cursor.com/docs/skills#built-in-cursor-skills). The local adaptation adds explicit human invocation, current-session execution, and work-preservation guardrails while retaining the conflict → review → CI loop. No standalone upstream license or original source revision has been established; the MIT notices here do not purport to license Cursor's material. Review redistribution rights before publishing this personal skill bundle.
 
 ## Matt Pocock MIT license
 

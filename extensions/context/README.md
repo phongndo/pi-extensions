@@ -151,7 +151,7 @@ Outcome writes wait for Pi's terminal compaction hooks, so telemetry cannot inva
 - Storage is local, **not encrypted by this extension**, and follows Pi's session lifecycle. Deleting/moving session files can make evidence unavailable. There is no separate backup or cross-session note store. Do not put credentials in notes.
 - Recall scans the in-memory branch; full archive verification streams the session file at reset time. Very large histories cost CPU/I/O. There is no vector index or background model summarizer.
 - Validation uses Pi 0.85.1's `firstKeptEntryId`, `terminate` and `agent_settled` APIs. No unsupported session mutation, private HTTP endpoint, or Codex-only API is required.
-- Offline tests exercise real Pi loading, multiple requested/threshold resets, evidence-linked named notes, exact failure recovery, continuation, overflow fallback, steering, archive corruption, cancellation, diagnostics and branch/revision handling. A nine-run Grok 4.5 subscription evaluation compares stock, stock plus recall/notes, and fresh windows: see the [initial results](../../docs/context-evaluation-2026-09-08.md), [token-efficiency regression rerun](../../docs/context-efficiency-2026-09-08.md), and [two-mode checkpoint follow-up](../../docs/context-checkpoint-improvements-2026-09-08.md). This is not a claim of Astra-equivalent reasoning quality or broad cost superiority.
+- Offline tests exercise real Pi loading, multiple requested/threshold resets, evidence-linked named notes, exact failure recovery, continuation, overflow fallback, steering, archive corruption, cancellation, diagnostics and branch/revision handling. These structural tests do not establish checkpoint semantic fidelity, Astra-equivalent reasoning quality, or broad cost superiority.
 
 ## Development
 
@@ -159,10 +159,8 @@ Outcome writes wait for Pi's terminal compaction hooks, so telemetry cannot inva
 bun run --filter pi-context check
 
 # Opt-in: consumes xAI subscription allowance; requires existing OAuth, never an API key.
-# Use a new output filename; existing result files are not overwritten.
+# --output is required; results are disposable and existing files are not overwritten.
 bun extensions/context/evals/run.ts --run-subscription --output=/tmp/context-eval-new.json
 ```
 
 The current evaluation uses six isolated synthetic tasks (three scenarios × default/exp), two transitions per task, Grok 4.5 with low thinking, a 14-call/1,600-output-token-per-call ceiling and a three-minute deadline per task. No user sessions, context files, extensions or filesystem/network tools are exposed to the model. Credentials stay in memory; user auth/settings files are not modified. Normal checks never make provider calls. For one bounded follow-up cell, add `--only=failure:exp` (or another scenario:mode pair).
-
-See the [primary-source research](../../docs/astra-context-management-research.md) and [interactive visual walkthrough](../../docs/show-me-context-recall.html).

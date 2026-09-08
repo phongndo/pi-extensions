@@ -134,4 +134,4 @@ bun run --filter pi-fast-mode format
 
 Tests use fake credentials and synthetic responses, not paid model calls. Coverage includes Astra, positive/negative/unknown capabilities, credential-scoped catalog caching, stale-response races, actual Codex SSE serialization, response-tier diagnostics, the real Pi loader/footer, commands, cross-session synchronization, atomic persistence, and child/runtime refresh behavior.
 
-The preceding investigation and upstream sources are recorded in [`docs/codex-fast-mode-research.md`](../../docs/codex-fast-mode-research.md). The discovery protocol follows [Codex's ModelsClient](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/models.rs); capability checks follow [Codex model metadata](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).
+The discovery protocol follows [Codex's ModelsClient](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/models.rs); capability checks follow [Codex model metadata](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).

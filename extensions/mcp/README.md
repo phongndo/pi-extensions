@@ -87,5 +87,3 @@ An optional live executor check is available with `PI_MCP_LIVE_TEST=1 bun run --
 - No automatic reconnect or heartbeat; toggle off/on or `/reload` to reconnect. Transport failures not reported as a close may remain connected until a subsequent operation detects them.
 - Tools are discovered on connection; live tool-list-change notifications, MCP prompts/resources browsing, OAuth login, sampling, and elicitation are not implemented.
 - Overlay writes are atomic and locked across cooperating Pi processes. External editors, older versions, and processes suspended beyond the lease can still race. Other sessions must reload to pick up changes.
-
-See [the implementation review](../../docs/mcp-review.md) for the audit findings and regression coverage.

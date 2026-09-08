@@ -2,7 +2,6 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
@@ -75,6 +74,12 @@ const strategies = ["default", "exp"] as const;
 async function main() {
   if (!process.argv.includes("--run-subscription"))
     throw new Error("Explicit --run-subscription opt-in required");
+  const output = process.argv.find((arg) => arg.startsWith("--output="))?.slice(9);
+  if (!output) {
+    console.error("Explicit --output=<new-file> required for disposable results");
+    process.exitCode = 1;
+    return;
+  }
   const only = process.argv.find((arg) => arg.startsWith("--only="))?.slice(7);
   if (
     only &&
@@ -125,9 +130,6 @@ async function main() {
     });
     return result;
   };
-  const output =
-    process.argv.find((arg) => arg.startsWith("--output="))?.slice(9) ??
-    fileURLToPath(new URL("../../../docs/context-eval-2026-09-08.json", import.meta.url));
   // Never replace an earlier experiment accidentally. Use --output=<new-file> to repeat.
   await writeFile(output, JSON.stringify({ version: 1, results: [] }) + "\n", { flag: "wx" });
   const results: unknown[] = [];
