@@ -1,15 +1,112 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createEventBus,
+  initTheme,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { createUsageExtension } from "../index.ts";
 import { UsageLedger } from "../ledger.ts";
+import * as live from "../live.ts";
+import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
+
+test("command opens cancellable native UI before history finishes loading", async () => {
+  initTheme("dark", false);
+  let release!: (value: { records: []; skipped: number }) => void;
+  const read = spyOn(UsageLedger.prototype, "read").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  let command!: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+  let opened = false;
+  let cancelledSignal: AbortSignal | undefined;
+  const ctx = {
+    hasUI: true,
+    mode: "tui",
+    ui: {
+      notify: () => {},
+      custom: async (factory: Parameters<ExtensionContext["ui"]["custom"]>[0]) => {
+        opened = true;
+        let close!: () => void;
+        const closed = new Promise<void>((resolve) => {
+          close = resolve;
+        });
+        const component = await factory(
+          { requestRender: () => {}, terminal: { rows: 30 } } as Parameters<typeof factory>[0],
+          { fg: (_: string, s: string) => s } as Parameters<typeof factory>[1],
+          new KeybindingsManager(TUI_KEYBINDINGS) as Parameters<typeof factory>[2],
+          close,
+        );
+        cancelledSignal = (component as unknown as { signal: AbortSignal }).signal;
+        component.handleInput?.("\u001b");
+        component.dispose?.();
+        await closed;
+      },
+    },
+  } as unknown as ExtensionCommandContext;
+  createUsageExtension({ live: false })({
+    events: createEventBus(),
+    on: () => {},
+    registerCommand: (_: string, value: { handler: typeof command }) => {
+      command = value.handler;
+    },
+  } as unknown as ExtensionAPI);
+  const pending = command("", ctx);
+  try {
+    await Promise.resolve();
+    expect(opened).toBe(true);
+    await pending;
+    expect(cancelledSignal?.aborted).toBe(true);
+  } finally {
+    release?.({ records: [], skipped: 0 });
+    await pending;
+    read.mockRestore();
+  }
+});
+
+test("history and live limits start concurrently rather than serially", async () => {
+  let release!: (value: { records: []; skipped: number }) => void;
+  const read = spyOn(UsageLedger.prototype, "read").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const limits = spyOn(live, "loadLiveUsage").mockResolvedValue({ accounts: [], snapshots: [] });
+  const offline = process.env.PI_OFFLINE;
+  process.env.PI_OFFLINE = "0";
+  let command!: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+  createUsageExtension()({
+    events: createEventBus(),
+    on: () => {},
+    registerCommand: (_: string, value: { handler: typeof command }) => {
+      command = value.handler;
+    },
+  } as unknown as ExtensionAPI);
+  const pending = command("", {
+    hasUI: true,
+    mode: "rpc",
+    sessionManager: { getSessionId: () => "s" },
+    ui: { notify: () => {} },
+  } as unknown as ExtensionCommandContext);
+  try {
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(limits).toHaveBeenCalledTimes(1);
+  } finally {
+    release({ records: [], skipped: 0 });
+    await pending;
+    read.mockRestore();
+    limits.mockRestore();
+    if (offline === undefined) delete process.env.PI_OFFLINE;
+    else process.env.PI_OFFLINE = offline;
+  }
+});
 
 test("standalone native tracking, router attempt attribution, reload dedup and listener teardown", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-usage-lifecycle-"));

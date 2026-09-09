@@ -9,6 +9,83 @@ const theme = {
   fg: (_color: string, text: string) => `\x1b[36m${text}\x1b[0m`,
   bold: (text: string) => `\x1b[1m${text}\x1b[0m`,
 } as Theme;
+test("native borders track the available width across repeated resizes", () => {
+  let height = 40;
+  const view = new UsageDashboard(
+    [],
+    [],
+    "session",
+    theme,
+    new KeybindingsManager(TUI_KEYBINDINGS),
+    () => {},
+    () => height,
+  );
+  for (const key of ["", "h", "?"]) {
+    if (key) view.handleInput(key);
+    for (const width of [170, 80, 24, 120, 1, 200]) {
+      for (height of [40, 12, 8]) {
+        view.invalidate();
+        const lines = view.render(width);
+        expect(visibleWidth(lines[0]!)).toBe(width);
+        expect(visibleWidth(lines.at(-1)!)).toBe(width);
+        expect(stripVTControlCharacters(lines.at(-1)!)).toBe("─".repeat(width));
+        expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+        expect(lines.length).toBeLessThanOrEqual(height - 2);
+      }
+    }
+  }
+});
+
+test("remaining and help renders do not scan recorded history", () => {
+  const records: UsageRecord[] = [];
+  const scan = spyOn(records, "filter");
+  try {
+    const view = new UsageDashboard(
+      records,
+      [],
+      "session",
+      theme,
+      new KeybindingsManager(TUI_KEYBINDINGS),
+      () => {},
+      () => 40,
+    );
+    view.render(170);
+    view.handleInput("?");
+    view.render(80);
+    expect(scan).not.toHaveBeenCalled();
+    view.handleInput("?");
+    view.handleInput("h");
+    view.render(170);
+    expect(scan).toHaveBeenCalled();
+  } finally {
+    scan.mockRestore();
+  }
+});
+
+test("help and remaining views preserve the selected history row", () => {
+  const view = new UsageDashboard(
+    [],
+    [
+      { id: "a", name: "A", provider: "alpha", enabled: true },
+      { id: "b", name: "B", provider: "beta", enabled: true },
+    ],
+    "session",
+    theme,
+    new KeybindingsManager(TUI_KEYBINDINGS),
+    () => {},
+    () => 40,
+  );
+  view.handleInput("h");
+  view.handleInput("\u001b[B");
+  const selected = view.render(170);
+  for (const toggle of ["?", "h"]) {
+    view.handleInput(toggle);
+    view.render(80);
+    view.handleInput(toggle);
+    expect(view.render(170)).toEqual(selected);
+  }
+});
+
 test("native-themed dashboard is bounded at narrow widths and short heights", () => {
   const keys = new KeybindingsManager(TUI_KEYBINDINGS);
   for (const width of [1, 20, 40, 80, 120])
@@ -316,7 +393,9 @@ test("screenshot-shaped empty view stays compact with named providers and no war
   expect(text).toContain("Test");
   expect(text).toContain("h history");
   expect(lines.length).toBeLessThanOrEqual(20);
-  expect(lines.every((line) => visibleWidth(line) <= 96)).toBe(true);
+  expect(visibleWidth(lines[0]!)).toBe(160);
+  expect(visibleWidth(lines.at(-1)!)).toBe(160);
+  expect(lines.slice(1, -1).every((line) => visibleWidth(line) <= 96)).toBe(true);
   for (const clutter of [
     "openai-codex",
     "failed/aborted",

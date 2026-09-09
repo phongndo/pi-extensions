@@ -7,7 +7,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { UsageLedger, safeLabel } from "./ledger.ts";
-import { showDashboard } from "./dashboard.ts";
+import { loadWithUsageUI, showDashboard } from "./dashboard.ts";
 import { type AccountInfo, type Period } from "./model.ts";
 import { loadLiveUsage, type LiveUsageOptions } from "./live.ts";
 import type { AllowanceSnapshot } from "./allowances.ts";
@@ -143,48 +143,54 @@ export function createUsageExtension(
         opening = true;
         try {
           pi.events.emit("router:request-accounts", {});
-          const { records: saved, skipped } = await ledger.read(AbortSignal.timeout(15_000));
-          // Preserve old API history on disk, but this dashboard is subscription-only.
-          const records = saved.filter((r) => r.subscription);
+          const loaded = await loadWithUsageUI(ctx, lifetime.signal, async (signal) => {
+            const history = ledger.read(AbortSignal.any([signal, AbortSignal.timeout(15_000)]));
+            const limits = (async () => {
+              let accounts = [...routerAccounts];
+              let snapshots: AllowanceSnapshot[] = [];
+              let liveError: string | undefined;
+              if (
+                options.live !== false &&
+                !(process.env.PI_OFFLINE && process.env.PI_OFFLINE !== "0")
+              ) {
+                try {
+                  const live = await loadLiveUsage(
+                    ctx,
+                    AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+                    {
+                      ...options,
+                      legacy: routerAccounts.flatMap((a) =>
+                        a.credentialId
+                          ? [
+                              {
+                                id: a.id,
+                                name: a.name,
+                                provider: a.provider,
+                                credentialId: a.credentialId,
+                              },
+                            ]
+                          : [],
+                      ),
+                    },
+                  );
+                  accounts = live.accounts;
+                  snapshots = live.snapshots;
+                } catch {
+                  liveError = "Live limits unavailable; local totals still shown";
+                }
+              } else liveError = "Live limits disabled/offline";
+              return { accounts, snapshots, liveError };
+            })();
+            const [{ records: saved, skipped }, live] = await Promise.all([history, limits]);
+            return { records: saved.filter((r) => r.subscription), skipped, ...live };
+          });
+          if (!active || !loaded) return;
+          const { records, skipped, accounts, snapshots, liveError } = loaded;
           if (skipped || failed)
             ctx.ui.notify(
               `Usage may be incomplete: ${skipped} invalid record(s) skipped${failed ? "; some writes failed" : ""}.`,
               "warning",
             );
-          let accounts = [...routerAccounts];
-          let snapshots: AllowanceSnapshot[] = [];
-          let liveError: string | undefined;
-          if (
-            options.live !== false &&
-            !(process.env.PI_OFFLINE && process.env.PI_OFFLINE !== "0")
-          ) {
-            try {
-              const live = await loadLiveUsage(
-                ctx,
-                AbortSignal.any([lifetime.signal, AbortSignal.timeout(20_000)]),
-                {
-                  ...options,
-                  legacy: routerAccounts.flatMap((a) =>
-                    a.credentialId
-                      ? [
-                          {
-                            id: a.id,
-                            name: a.name,
-                            provider: a.provider,
-                            credentialId: a.credentialId,
-                          },
-                        ]
-                      : [],
-                  ),
-                },
-              );
-              accounts = live.accounts;
-              snapshots = live.snapshots;
-            } catch {
-              liveError = "Live limits unavailable; local totals still shown";
-            }
-          } else liveError = "Live limits disabled/offline";
-          if (!active) return;
           const providers = new Set([
             ...records.map((r) => r.provider),
             ...accounts.map((a) => a.provider),

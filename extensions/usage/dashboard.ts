@@ -1,4 +1,9 @@
-import { DynamicBorder, type Theme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  BorderedLoader,
+  DynamicBorder,
+  type Theme,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import {
   matchesKey,
   truncateToWidth,
@@ -317,13 +322,15 @@ export class UsageDashboard implements Component {
   render(width: number): string[] {
     if (width <= 0 || this.height() <= 0) return [];
     const t = this.theme;
-    const panelWidth = Math.min(96, width);
-    const inner = Math.max(1, panelWidth - 4);
+    // Native borders follow Pi's supplied width; keep only the content comfortably bounded.
+    const panelWidth = width;
+    const inner = Math.max(1, Math.min(96, width) - 4);
     const height = Math.max(1, this.height() - 2);
-    const groups = this.groups();
-    this.selected = Math.max(0, Math.min(this.selected, groups.length - 1));
+    const history = !this.live && !this.help;
+    const groups = history ? this.groups() : [];
+    if (history) this.selected = Math.max(0, Math.min(this.selected, groups.length - 1));
     const group = groups[this.selected];
-    const records = this.detail && group ? group.records : this.filtered();
+    const records = history ? (this.detail && group ? group.records : this.filtered()) : [];
     const sum = totals(records);
     const scope = this.provider ? this.name(this.provider) : "Overall";
     const title = this.help
@@ -444,9 +451,59 @@ export class UsageDashboard implements Component {
       `  ${t.fg("dim", navigation)}`,
       ...border,
     ];
-    return lines.slice(0, height).map((line) => truncateToWidth(line, panelWidth));
+    // Preserve the closing border even when the terminal cannot fit the normal chrome.
+    const fitted = lines.length > height ? [...lines.slice(0, height - 1), ...border] : lines;
+    return fitted.map((line) => truncateToWidth(line, panelWidth));
   }
 }
+/** Show Pi's native loader immediately; cancellation never waits for an uncooperative read. */
+export async function loadWithUsageUI<T>(
+  ctx: ExtensionContext,
+  lifetime: AbortSignal,
+  load: (signal: AbortSignal) => Promise<T>,
+): Promise<T | undefined> {
+  if (ctx.mode !== "tui") return load(lifetime);
+  type Result = { value: T } | { error: unknown } | undefined;
+  const result = await ctx.ui.custom<Result>((tui, theme, keys, done) => {
+    const loader = new BorderedLoader(tui, theme, "Loading usage…");
+    const controller = new AbortController();
+    const signal = AbortSignal.any([lifetime, controller.signal, loader.signal]);
+    let settled = false;
+    const finish = (result: Result) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", cancel);
+      controller.abort();
+      loader.dispose();
+      done(result);
+    };
+    const cancel = () => finish(undefined);
+    signal.addEventListener("abort", cancel, { once: true });
+    if (signal.aborted) queueMicrotask(cancel);
+    else
+      void load(signal).then(
+        (value) => finish({ value }),
+        (error) => finish({ error }),
+      );
+    return {
+      signal,
+      render: (width) => loader.render(width),
+      invalidate: () => loader.invalidate(),
+      handleInput: (data) => {
+        if (keys.matches(data, "tui.select.cancel")) controller.abort();
+      },
+      dispose: () => {
+        signal.removeEventListener("abort", cancel);
+        settled = true;
+        controller.abort();
+        loader.dispose();
+      },
+    };
+  });
+  if (result && "error" in result) throw result.error;
+  return result?.value;
+}
+
 export async function showDashboard(
   ctx: ExtensionContext,
   records: UsageRecord[],
