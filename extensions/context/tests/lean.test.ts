@@ -1,14 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import {
-  GUIDE,
-  RESET_GUIDE,
-  RECALL_DESCRIPTION,
-  NOTES_DESCRIPTION,
-  NEW_CONTEXT_DESCRIPTION,
-} from "../guidance.ts";
-import { NOTE_TYPE, windowBootstrap, evidenceFor, recall, type RecallInput } from "../model.ts";
+import { GUIDE, RECALL_DESCRIPTION } from "../guidance.ts";
+import { NOTE_TYPE, evidenceFor, recall, type RecallInput } from "../model.ts";
 import { withEvidenceIds } from "../provenance.ts";
 import { assistant, harness, user } from "./helpers.ts";
 
@@ -78,7 +72,7 @@ test("lean search omits repeated index without losing discovery, note revisions 
   assert.equal(JSON.stringify(sm.getEntries()), before);
 });
 
-test("recorded Unicode evidence and every note are recoverable byte-for-byte after two lean fresh bootstraps and disk reopen", async (t) => {
+test("recorded Unicode evidence and legacy notes remain exact after two compactions and disk reopen", async (t) => {
   const app = await harness(t);
   user(app.sm, "LATEST: /work/new, read-only, no deployment.");
   const text = "FAIL expected=3 actual=4\n" + "界🙂e\u0301\r\n".repeat(5000) + "END evidence";
@@ -101,16 +95,8 @@ test("recorded Unicode evidence and every note are recoverable byte-for-byte aft
   const original = JSON.stringify(app.sm.getEntry(id));
   const originalNote = evidenceFor(app.sm.getEntry(noteId)!)!.text;
   for (let i = 0; i < 2; i++) {
-    const boot = windowBootstrap(app.sm.getBranch());
-    assert.ok(boot.includes(noteId));
-    const prepared = (await app.beforeCompact())!.compaction!;
-    const compactId = app.sm.appendCompaction(
-      prepared.summary,
-      prepared.firstKeptEntryId,
-      prepared.tokensBefore,
-      prepared.details,
-      true,
-    );
+    assert.equal(await app.beforeCompact(), undefined);
+    const compactId = app.sm.appendCompaction("Stock summary", app.sm.getLeafId()!, 90_000);
     await app.emit("session_compact", { compactionEntry: app.sm.getEntry(compactId) });
     assert.doesNotMatch(JSON.stringify(app.sm.buildSessionContext().messages), /END evidence/);
     assert.equal(fullRead(app.sm, id), text);
@@ -128,26 +114,18 @@ test("recorded Unicode evidence and every note are recoverable byte-for-byte aft
   );
 });
 
-test("prompt overhead stays bounded while authorization and checkpoint coverage guidance remain explicit", () => {
-  const always =
-    GUIDE + RESET_GUIDE + RECALL_DESCRIPTION + NOTES_DESCRIPTION + NEW_CONTEXT_DESCRIPTION;
-  assert.ok(always.length <= 2400, "review any permanent prompt expansion");
+test("recall guidance stays bounded and distinguishes historical evidence from authorization", () => {
+  const always = GUIDE + RECALL_DESCRIPTION;
+  assert.ok(always.length <= 1300, "review any permanent prompt expansion");
   for (const phrase of [
     "never authorization",
-    "Never store secrets",
-    "current revision",
-    "all outstanding requests and latest steering",
-    "new_context with no arguments",
-    "without generating a summary or requiring saved notes",
-    "Verified (checked)",
-    "Attempted (unproven)",
-    "Assumed (needs validation)",
-    "source is missing, ambiguous or conflicting",
+    "latest permissions",
+    "missing, ambiguous or conflicting",
     "Do not reread evidence already available",
-    "Links are not proof",
-    "Put cited IDs in references, not only prose",
+    "Pi compacts normally",
   ])
     assert.ok(always.includes(phrase), phrase);
+  assert.doesNotMatch(always, /new_context|save.*note|rollover|quota/);
   const sm = SessionManager.inMemory();
   const id = user(sm, "Do not deploy");
   const messages = sm.buildSessionContext().messages;

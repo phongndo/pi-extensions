@@ -18,10 +18,10 @@ RPC sessions can still use `/mcp`: pick a server, then enable or disable it. RPC
 ## Native footer count
 
 ```text
-ctxt recall · speed fast · mcp 1/2
+speed fast · mcp 1/2
 ```
 
-`mcp 1/2` means one connected server out of two configured servers. Disabled, connecting, and failed servers remain in the denominator but not the numerator. This counts **servers**, not the tools or integrations exposed by an executor server.
+Other extensions may contribute additional footer slots. `mcp 1/2` means one connected server out of two configured servers. Disabled, connecting, and failed servers remain in the denominator but not the numerator. This counts **servers**, not the tools or integrations exposed by an executor server.
 
 No configured servers means no label. Uses the public `ctx.ui.setStatus` API; Pi owns layout and truncation. The extension never patches or replaces the footer. Connection status is session-local and based on the SDK's known transport state, not a background health check. Subscriptions and this extension's status are cleared on shutdown/reload.
 

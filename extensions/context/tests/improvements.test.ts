@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { withEvidenceIds } from "../provenance.ts";
-import { EVENT_TYPE, diagnostics, pendingUsage } from "../diagnostics.ts";
+import { EVENT_TYPE, diagnostics, diagnosticStatus } from "../diagnostics.ts";
 import { recall, type RecallInput } from "../model.ts";
 import { assistant, harness, user } from "./helpers.ts";
 
@@ -141,53 +141,31 @@ test("evidence markers are stable presentation-only, omit private/recursive mess
   );
 });
 
-test("exp provenance and milestone guidance encourage source-backed notes without quotas", async (t) => {
+test("passive diagnostics pair stock compaction outcomes with usage", async (t) => {
   const app = await harness(t);
-  const id = user(app.sm);
-  await app.command("exp");
-  const presented = await app.emit("context", { messages: app.sm.buildSessionContext().messages });
-  assert.match(JSON.stringify(presented), new RegExp(id));
-  const guidance = await app.emit("before_agent_start", { systemPrompt: "base" });
-  assert.match(JSON.stringify(guidance), /confirmed failure, decision, or completed milestone/);
-  assert.match(JSON.stringify(guidance), /Do not reread evidence already available/);
-});
-
-test("durable diagnostics pair rollover outcomes with usage", async (t) => {
-  const app = await harness(t);
-  user(app.sm);
-  await app.newContext();
-  const preparationLeaf = app.sm.getLeafId();
-  const prepared = (await app.beforeCompact())!.compaction!;
-  assert.ok(prepared);
-  const id = app.sm.appendCompaction(
-    prepared.summary,
-    prepared.firstKeptEntryId,
-    prepared.tokensBefore,
-    prepared.details,
-    true,
-  );
+  const root = user(app.sm);
+  app.sm.appendMessage(assistant([{ type: "text", text: "Persist" }]));
+  assert.equal(await app.beforeCompact(), undefined);
+  const id = app.sm.appendCompaction("Stock summary", root, 90_000);
   await app.emit("session_compact", { compactionEntry: app.sm.getEntry(id) });
   await app.emit("agent_settled");
-  await app.emit("turn_end", {
-    message: {
-      ...assistant([{ type: "text", text: "continued" }], 400),
-      timestamp: Date.now() + 1000,
-    },
-  });
-  await app.emit("turn_end", { message: assistant([{ type: "text", text: "more" }], 500) });
+  for (const tokens of [400, 500]) {
+    const message = assistant([{ type: "text", text: "continued" }], tokens);
+    app.sm.appendMessage(message);
+    await app.emit("turn_end", { message });
+  }
   const events = diagnostics(app.sm.getBranch());
-  assert.equal(events.filter((e) => e.event === "reset_requested").length, 1);
-  assert.equal(events.find((e) => e.event === "compaction")!.outcome, "fresh");
-  assert.equal(events.find((e) => e.event === "post_reset_usage")!.inputTokens, 400);
-  assert.equal(events.filter((e) => e.event === "post_reset_usage").length, 1);
-  assert.equal(events.filter((e) => e.event === "resumed").length, 1);
-  assert.ok(app.sm.getEntry(preparationLeaf!));
+  assert.deepEqual(
+    events.map((e) => e.event),
+    ["compaction", "post_compaction_usage"],
+  );
+  assert.equal(events.find((e) => e.event === "compaction")!.outcome, "normal");
+  assert.equal(events.find((e) => e.event === "post_compaction_usage")!.inputTokens, 400);
   assert.equal(
     JSON.stringify(recall(app.sm.getBranch(), { query: EVENT_TYPE })).includes('"role":"custom"'),
     false,
   );
-  await app.command("status");
-  assert.match(app.notifications.at(-1)!, /fresh.*400 tokens/);
+  assert.match(diagnosticStatus(app.sm.getBranch()), /normal.*400 tokens/);
   const reopened = SessionManager.open(app.sm.getSessionFile()!);
   assert.deepEqual(diagnostics(reopened.getBranch()), events);
 });
@@ -195,16 +173,42 @@ test("durable diagnostics pair rollover outcomes with usage", async (t) => {
 test("failure diagnostics exclude raw errors, record once and never resume", async (t) => {
   const app = await harness(t);
   user(app.sm);
-  await app.newContext();
-  await app.emit("agent_settled");
   await app.emit("session_compact_failed", { aborted: false, errorMessage: "SECRET" });
-  app.compactions[0]!.onError!(new Error("SECRET"));
+  await app.emit("agent_settled");
+  assert.equal(app.compactions.length, 0);
   assert.equal(app.sent.length, 0);
   assert.equal(
     diagnostics(app.sm.getBranch()).filter((e) => e.event === "compaction_failed").length,
     1,
   );
   assert.doesNotMatch(JSON.stringify(diagnostics(app.sm.getBranch())), /SECRET/);
+});
+
+test("identical stock summaries use the latest persisted boundary even if Pi emits an older matching entry", async (t) => {
+  const app = await harness(t);
+  const root = user(app.sm);
+  const first = app.sm.appendCompaction("Same summary", root, 100);
+  await app.emit("session_compact", { compactionEntry: app.sm.getEntry(first) });
+  const firstResponse = assistant([], 123);
+  app.sm.appendMessage(firstResponse);
+  await app.emit("turn_end", { message: firstResponse });
+  user(app.sm, "Continue");
+  const second = app.sm.appendCompaction("Same summary", root, 200);
+  await app.emit("session_compact", { compactionEntry: app.sm.getEntry(first) });
+  assert.equal(diagnostics(app.sm.getBranch()).at(-1)?.compactionId, second);
+  await app.emit("session_start");
+  const secondResponse = assistant([], 456);
+  app.sm.appendMessage(secondResponse);
+  await app.emit("turn_end", { message: secondResponse });
+  assert.deepEqual(
+    diagnostics(app.sm.getBranch())
+      .filter((event) => event.event === "post_compaction_usage")
+      .map((event) => [event.compactionId, event.inputTokens]),
+    [
+      [first, 123],
+      [second, 456],
+    ],
+  );
 });
 
 test("usage attribution accepts a persisted post-compaction response sharing the boundary millisecond", async (t) => {
@@ -219,7 +223,7 @@ test("usage attribution accepts a persisted post-compaction response sharing the
   app.sm.appendMessage(response);
   await app.emit("turn_end", { message: response });
   assert.equal(
-    diagnostics(app.sm.getBranch()).find((event) => event.event === "post_reset_usage")
+    diagnostics(app.sm.getBranch()).find((event) => event.event === "post_compaction_usage")
       ?.inputTokens,
     123,
   );
@@ -230,19 +234,22 @@ test("usage attribution survives reload, rejects pre-boundary turns and stays br
   const root = user(app.sm);
   const id = app.sm.appendCompaction("stock summary", root, 100);
   await app.emit("session_compact", { compactionEntry: app.sm.getEntry(id) });
-  assert.equal(pendingUsage(app.sm.getBranch()), id);
   await app.emit("session_start");
   await app.emit("turn_end", { message: { ...assistant([]), timestamp: 0 } });
-  assert.equal(pendingUsage(app.sm.getBranch()), id);
-  await app.emit("turn_end", { message: { ...assistant([], 321), timestamp: Date.now() + 1000 } });
-  assert.equal(pendingUsage(app.sm.getBranch()), undefined);
+  assert.deepEqual(
+    diagnostics(app.sm.getBranch()).map((event) => event.event),
+    ["compaction"],
+  );
+  const response = assistant([], 321);
+  app.sm.appendMessage(response);
+  await app.emit("turn_end", { message: response });
   assert.equal(diagnostics(app.sm.getBranch()).at(-1)?.inputTokens, 321);
   app.sm.branch(root);
   await app.emit("session_tree");
-  assert.equal(pendingUsage(app.sm.getBranch()), undefined);
+  assert.deepEqual(diagnostics(app.sm.getBranch()), []);
   await app.emit("turn_end", { message: { ...assistant([], 999), timestamp: Date.now() + 1000 } });
   assert.equal(
-    diagnostics(app.sm.getBranch()).some((event) => event.event === "post_reset_usage"),
+    diagnostics(app.sm.getBranch()).some((event) => event.event === "post_compaction_usage"),
     false,
   );
 });

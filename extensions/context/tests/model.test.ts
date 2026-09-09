@@ -1,18 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import {
-  CHECKPOINT_TYPE,
-  NOTE_TYPE,
-  windowBootstrap,
-  currentNotes,
-  evidenceFor,
-  latestCheckpoint,
-  recall,
-  validateReferences,
-  type NoteData,
-} from "../model.ts";
-import { assistant, checkpoint, receipt, toolCall, user } from "./helpers.ts";
+import { NOTE_TYPE, currentNotes, evidenceFor, recall, type NoteData } from "../model.ts";
+import { assistant, receipt, user } from "./helpers.ts";
 
 test("recall searches original tool evidence beyond stock summary truncation and reads by offset", () => {
   const sm = SessionManager.inMemory();
@@ -132,41 +122,7 @@ test("text recall excludes hidden reasoning, images bytes, !! output, and recurs
   assert.doesNotMatch(text, /PRIVATE|SECRET|Saved/);
 });
 
-test("deterministic bootstrap contains recovery pointers, not conversation or note payloads", () => {
-  const sm = SessionManager.inMemory();
-  const first = user(sm, "Original private task payload");
-  const ids = Array.from({ length: 12 }, (_, i) => user(sm, `Steering payload ${i}`));
-  const note = sm.appendCustomEntry(NOTE_TYPE, {
-    version: 1,
-    name: "finding",
-    text: "Detailed note payload",
-    references: [first],
-    deleted: false,
-  });
-  const boot = windowBootstrap(sm.getBranch());
-  assert.equal(windowBootstrap(sm.getBranch()), boot);
-  for (const id of [first, ...ids.slice(-8), note]) assert.ok(boot.includes(id));
-  assert.doesNotMatch(boot, /Original private|Steering payload|Detailed note payload/);
-  assert.match(boot, /finding/);
-});
-
-test("corrupt checkpoint cannot revive an older checkpoint", () => {
-  const sm = SessionManager.inMemory();
-  const request = user(sm);
-  const through = toolCall(sm);
-  sm.appendCustomEntry(CHECKPOINT_TYPE, {
-    version: 1,
-    checkpoint,
-    references: [request],
-    coveredThrough: through,
-    toolCallId: "checkpoint-call",
-  });
-  assert.ok(latestCheckpoint(sm.getBranch()));
-  sm.appendCustomEntry(CHECKPOINT_TYPE, { version: 99 });
-  assert.equal(latestCheckpoint(sm.getBranch()), undefined);
-});
-
-test("recent recall and reference validation materialize only needed evidence", () => {
+test("recent recall materializes only needed evidence", () => {
   const sm = SessionManager.inMemory();
   for (let i = 0; i < 100; i++) user(sm, `needle ${i}`);
   let reads = 0;
@@ -186,12 +142,6 @@ test("recent recall and reference validation materialize only needed evidence", 
   reads = 0;
   recall(branch, { query: "needle", limit: 2 });
   assert.ok(reads < 20, `search inspected ${reads} message fields`);
-  reads = 0;
-  validateReferences([], branch);
-  assert.equal(reads, 0);
-  validateReferences([branch[50]!.id], branch);
-  assert.ok(reads < 10, `reference validation inspected ${reads} message fields`);
-  assert.throws(() => validateReferences(["missing"], branch), /not readable evidence/);
 });
 
 test("retrieval output is bounded even for a huge recorded tool output", () => {
