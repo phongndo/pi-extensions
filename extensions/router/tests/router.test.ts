@@ -4,6 +4,7 @@ import {
   createModels,
   InMemoryCredentialStore,
   isRetryableAssistantError,
+  isContextOverflow,
   registerSessionResourceCleanup,
   type AssistantMessage,
   type Model,
@@ -170,8 +171,10 @@ describe("routing contract", () => {
     const result = await f.run();
     expect(result.stopReason).toBe("error");
     expect(f.calls).toHaveLength(1);
-    if (error.startsWith("prompt"))
+    if (error.startsWith("prompt")) {
       expect(result.errorMessage).toContain("context_length_exceeded");
+      expect(isContextOverflow(result, model.contextWindow)).toBe(true);
+    }
   });
   test("never replays after partial output", async () => {
     const f = fixture({ a: "429" }, true);

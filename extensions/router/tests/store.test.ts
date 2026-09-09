@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import lockfile from "proper-lockfile";
 import {
   RankingStore,
   rankAccounts,
@@ -30,6 +31,20 @@ test("only private ranking metadata is written; concurrent changes to other prov
   expect(statSync(path).mode & 0o777).toBe(0o600);
   expect(readFileSync(path, "utf8")).not.toContain("credential");
   expect(() => store.save({ codex: ["one", "two"] }, {})).toThrow("another session");
+});
+test("overlapping saves fail closed without losing data and can be retried after release", () => {
+  const { store, path } = setup();
+  store.save({ test: ["a", "b"] }, {});
+  const before = readFileSync(path, "utf8");
+  const release = lockfile.lockSync(path, { realpath: false });
+  try {
+    expect(() => store.save({ other: ["c"] }, {})).toThrow();
+    expect(readFileSync(path, "utf8")).toBe(before);
+  } finally {
+    release();
+  }
+  store.save({ other: ["c"] }, {});
+  expect(store.read()).toEqual({ test: ["a", "b"], other: ["c"] });
 });
 test("corrupt and invalid metadata is not overwritten", () => {
   const { store, path } = setup();

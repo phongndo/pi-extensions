@@ -149,6 +149,38 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.equal(app.statuses.has(FAST_MODE_STATUS_KEY), false);
 });
 
+test("account-route UI reports local Fast capability without probing an arbitrary account", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "fast-router-ui-"));
+  const path = join(root, "fast-mode.json");
+  await saveFastMode(true, path);
+  let authCalls = 0,
+    fetchCalls = 0;
+  const app = await harness(path, {
+    discovery: true,
+    fetchCatalog: async () => {
+      fetchCalls++;
+      return catalog([]);
+    },
+  });
+  app.ctx.model = { ...model(), provider: "accounts-openai-codex" };
+  app.registry.getApiKeyAndHeaders = async () => {
+    authCalls++;
+    return { ok: true, apiKey: token() };
+  };
+  t.after(async () => {
+    await app.emit("session_shutdown");
+    await rm(root, { recursive: true, force: true });
+  });
+  await app.emit("session_start");
+  await app.command("refresh");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
+  await app.command("details");
+  assert.match(app.notifications.at(-1)!, /Support: supported \(fallback\)/);
+  assert.equal(authCalls, 0);
+  assert.equal(fetchCalls, 0);
+  assert.match(app.notifications.at(-1)!, /Account route uses local capabilities/);
+});
+
 test("RPC gets status too; two sessions update without prompts", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "fast-rpc-"));
   const path = join(root, "fast-mode.json");

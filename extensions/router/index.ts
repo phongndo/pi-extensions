@@ -145,11 +145,34 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     }
     function refresh(): Promise<void> {
       if (closed) return Promise.resolve();
-      if (!syncing)
-        syncing = synchronize().finally(() => {
-          syncing = undefined;
-        });
-      return syncing;
+      // Each caller needs a read started after its mutation, not an older in-flight snapshot.
+      // Serialize refreshes so stale completions cannot overwrite newer account metadata.
+      const previous = syncing;
+      const next = (async () => {
+        await previous?.catch(() => {});
+        if (!closed) await synchronize();
+      })();
+      syncing = next;
+      return next.finally(() => {
+        if (syncing === next) syncing = undefined;
+      });
+    }
+    let refreshFailed = false;
+    async function refreshForInput(context: ExtensionContext) {
+      try {
+        await refresh();
+        await selectRoute(context);
+        refreshFailed = false;
+      } catch {
+        // Leave selected routes fail-closed; their request-time read still rejects bad metadata.
+        // Do not leak filesystem errors into every prompt or keep repeating a warning.
+        if (!refreshFailed && !closed)
+          context.ui.notify(
+            "Router metadata unavailable. Check router.json and native logins; routing resumes after repair.",
+            "warning",
+          );
+        refreshFailed = true;
+      }
     }
     async function selectRoute(context: ExtensionContext) {
       if (closed || selecting || !context.model) return;
@@ -198,7 +221,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       if (!closed && !poll) {
         // Pi exposes no login/logout event. Observe credential metadata only; never refresh OAuth here.
         poll = setInterval(() => {
-          if (!ctx?.isIdle() || closed) return;
+          if (!ctx?.isIdle() || closed || syncing) return;
           void refresh()
             .then(() => (ctx && ctx.isIdle() ? selectRoute(ctx) : undefined))
             .catch(() => {});
@@ -207,18 +230,12 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       }
     });
     pi.on("input", async (_event, context) => {
-      if (context.isIdle()) {
-        await refresh();
-        await selectRoute(context);
-      }
+      if (context.isIdle()) await refreshForInput(context);
       return { action: "continue" };
     });
     pi.on("model_select", async (_event, context) => {
       ctx = context;
-      if (!selecting) {
-        await refresh();
-        await selectRoute(context);
-      }
+      if (!selecting) await refreshForInput(context);
     });
     pi.registerCommand("router", {
       description: "Rank subscription accounts by provider; /router alias labels a subscription",

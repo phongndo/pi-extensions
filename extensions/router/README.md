@@ -15,7 +15,7 @@ Accidentally signing into the same identifiable account refreshes its existing c
 
 There are no Router add/remove/login commands, modes, status widgets, or separate secret prompts. Single-account providers do not appear in the ranking list. With none eligible, `/router` gives a short notice rather than an empty panel. Rankings are **within a provider**, never across providers.
 
-After an extra login is detected, the current model automatically uses that provider's account route. Login/logout update metadata immediately. Changes made in other processes are observed while idle (about once per second), and checked before user input/model changes. A plain first login stays on its native model. A sole remaining extra login stays routed so it remains usable after the original is removed. Removing all accounts fails closed.
+After an extra login is detected, the current model automatically uses that provider's account route. Login/logout update metadata immediately. Refreshes are serialized so a post-login refresh cannot reuse an older in-flight snapshot. Changes made in other processes are observed while idle (about once per second), and checked before user input/model changes. Unreadable rankings produce one redacted warning per failure episode instead of errors on every prompt; selected routes remain fail-closed until the file is repaired. A plain first login stays on its native model. A sole remaining extra login stays routed so it remains usable after the original is removed. Removing all accounts fails closed.
 
 ## Routing
 
@@ -32,7 +32,7 @@ Accounts share their source provider's models and endpoint configuration. Config
 
 ## Storage
 
-- `~/.pi/agent/router.json`: **rankings and account aliases only**, atomic writes, cross-process lock, mode `0600`. Concurrent edits to the same provider ranking or account alias are rejected rather than silently overwritten; independent edits merge. Old ranking-only files remain readable. Native `/logout` clears the removed slot's alias.
+- `~/.pi/agent/router.json`: **rankings and account aliases only**, atomic writes, cross-process lock, mode `0600`. Concurrent edits to the same provider ranking or account alias are rejected rather than silently overwritten; independent edits merge. Saves fail immediately if another process holds the ranking lock; reopen and retry rather than blocking the terminal. Old ranking-only files remain readable. Native `/logout` clears the removed slot's alias.
 - `~/.pi/agent/auth.json`: Pi's native protected-plaintext credential store. Extra logins use IDs like `account--openai-codex--2`. `/logout` owns deletion. Provider-side revocation is separate. Email/identity hints are read in memory from these credentials, not written to a separate index.
 - A short-lived `router-login.lock` serializes final duplicate checks and account-slot allocation across processes. Native authentication happens **before** this lock; browser and secret prompts never hold it. Pi's native credential store still owns locked persistence.
 - Earlier `accounts.json` entries are read for compatibility only; their names remain usable if their native credentials still exist. Removed credentials cannot be recreated by ranking metadata. Existing API/non-subscription slots and metadata are not deleted; old extra slots remain registered without models so native `/logout` can remove them, but Router excludes them from routing and its UI.

@@ -221,6 +221,13 @@ class FastModeSession {
     if (this.discovery && !force) return this.discovery.promise;
     const model = this.ctx.model;
     if (!isCodexModel(model)) return;
+    if (model.provider === "accounts-openai-codex") {
+      // A route has no single account entitlement. Never borrow the original login for its UI.
+      this.uiAuth = undefined;
+      this.discoveryError =
+        "Account route uses local capabilities; requests check their resolved account.";
+      return;
+    }
     if (
       this.options.discovery === false ||
       (process.env.PI_OFFLINE && process.env.PI_OFFLINE !== "0")
