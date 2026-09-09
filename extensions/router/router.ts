@@ -19,6 +19,8 @@ import {
   accountLoginProvider,
   poolId,
   sourceProvider,
+  isSubscriptionProvider,
+  isSubscriptionAccount,
   type NativeAccount as Account,
 } from "../../src/account-identity.ts";
 
@@ -28,7 +30,7 @@ export interface AttemptUsage {
   accountName: string;
   provider: string;
   model: string;
-  subscription: boolean;
+  subscription: true;
   timestamp: number;
   usage: AssistantMessage["usage"];
   outcome: string;
@@ -62,6 +64,22 @@ function failure(model: Model<Api>, aborted: boolean, message: string): Assistan
     errorMessage: message,
     timestamp: Date.now(),
   };
+}
+
+/** Missing or inconsistent totals are not proof of an unbilled, replayable attempt. */
+function hasNoUsage(usage: AssistantMessage["usage"]): boolean {
+  return [
+    usage.input,
+    usage.output,
+    usage.cacheRead,
+    usage.cacheWrite,
+    usage.totalTokens,
+    usage.cost.input,
+    usage.cost.output,
+    usage.cost.cacheRead,
+    usage.cost.cacheWrite,
+    usage.cost.total,
+  ].every((value) => value === 0);
 }
 
 /** Deliberately narrow: auth, overload, context, and arbitrary network errors never rotate accounts. */
@@ -136,9 +154,12 @@ export class AccountRouter {
   }
   provider(providerId: string): Provider | undefined {
     const base = this.lookup(providerId);
-    if (!base) return undefined;
+    if (!base || !isSubscriptionProvider(base)) return undefined;
     const id = poolId(providerId);
-    const available = async () => (await this.read()).some((a) => a.provider === providerId);
+    const available = async () =>
+      (await this.read()).some(
+        (a) => a.provider === providerId && isSubscriptionAccount(a, this.lookup(providerId)),
+      );
     return {
       id,
       name: `${base.name} · Accounts`,
@@ -197,18 +218,23 @@ export class AccountRouter {
     signal.throwIfAborted();
     if (options.deferred) throw new Error("Deferred account routing is unsupported");
     const providerId = sourceProvider(model.provider);
-    const accounts = (await this.read()).filter(
-      (a) => a.provider === providerId && (this.health.get(a.id)?.until ?? 0) <= this.now(),
-    );
+    const snapshot = await this.read();
     const base = this.lookup(providerId);
-    if (!base) throw new Error("Provider unavailable");
+    if (!base || !isSubscriptionProvider(base))
+      throw new Error("Subscription provider unavailable");
+    const accounts = snapshot.filter(
+      (a) =>
+        a.provider === providerId &&
+        isSubscriptionAccount(a, base) &&
+        (this.health.get(a.id)?.until ?? 0) <= this.now(),
+    );
     let attempted = false;
     for (const account of accounts) {
       signal.throwIfAborted();
       const credential = await this.readCredential(account.credentialId);
       signal.throwIfAborted();
-      // A named account must have its own explicit credential; do not silently borrow ambient auth.
-      if (!credential) continue;
+      // Discovery is only a snapshot. Recheck the actual login method immediately before routing.
+      if (credential?.type !== "oauth") continue;
       const source = base.getModels().find((m) => m.id === model.id && m.api === model.api);
       if (!source) continue;
       if (base.filterModels && !base.filterModels([source], credential).length) continue;
@@ -225,6 +251,9 @@ export class AccountRouter {
       // Auth is resolved against the unique credential id, while transports retain their native provider identity.
       this.runtime.registerNativeProvider({
         ...alias,
+        // Native auth reads the store again. If a login changes after selection, fail closed
+        // instead of resolving an API key (or ambient auth) through a different method.
+        auth: { oauth: base.auth.oauth },
         headers: base.headers,
         getModels: () => [{ ...nativeModel, provider: account.credentialId }],
         stream: (m, c, o) => base.stream({ ...m, provider: providerId }, c, o),
@@ -274,7 +303,7 @@ export class AccountRouter {
             accountName: account.alias ?? account.name,
             provider: providerId,
             model: model.id,
-            subscription: credential.type === "oauth" && base.auth.oauth?.isSubscription === true,
+            subscription: true,
             timestamp: this.now(),
             usage: structuredClone(message.usage),
             outcome: message.stopReason,
@@ -282,24 +311,13 @@ export class AccountRouter {
           if (reason)
             this.health.set(account.id, { until: retryAt(retryAfter, this.now(), reason), reason });
           else if (event.type === "done") this.health.delete(account.id);
-          if (
-            reason &&
-            !visible &&
-            message.content.length === 0 &&
-            [
-              message.usage.input,
-              message.usage.output,
-              message.usage.cacheRead,
-              message.usage.cacheWrite,
-              message.usage.totalTokens,
-              message.usage.cost.total,
-            ].every((n) => n === 0)
-          ) {
+          const replaySafe = !visible && message.content.length === 0 && hasNoUsage(message.usage);
+          if (reason && replaySafe) {
             rotate = true;
             break;
           }
           if (!visible && start) output.push(this.publicEvent(start, model.provider));
-          output.push(this.publicEvent(event, model.provider));
+          output.push(this.publicEvent(event, model.provider, replaySafe));
           output.end();
           return;
         }
@@ -321,14 +339,16 @@ export class AccountRouter {
     output.end();
   }
 
-  private publicEvent(event: AssistantMessageEvent, provider: string): AssistantMessageEvent {
+  private publicEvent(
+    event: AssistantMessageEvent,
+    provider: string,
+    replaySafe = false,
+  ): AssistantMessageEvent {
     if (event.type === "done") return { ...event, message: { ...event.message, provider } };
     if (event.type === "error") {
       // Do not invite Pi's outer retry loop to replay a response the router deliberately stopped.
       const errorMessage =
-        isContextOverflow(event.error) &&
-        event.error.content.length === 0 &&
-        event.error.usage.totalTokens === 0
+        replaySafe && isContextOverflow(event.error)
           ? "context_length_exceeded: account request exceeds the model context window."
           : event.reason === "aborted"
             ? "Account request cancelled."

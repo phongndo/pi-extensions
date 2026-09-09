@@ -11,6 +11,7 @@ import {
   nativeAccounts,
   type LegacyAccount,
   type NativeAccount,
+  type SubscriptionAccount,
 } from "../../src/account-identity.ts";
 import { readAllowance, type AllowanceAdapter, type AllowanceSnapshot } from "./allowances.ts";
 import type { AccountInfo } from "./model.ts";
@@ -22,6 +23,10 @@ export interface LiveUsageOptions {
   legacy?: LegacyAccount[];
   adapters?: ReadonlyMap<string, AllowanceAdapter>;
 }
+type LiveAccount =
+  | SubscriptionAccount
+  | (NativeAccount & { provider: "firecrawl"; type: "api_key" });
+
 /** Lazy, command-only credential access; native refresh locking remains Pi-owned. */
 export async function loadLiveUsage(
   ctx: ExtensionContext,
@@ -44,9 +49,11 @@ export async function loadLiveUsage(
     if (provider) providers.set(id, provider);
   }
   const credentials = await runtime.listCredentials({ signal });
-  const accounts = nativeAccounts([...providers.values()], credentials, options.legacy).filter(
-    (a) => isSubscriptionAccount(a, providers.get(a.provider)),
-  );
+  const accounts: LiveAccount[] = nativeAccounts(
+    [...providers.values()],
+    credentials,
+    options.legacy,
+  ).filter((a) => isSubscriptionAccount(a, providers.get(a.provider)));
   // Explicit tool-credit exception. Reuse the registered Web provider when present;
   // standalone mode uses the same native key/env contract without loading Web's tools.
   // It has no models, so it is deliberately outside subscription/model account discovery.

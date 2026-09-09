@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { UsageLedger, usageRecord, type UsageRecord } from "../ledger.ts";
+import { UsageLedger, usageRecord, safeLabel, type UsageRecord } from "../ledger.ts";
 import { breakdown, daily, periodRecords, sparkline, totals } from "../model.ts";
 const dirs: string[] = [];
 afterEach(() => {
@@ -90,6 +90,39 @@ test("breakdowns preserve zero-use accounts and separate same model id across pr
   ]);
   expect(grouped.find((g) => g.key === "empty")?.totals.tokens).toBe(0);
   expect(breakdown(rows, "model")).toHaveLength(2);
+});
+test("every accepted timestamp has a readable shard; invalid dates and token counters are rejected", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-usage-invariants-"));
+  dirs.push(directory);
+  const ledger = new UsageLedger(directory);
+  for (const timestamp of [-1, NaN, Infinity, 1e300, 0.5, Date.UTC(10000, 0, 1)]) {
+    const value = record({ timestamp });
+    expect(usageRecord(value)).toBeUndefined();
+    expect(ledger.append(value)).toBe(false);
+  }
+  for (const input of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const value = record({ usage: { ...record().usage, input } });
+    expect(usageRecord(value)).toBeUndefined();
+    expect(ledger.append(value)).toBe(false);
+  }
+  const timestamps = [0, Date.now(), Date.UTC(9999, 11, 31, 23, 59, 59, 999)];
+  for (const timestamp of timestamps)
+    expect(ledger.append(record({ id: String(timestamp), timestamp }))).toBe(true);
+  const loaded = await ledger.read();
+  expect(loaded.skipped).toBe(0);
+  expect(loaded.records.map((r) => r.timestamp).sort((a, b) => a - b)).toEqual(timestamps);
+});
+test("labels reject invisible controls and line separators, while preserving ordinary Unicode", () => {
+  for (const accountName of [
+    "name\u202eevil",
+    "name\u200bhidden",
+    "name\u2028line",
+    "name\u2029line",
+  ]) {
+    expect(usageRecord(record({ accountName }))).toBeUndefined();
+    expect(safeLabel(accountName)).not.toMatch(/[\p{C}\p{Zl}\p{Zp}]/u);
+  }
+  expect(safeLabel("Work 測試 café")).toBe("Work 測試 café");
 });
 test("empty ledger is a valid zero state", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-usage-empty-"));

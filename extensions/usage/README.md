@@ -75,7 +75,7 @@ Records live in `~/.pi/agent/usage/YYYY-MM-DD-<random-shard>.jsonl`, respecting 
 
 **No prompts, completions, tool arguments, raw errors/responses, live balance/reset snapshots, auth headers, API keys, or OAuth tokens are saved in the ledger.** Account/session metadata is protected plaintext, not encrypted. Current Router aliases label signed-in accounts without splitting historical totals; new records retain their recorded label. Reusing a logged-out credential slot for a different identity can combine that slot's historical totals.
 
-Reload/resume does not recount history. Reads deduplicate IDs and warn about malformed records or failed writes. Nothing is automatically deleted or uploaded. Stop Pi before manually clearing ledger files.
+Reload/resume does not recount history. Reads deduplicate IDs and warn about malformed records or failed writes. Validation rejects non-integer/unsafe token counters, timestamps outside the four-digit UTC shard format, and control/bidirectional/line-separator characters in labels; every accepted timestamp can round-trip through shard storage. Nothing is automatically deleted or uploaded. Stop Pi before manually clearing ledger files.
 
 Router is optional. Loading Router alone creates no usage ledger. For Usage alone, package resource filtering can use `extensions: ["extensions/usage/index.ts"]`.
 

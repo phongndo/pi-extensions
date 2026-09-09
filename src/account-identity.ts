@@ -26,13 +26,21 @@ export function parseLoginId(id: string): { provider: string; number: number } |
   return { provider: match[1]!, number: Number(match[2]) };
 }
 
+export type SubscriptionAccount = NativeAccount & { type: "oauth" };
+export type SubscriptionProvider = Provider & {
+  auth: Provider["auth"] & {
+    oauth: NonNullable<Provider["auth"]["oauth"]> & { isSubscription: true };
+  };
+};
+
 /** Eligibility follows Pi's provider metadata, including future subscription providers. */
-export const isSubscriptionProvider = (provider: Provider | undefined): boolean =>
-  provider?.auth.oauth?.isSubscription === true;
+export const isSubscriptionProvider = (
+  provider: Provider | undefined,
+): provider is SubscriptionProvider => provider?.auth.oauth?.isSubscription === true;
 export const isSubscriptionAccount = (
   account: NativeAccount,
   provider: Provider | undefined,
-): boolean => account.type === "oauth" && isSubscriptionProvider(provider);
+): account is SubscriptionAccount => account.type === "oauth" && isSubscriptionProvider(provider);
 
 /** Native credential metadata is the source of truth; ranking files cannot create a login. */
 export function nativeAccounts(

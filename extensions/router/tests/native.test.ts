@@ -11,10 +11,15 @@ import { AccountRouter } from "../router.ts";
 import { poolId, type Account } from "../store.ts";
 import { accountLoginProvider } from "../../../src/account-identity.ts";
 
-test("real Pi ModelRuntime routes native provider auth/stream without touching the original login", async () => {
+test("real Pi ModelRuntime routes subscription auth without touching or borrowing the original API login", async () => {
   const credentials = new InMemoryCredentialStore();
   await credentials.modify("native-test", async () => ({ type: "api_key", key: "original" }));
-  await credentials.modify("account-a", async () => ({ type: "api_key", key: "separate" }));
+  await credentials.modify("account-a", async () => ({
+    type: "oauth",
+    access: "separate",
+    refresh: "fake-refresh",
+    expires: Date.now() + 3600000,
+  }));
   const runtime = await ModelRuntime.create({
     credentials,
     modelsPath: null,
@@ -38,6 +43,18 @@ test("real Pi ModelRuntime routes native provider auth/stream without touching t
     name: "Native Test",
     getModels: () => [model],
     auth: {
+      oauth: {
+        name: "Subscription",
+        isSubscription: true,
+        login: async () => ({
+          type: "oauth",
+          access: "separate",
+          refresh: "fake-refresh",
+          expires: Date.now() + 3600000,
+        }),
+        refresh: async (credential) => credential,
+        toAuth: async (credential) => ({ apiKey: credential.access }),
+      },
       apiKey: {
         name: "Native key",
         login: async () => ({ type: "api_key", key: "login" }),
@@ -82,7 +99,7 @@ test("real Pi ModelRuntime routes native provider auth/stream without touching t
       name: "personal",
       provider: base.id,
       credentialId: "account-a",
-      type: "api_key",
+      type: "oauth",
     },
   ];
   // Separate native runtime as in the extension, sharing only Pi's credential store.

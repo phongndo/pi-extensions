@@ -18,13 +18,10 @@ export interface UsageRecord {
   outcome: string;
 }
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
-export const safeLabel = (text: string): string =>
-  Array.from(text)
-    .filter((c) => {
-      const code = c.charCodeAt(0);
-      return code >= 32 && (code < 127 || code > 159);
-    })
-    .join("");
+const counter = (value: unknown): value is number => finite(value) && Number.isSafeInteger(value);
+// Shard names use four-digit UTC years; every accepted timestamp must round-trip through read().
+const timestamp = (value: unknown): value is number => counter(value) && value <= 253402300799999;
+export const safeLabel = (text: string): string => text.replace(/[\p{C}\p{Zl}\p{Zp}]/gu, "");
 const clean = (v: unknown): v is string =>
   typeof v === "string" && v.length > 0 && v.length <= 300 && safeLabel(v) === v;
 /** Allowlist serialization: never persist prompts, response content, raw errors, headers, or auth. */
@@ -33,25 +30,17 @@ export function usageRecord(value: unknown): UsageRecord | undefined {
   if (
     !v ||
     ![v.id, v.sessionId, v.accountId, v.accountName, v.provider, v.model, v.outcome].every(clean) ||
-    !finite(v.timestamp) ||
+    !timestamp(v.timestamp) ||
     typeof v.subscription !== "boolean"
   )
     return;
   const u = v.usage;
   if (
     !u ||
-    ![
-      u.input,
-      u.output,
-      u.cacheRead,
-      u.cacheWrite,
-      u.totalTokens,
-      u.cost?.input,
-      u.cost?.output,
-      u.cost?.cacheRead,
-      u.cost?.cacheWrite,
-      u.cost?.total,
-    ].every(finite)
+    ![u.input, u.output, u.cacheRead, u.cacheWrite, u.totalTokens].every(counter) ||
+    ![u.cost?.input, u.cost?.output, u.cost?.cacheRead, u.cost?.cacheWrite, u.cost?.total].every(
+      finite,
+    )
   )
     return;
   return {

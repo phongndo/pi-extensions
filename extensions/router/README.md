@@ -20,8 +20,8 @@ After an extra login is detected, the current model automatically uses that prov
 ## Routing
 
 - Try the highest-ranked signed-in account first on every request; fall back to the next eligible account only on a recognized rate/quota limit.
-- Stay on the **same provider and model**. No cross-provider or subscription-to-API switch. API keys, including key-based coding plans, are never eligible fallback accounts.
-- No replay after visible output, returned content, or recorded usage/cost. Authentication, permission, network, context, and server errors do not rotate accounts. An exhausted pool stops rather than triggering an endless retry loop.
+- Stay on the **same provider and model**. No cross-provider or subscription-to-API switch. API keys, including key-based coding plans, are never eligible fallback accounts. The router rechecks stored credential types and uses an OAuth-only request adapter, so a login changed after discovery or selection cannot resolve through API-key or ambient auth.
+- No replay after visible output, returned content, or recorded usage/cost. Fallback and native overflow/compaction signaling share the same check of every token and cost counter; a zero aggregate cannot hide nonzero component counters. Authentication, permission, network, context, and server errors do not rotate accounts. An exhausted pool stops rather than triggering an endless retry loop.
 - Honor exposed `Retry-After`; otherwise temporarily cool down rate-limited accounts for one minute, quota-exhausted accounts for one hour. Cooldowns are local to the loaded instance and reset on reload, not a global quota ledger.
 
 Native model adapters, reasoning/options, account-specific authentication endpoints, and Pi's locked OAuth refresh are reused. Credentials are never globally swapped or copied. Websocket/cache sessions are isolated per account and cleaned up on shutdown. Deferred/background responses are unsupported by routed models.

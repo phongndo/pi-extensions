@@ -43,7 +43,13 @@ function message(error?: string, partial = false): AssistantMessage {
       cacheRead: 0,
       cacheWrite: 0,
       totalTokens: error ? 0 : 15,
-      cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: error ? 0 : 0.03 },
+      cost: {
+        input: error ? 0 : 0.01,
+        output: error ? 0 : 0.02,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: error ? 0 : 0.03,
+      },
     },
   };
 }
@@ -55,7 +61,7 @@ function fixture(failures: Record<string, string> = {}, partial = false) {
       name,
       provider: "test",
       credentialId: `account-${name}`,
-      type: "api_key",
+      type: "oauth",
     }),
   );
   const calls: { key?: string; model: Model<Api>; options?: SimpleStreamOptions }[] = [];
@@ -128,7 +134,12 @@ function fixture(failures: Record<string, string> = {}, partial = false) {
   );
   const ready = Promise.all(
     accounts.map((a) =>
-      credentials.modify(a.credentialId, async () => ({ type: "api_key", key: a.name })),
+      credentials.modify(a.credentialId, async () => ({
+        type: "oauth",
+        access: a.name,
+        refresh: `refresh-${a.name}`,
+        expires: Date.now() + 600000,
+      })),
     ),
   );
   const run = async (options?: SimpleStreamOptions) => {
@@ -141,6 +152,69 @@ function fixture(failures: Record<string, string> = {}, partial = false) {
 }
 
 describe("routing contract", () => {
+  test("stale subscription metadata never routes a credential that became an API key", async () => {
+    const f = fixture();
+    await f.ready;
+    await f.credentials.modify("account-a", async () => ({ type: "api_key", key: "paid-key" }));
+    expect((await f.run()).stopReason).toBe("stop");
+    expect(f.calls.map((c) => c.key)).toEqual(["b"]);
+  });
+  test("providers no longer marked as subscriptions cannot create or run an account route", async () => {
+    const f = fixture();
+    f.base.auth.oauth!.isSubscription = false;
+    expect(f.router.provider("test")).toBeUndefined();
+    expect((await f.run()).stopReason).toBe("error");
+    expect(f.calls).toHaveLength(0);
+  });
+  test("a credential replaced after selection cannot resolve through the API-key auth method", async () => {
+    const f = fixture();
+    await f.ready;
+    const read = f.credentials.read.bind(f.credentials);
+    let changed = false;
+    f.credentials.read = async (id, options) => {
+      const credential = await read(id, options);
+      if (!changed && id === "account-a") {
+        changed = true;
+        await f.credentials.modify(id, async () => ({ type: "api_key", key: "paid-key" }));
+      }
+      return credential;
+    };
+    expect((await f.run()).stopReason).toBe("error");
+    expect(f.calls).toHaveLength(0);
+  });
+  test.each(["cost", "delta", "input"])(
+    "%s evidence prevents fallback and automatic compaction even when terminal totals are zero",
+    async (kind) => {
+      const f = fixture({ a: kind === "cost" ? "429" : "context_length_exceeded" });
+      const original = f.base.streamSimple;
+      f.base.streamSimple = (m, c, o) => {
+        const stream = createAssistantMessageEventStream();
+        void (async () => {
+          for await (const event of original(m, c, o)) {
+            if (event.type === "error") {
+              if (kind === "cost") event.error.usage.cost.input = 0.01;
+              if (kind === "input") event.error.usage.input = 1;
+              if (kind === "delta")
+                stream.push({
+                  type: "text_delta",
+                  contentIndex: 0,
+                  delta: "already shown",
+                  partial: event.error,
+                });
+            }
+            stream.push(event);
+          }
+          stream.end();
+        })();
+        return stream;
+      };
+      const result = await f.run();
+      expect(f.calls).toHaveLength(1);
+      expect(result.stopReason).toBe("error");
+      expect(isRetryableAssistantError(result)).toBe(false);
+      expect(isContextOverflow(result, model.contextWindow)).toBe(false);
+    },
+  );
   test("priority falls back once per account on 429, records each attempt, and respects cooldown", async () => {
     const f = fixture({ a: "429 rate limit", b: "insufficient_quota" });
     expect((await f.run()).stopReason).toBe("stop");
