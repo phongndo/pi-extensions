@@ -13,7 +13,7 @@ A separate, minimal Pi-native **subscription** account router. Requires Pi 0.85.
 
 Accidentally signing into the same identifiable account refreshes its existing credential **without adding a duplicate or changing its rank or alias**. OAuth account/issuer/subject/tenant identities are checked; email alone is never used to merge subscriptions in different organizations. Opaque OAuth credentials without stable identity can only be deduplicated when their access or refresh tokens match. No additional profile requests are made, and existing duplicate slots are not silently deleted.
 
-The footer shows simply `account Personal` (or the generated account name without an alias), without a colon or session badge. It follows the account actually selected for a request, including fallback; before the first request it shows the eligible session default, or the highest-ranked eligible account. Emails and credentials are never displayed there.
+The footer shows simply `route Personal` (or the generated account name without an alias), without a colon or session badge. It follows the account actually selected for a request, including fallback; before the first request it shows the eligible session default, or the highest-ranked eligible account. Emails and credentials are never displayed there.
 
 There are no Router add/remove/login commands, modes, or separate secret prompts. With none eligible, `/router` gives a short notice rather than an empty panel. Rankings are **within a provider**, never across providers.
 

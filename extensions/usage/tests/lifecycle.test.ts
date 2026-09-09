@@ -128,7 +128,7 @@ test("standalone native tracking, router attempt attribution, reload dedup and l
         getProvider: () => ({ auth: { oauth: { isSubscription: true } } }),
         isUsingOAuth: () => true,
       },
-      ui: { notify: () => {} },
+      ui: { notify: () => {}, setStatus: () => {} },
     } as unknown as ExtensionContext;
     const usage = {
       input: 10,

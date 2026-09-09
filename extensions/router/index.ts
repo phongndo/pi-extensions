@@ -121,10 +121,14 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
           ) ??
           group.find((a) => (router.health.get(a.id)?.until ?? 0) <= Date.now()))
         : group.find((a) => a.credentialId === provider);
+      pi.events.emit(
+        "router:active-account",
+        account ? { id: account.id, provider: account.provider } : undefined,
+      );
       setFooterStatus(
         ctx,
         "router",
-        account ? `account ${account.alias ?? account.name}` : undefined,
+        account ? `route ${account.alias ?? account.name}` : undefined,
       );
     }
     const registered = new Map<string, { base: Provider; name: string }>();
@@ -451,6 +455,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       },
     });
     pi.on("session_shutdown", () => {
+      pi.events.emit("router:active-account", undefined);
       if (ctx) setFooterStatus(ctx, "router", undefined);
       closed = true;
       if (poll) clearInterval(poll);

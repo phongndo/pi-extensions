@@ -85,6 +85,19 @@ test("standalone Firecrawl uses native stored-key precedence, then environment; 
     expect(JSON.stringify(a)).not.toContain("fake-grok-token");
     expect(headers).toEqual(["Bearer fake-stored-key"]);
     expect(JSON.stringify(a)).not.toContain("fake-stored-key");
+    const scoped = await loadLiveUsage(ctx, new AbortController().signal, {
+      ...options,
+      accountId: "native:xai",
+    });
+    expect(scoped.accounts.map((a) => a.id)).toEqual(["native:xai"]);
+    expect(scoped.snapshots.map((s) => s.account.id)).toEqual(["native:xai"]);
+    expect(headers).toEqual(["Bearer fake-stored-key"]); // Footer never reads unrelated tool credits.
+    const removed = await loadLiveUsage(ctx, new AbortController().signal, {
+      ...options,
+      accountId: "removed",
+    });
+    expect(removed.snapshots).toEqual([]);
+    expect(removed.accounts).toEqual([]);
     await credentials.delete("firecrawl");
     const b = await loadLiveUsage(ctx, new AbortController().signal, options);
     expect(b.accounts.find((a) => a.provider === "firecrawl")?.name).toBe("Team");

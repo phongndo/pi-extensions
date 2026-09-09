@@ -12,6 +12,7 @@ import { type AccountInfo, type Period } from "./model.ts";
 import { loadLiveUsage, type LiveUsageOptions } from "./live.ts";
 import type { AllowanceSnapshot } from "./allowances.ts";
 import { isSubscriptionProvider } from "../../src/account-identity.ts";
+import { UsageFooter } from "./footer.ts";
 
 export function createUsageExtension(
   options: LiveUsageOptions & { directory?: string; live?: boolean } = {},
@@ -23,6 +24,51 @@ export function createUsageExtension(
     let failed = false;
     let active = true;
     const lifetime = new AbortController();
+    const liveEnabled = () =>
+      options.live !== false && !(process.env.PI_OFFLINE && process.env.PI_OFFLINE !== "0");
+    const legacy = () =>
+      routerAccounts.flatMap((a) =>
+        a.credentialId
+          ? [{ id: a.id, name: a.name, provider: a.provider, credentialId: a.credentialId }]
+          : [],
+      );
+    const footer = new UsageFooter(async (ctx, accountId, signal) => {
+      const loaded = await loadLiveUsage(ctx, signal, { ...options, legacy: legacy(), accountId });
+      return loaded.snapshots.find((s) => s.account.id === accountId);
+    }, liveEnabled);
+    let routedAccount: { id: string; provider: string } | undefined;
+    const updateFooter = (ctx: ExtensionContext, force = false) => {
+      context = ctx;
+      const model = ctx.model;
+      const accountId = model?.provider.startsWith("accounts-")
+        ? routedAccount?.provider === model.provider.slice("accounts-".length)
+          ? routedAccount.id
+          : undefined
+        : model &&
+            isSubscriptionProvider(ctx.modelRegistry.getProvider(model.provider)) &&
+            ctx.modelRegistry.isUsingOAuth(model)
+          ? `native:${model.provider}`
+          : undefined;
+      footer.update(ctx, accountId, force);
+    };
+    const offActive = pi.events.on("router:active-account", (value: unknown) => {
+      const previous = routedAccount;
+      routedAccount =
+        value &&
+        typeof value === "object" &&
+        "id" in value &&
+        typeof value.id === "string" &&
+        "provider" in value &&
+        typeof value.provider === "string"
+          ? { id: value.id, provider: value.provider }
+          : undefined;
+      if (
+        context &&
+        active &&
+        (previous?.id !== routedAccount?.id || previous?.provider !== routedAccount?.provider)
+      )
+        updateFooter(context);
+    });
     let opening = false;
     const seen = new WeakSet<object>();
     let authMetadata: Promise<ModelRuntime> | undefined;
@@ -86,7 +132,19 @@ export function createUsageExtension(
     pi.on("session_start", (_event, ctx) => {
       context = ctx;
       pi.events.emit("router:request-accounts", {});
+      updateFooter(ctx);
     });
+    pi.on("model_select", (_event, ctx) => updateFooter(ctx));
+    pi.on("session_tree", (_event, ctx) => {
+      routedAccount = undefined;
+      updateFooter(ctx);
+      pi.events.emit("router:request-accounts", {});
+    });
+    pi.on("input", (_event, ctx) => {
+      updateFooter(ctx);
+      return { action: "continue" };
+    });
+    pi.on("agent_end", (_event, ctx) => updateFooter(ctx, true));
     pi.on("message_end", async (event, ctx) => {
       const message = event.message;
       if (message.role !== "assistant" || message.stopReason === "pending" || seen.has(message))
@@ -149,28 +207,14 @@ export function createUsageExtension(
               let accounts = [...routerAccounts];
               let snapshots: AllowanceSnapshot[] = [];
               let liveError: string | undefined;
-              if (
-                options.live !== false &&
-                !(process.env.PI_OFFLINE && process.env.PI_OFFLINE !== "0")
-              ) {
+              if (liveEnabled()) {
                 try {
                   const live = await loadLiveUsage(
                     ctx,
                     AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
                     {
                       ...options,
-                      legacy: routerAccounts.flatMap((a) =>
-                        a.credentialId
-                          ? [
-                              {
-                                id: a.id,
-                                name: a.name,
-                                provider: a.provider,
-                                credentialId: a.credentialId,
-                              },
-                            ]
-                          : [],
-                      ),
+                      legacy: legacy(),
                     },
                   );
                   accounts = live.accounts;
@@ -186,6 +230,7 @@ export function createUsageExtension(
           });
           if (!active || !loaded) return;
           const { records, skipped, accounts, snapshots, liveError } = loaded;
+          footer.accept(snapshots);
           if (skipped || failed)
             ctx.ui.notify(
               `Usage may be incomplete: ${skipped} invalid record(s) skipped${failed ? "; some writes failed" : ""}.`,
@@ -220,6 +265,8 @@ export function createUsageExtension(
       lifetime.abort();
       offUsage();
       offAccounts();
+      offActive();
+      footer.close();
       context = undefined;
     });
   };

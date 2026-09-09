@@ -26,6 +26,12 @@ Grok reads the shared credit pool, not product/Voice quotas. This implements Cod
 
 Eligibility follows **Pi metadata**, not a fixed provider allowlist. `allowances.ts` holds the adapter registry and provider-independent snapshot interface. Adding an adapter does not require changing the UI or account discovery. No additional integrations for Claude, Copilot, or Kimi are implemented yet. See [provider contracts and research](PROVIDER-SOURCES.md).
 
+## Native footer
+
+Pi's native status slot shows the active subscription account's remaining windows beside the MCP/Router labels, for example `remaining 41%` for one regular limit, or `remaining 5h 72% · remaining weekly 45%` when both exist. Spark windows are omitted from the footer but remain in `/usage`. Router supplies the actual selected account, including fallbacks; without Router, Usage follows the current native OAuth model. API-key models have no usage status. Unknown or unsupported limits stay explicit, never guessed from token history.
+
+Reads run in the background at startup, on model/account changes, and after an agent response. Input refreshes a snapshot older than one minute; repeated unchanged Router metadata events do not poll quotas. Opening `/usage` also updates the footer. Only the active account is queried for the footer, not other providers or Firecrawl. Switching accounts and shutdown abort pending reads; late responses cannot overwrite the new account. `PI_OFFLINE=1` disables live retrieval and hides the footer status. Full reset details and other accounts remain in `/usage`.
+
 ## Dashboard
 
 `/usage` opens directly to **Remaining**: flat provider headers with all accounts underneath, without expansion or OAuth/API badges. Scroll for additional accounts/windows/resets. Independent account percentages are **never summed or averaged** into a fictitious provider balance.
@@ -52,7 +58,7 @@ Eligibility follows **Pi metadata**, not a fixed provider allowlist. `allowances
 
 Navigation, period, confirm, and cancel honor injected Pi bindings and take precedence over letter shortcuts. The editor is temporarily replaced, not the footer/theme. RPC mode receives all remaining-status rows followed by recorded totals.
 
-Reopen `/usage` to refresh. Status retrieval happens **only on command invocation**, with at most three accounts in flight, bounded bodies, per-request timeouts and a 20-second overall deadline. `PI_OFFLINE=1` disables live retrieval. No background polling of quotas, paid model requests, purchases, reset consumption, or reserve opt-in. Native OAuth refresh may update Pi's credential store through its own locking. Live snapshots stay in memory.
+Reopen `/usage` to refresh all accounts. Dashboard status retrieval uses at most three accounts in flight, bounded bodies, per-request timeouts and a 20-second overall deadline; the native footer reads only the active account in the background on the events described above. `PI_OFFLINE=1` disables live retrieval. No background polling of quotas, paid model requests, purchases, reset consumption, or reserve opt-in. Native OAuth refresh may update Pi's credential store through its own locking. Live snapshots stay in memory.
 
 ## Recorded history
 

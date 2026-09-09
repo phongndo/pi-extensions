@@ -22,12 +22,14 @@ export interface LiveUsageOptions {
   fetcher?: typeof fetch;
   legacy?: LegacyAccount[];
   adapters?: ReadonlyMap<string, AllowanceAdapter>;
+  /** Limit status/auth reads to the active account for the native footer. */
+  accountId?: string;
 }
 type LiveAccount =
   | SubscriptionAccount
   | (NativeAccount & { provider: "firecrawl"; type: "api_key" });
 
-/** Lazy, command-only credential access; native refresh locking remains Pi-owned. */
+/** Read-only allowance access; native credential refresh locking remains Pi-owned. */
 export async function loadLiveUsage(
   ctx: ExtensionContext,
   signal: AbortSignal,
@@ -83,9 +85,12 @@ export async function loadLiveUsage(
       type: "api_key",
     });
   }
-  const pending: NativeAccount[] = [...accounts];
+  const selected = options.accountId
+    ? accounts.filter((a) => a.id === options.accountId)
+    : accounts;
+  const pending: NativeAccount[] = [...selected];
   const snapshots: AllowanceSnapshot[] = [];
-  // Bound concurrency. No polling, billable requests, or automatic reset consumption.
+  // Bound concurrency. No billable requests or automatic reset consumption.
   await Promise.all(
     Array.from({ length: Math.min(3, pending.length) }, async () => {
       while (pending.length && !signal.aborted) {
@@ -111,7 +116,7 @@ export async function loadLiveUsage(
   signal.throwIfAborted();
   const order = new Map(accounts.map((a, i) => [a.id, i]));
   return {
-    accounts: accounts.map((a) => ({ ...a, enabled: true })),
+    accounts: selected.map((a) => ({ ...a, enabled: true })),
     snapshots: snapshots.sort((a, b) => order.get(a.account.id)! - order.get(b.account.id)!),
   };
 }
