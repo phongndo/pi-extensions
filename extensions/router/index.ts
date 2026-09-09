@@ -17,6 +17,7 @@ import {
   type NativeAccount,
 } from "../../src/account-identity.ts";
 import { AccountRouter } from "./router.ts";
+import { setFooterStatus } from "../../src/footer-status.ts";
 import {
   RankingStore,
   multipleAccounts,
@@ -99,6 +100,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       readAccounts,
       lookup,
       {
+        selected: () => updateFooter(),
         attempt: (attempt) => {
           if (ctx && !closed)
             pi.events.emit("router:usage", {
@@ -108,6 +110,21 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
         },
       },
     );
+    function updateFooter() {
+      if (!ctx || closed) return;
+      const provider = ctx.model?.provider;
+      const source = provider && sourceProvider(provider);
+      const group = accounts.filter((a) => a.provider === source);
+      const account = provider?.startsWith(POOL_PREFIX)
+        ? (group.find((a) => a.id === router.active.get(source!)) ??
+          group.find((a) => (router.health.get(a.id)?.until ?? 0) <= Date.now()))
+        : group.find((a) => a.credentialId === provider);
+      setFooterStatus(
+        ctx,
+        "router",
+        account ? `Account: ${account.alias ?? account.name}` : undefined,
+      );
+    }
     const registered = new Map<string, { base: Provider; name: string }>();
     const publish = () =>
       pi.events.emit(
@@ -142,6 +159,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
           registered.delete(id);
         }
       publish();
+      updateFooter();
     }
     function refresh(): Promise<void> {
       if (closed) return Promise.resolve();
@@ -187,6 +205,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
         await pi.setModel(model);
       } finally {
         selecting = false;
+        updateFooter();
       }
     }
     // Initial registration makes saved routes and account logins visible before Pi restores models.
@@ -235,6 +254,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     });
     pi.on("model_select", async (_event, context) => {
       ctx = context;
+      updateFooter();
       if (!selecting) await refreshForInput(context);
     });
     pi.registerCommand("router", {
@@ -339,6 +359,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       },
     });
     pi.on("session_shutdown", () => {
+      if (ctx) setFooterStatus(ctx, "router", undefined);
       closed = true;
       if (poll) clearInterval(poll);
       poll = undefined;

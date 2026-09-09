@@ -73,6 +73,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
       { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
     >();
     const notices: string[] = [];
+    const statuses = new Map<string, string | undefined>();
     let busy = false;
     let result: NativeAccount[] | undefined;
     let dialogs = 0;
@@ -87,6 +88,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
       modelRegistry: new ModelRegistry(runtime),
       sessionManager: { getSessionId: () => "session" },
       ui: {
+        setStatus: (key: string, text: string | undefined) => statuses.set(key, text),
         notify: (text: string) => notices.push(text),
         select: async (_title: string, options: string[]) => options[selectAccount],
         input: async () => aliasInput,
@@ -121,6 +123,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
       pollMs: 60_000,
     })(pi);
     await handlers.get("session_start")!({} as never, context);
+    expect(statuses.get("router")).toBeUndefined();
     const command = commands.get("router")!;
     expect([...commands.keys()]).toEqual(["router"]);
     await command.handler("", context);
@@ -129,6 +132,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     const interaction = { prompt: async () => "", notify: () => {} };
     await runtime.login("test", "oauth", interaction);
     await handlers.get("input")!({} as never, context);
+    expect(statuses.get("router")).toBe("Account: Account 1");
     expect(runtime.getProvider(loginId("test", 2))).toBeUndefined();
     expect(runtime.getProvider(poolId("test"))).toBeUndefined();
     await command.handler("", context);
@@ -137,6 +141,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     await command.handler("alias", context); // Even single-account providers can have aliases.
     expect(store.readAliases()).toEqual({ "native:test": "Personal" });
     expect(published.at(-1)?.[0]?.name).toBe("Personal");
+    expect(statuses.get("router")).toBe("Account: Personal");
     expect(store.read()).toEqual({});
     // The same public login/logout operations used by Pi's built-in slash commands.
     await runtime.login("test", "oauth", interaction);
@@ -160,6 +165,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
       [loginId("test", 2)]: "Work",
     });
     expect(runtime.getProvider(loginId("test", 2))?.name).toContain("Work");
+    expect(statuses.get("router")).toBe("Account: Work");
     loginNumber = 1;
     await runtime.login("test", "oauth", interaction);
     expect(store.readAliases()[loginId("test", 2)]).toBe("Work");
@@ -189,6 +195,10 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     expect(dialogs).toBe(priorDialogs);
     expect((await credentials.read("test"))?.type).toBe("oauth");
     expect(await credentials.read(loginId("test", 2))).toBeUndefined();
+    expect(statuses.get("router")).toBe("Account: Account 1");
+    Object.assign(context, { model: undefined });
+    await handlers.get("model_select")!({} as never, context);
+    expect(statuses.get("router")).toBeUndefined();
   } finally {
     if (context) await handlers.get("session_shutdown")?.({} as never, context);
     rmSync(directory, { recursive: true, force: true });
