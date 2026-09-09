@@ -6,6 +6,7 @@ import {
   createEventBus,
   ModelRegistry,
   ModelRuntime,
+  SessionManager,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionCommandContext,
@@ -74,6 +75,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     >();
     const notices: string[] = [];
     const statuses = new Map<string, string | undefined>();
+    const sessionManager = SessionManager.inMemory();
     let busy = false;
     let result: NativeAccount[] | undefined;
     let dialogs = 0;
@@ -86,7 +88,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
       isIdle: () => !busy,
       model: base.getModels()[0],
       modelRegistry: new ModelRegistry(runtime),
-      sessionManager: { getSessionId: () => "session" },
+      sessionManager,
       ui: {
         setStatus: (key: string, text: string | undefined) => statuses.set(key, text),
         notify: (text: string) => notices.push(text),
@@ -100,6 +102,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     } as unknown as ExtensionCommandContext;
     const pi = {
       events: createEventBus(),
+      appendEntry: (type: string, data: unknown) => sessionManager.appendCustomEntry(type, data),
       on: (name: string, fn: (event: never, ctx: ExtensionContext) => unknown) =>
         handlers.set(name, fn),
       registerCommand: (
@@ -132,16 +135,16 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     const interaction = { prompt: async () => "", notify: () => {} };
     await runtime.login("test", "oauth", interaction);
     await handlers.get("input")!({} as never, context);
-    expect(statuses.get("router")).toBe("Account: Account 1");
+    expect(statuses.get("router")).toBe("account Account 1");
     expect(runtime.getProvider(loginId("test", 2))).toBeUndefined();
     expect(runtime.getProvider(poolId("test"))).toBeUndefined();
     await command.handler("", context);
-    expect(dialogs).toBe(0);
+    expect(dialogs).toBe(1);
     aliasInput = "Personal";
     await command.handler("alias", context); // Even single-account providers can have aliases.
     expect(store.readAliases()).toEqual({ "native:test": "Personal" });
     expect(published.at(-1)?.[0]?.name).toBe("Personal");
-    expect(statuses.get("router")).toBe("Account: Personal");
+    expect(statuses.get("router")).toBe("account Personal");
     expect(store.read()).toEqual({});
     // The same public login/logout operations used by Pi's built-in slash commands.
     await runtime.login("test", "oauth", interaction);
@@ -153,6 +156,25 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     await runtime.login("test", "oauth", interaction);
     expect(await runtime.listCredentials()).toHaveLength(2);
     expect(await credentials.read(loginId("test", 3))).toBeUndefined();
+    const beforePreference = sessionManager.getLeafId();
+    selectAccount = 2;
+    await command.handler("account", context);
+    expect(statuses.get("router")).toBe("account Account 2");
+    expect(store.read()).toEqual({});
+    const preferredLeaf = sessionManager.getLeafId()!;
+    selectAccount = 0;
+    await command.handler("account", context);
+    expect(statuses.get("router")).toBe("account Personal");
+    sessionManager.branch(preferredLeaf);
+    await handlers.get("session_tree")!({} as never, context);
+    expect(statuses.get("router")).toBe("account Account 2");
+    // Reload/resume rebuilds from the persisted branch, not an in-memory selection.
+    await handlers.get("session_start")!({} as never, context);
+    expect(statuses.get("router")).toBe("account Account 2");
+    if (beforePreference) sessionManager.branch(beforePreference);
+    else sessionManager.resetLeaf();
+    await handlers.get("session_tree")!({} as never, context);
+    expect(statuses.get("router")).toBe("account Personal");
     await command.handler("", context); // cancellation
     expect(store.read()).toEqual({});
     result = nativeAccounts([base], await runtime.listCredentials())
@@ -165,7 +187,8 @@ test("native login/logout own accounts; /router only ranks multi-account provide
       [loginId("test", 2)]: "Work",
     });
     expect(runtime.getProvider(loginId("test", 2))?.name).toContain("Work");
-    expect(statuses.get("router")).toBe("Account: Work");
+    // Reordering fallbacks does not change the session's default account.
+    expect(statuses.get("router")).toBe("account Personal");
     loginNumber = 1;
     await runtime.login("test", "oauth", interaction);
     expect(store.readAliases()[loginId("test", 2)]).toBe("Work");
@@ -191,11 +214,12 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     await handlers.get("input")!({} as never, context);
     expect(context.model?.provider).toBe("test");
     const priorDialogs = dialogs;
+    result = undefined;
     await command.handler("", context);
-    expect(dialogs).toBe(priorDialogs);
+    expect(dialogs).toBe(priorDialogs + 1);
     expect((await credentials.read("test"))?.type).toBe("oauth");
     expect(await credentials.read(loginId("test", 2))).toBeUndefined();
-    expect(statuses.get("router")).toBe("Account: Account 1");
+    expect(statuses.get("router")).toBe("account Account 1");
     Object.assign(context, { model: undefined });
     await handlers.get("model_select")!({} as never, context);
     expect(statuses.get("router")).toBeUndefined();

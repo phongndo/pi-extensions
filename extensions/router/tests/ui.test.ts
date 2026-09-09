@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import type { NativeAccount } from "../../../src/account-identity.ts";
-import { MASKED_EMAIL, RankingList, showRankings, promptAlias } from "../ui.ts";
+import { RankingList, showRankings, promptAlias } from "../ui.ts";
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as Theme;
 const account = (id: string, provider = "test"): NativeAccount => ({
   id,
@@ -55,7 +55,7 @@ test("native ranking keys reorder within providers, cancel without mutation and 
   view.handleInput("q");
   expect(saved).toBeUndefined();
 });
-test("subscription rows contain only rank, optional alias and masked email; reveal is temporary and selected-only", () => {
+test("subscription rows contain only rank and optional alias; email reveal is temporary and selected-only", () => {
   const accounts: NativeAccount[] = [
     { ...account("one"), name: "Account 1", type: "oauth" },
     { ...account("two"), name: "Account 2", alias: "Work", type: "oauth" },
@@ -79,9 +79,10 @@ test("subscription rows contain only rank, optional alias and masked email; reve
     );
   const view = create();
   const text = () => view.render(120).join("\n");
-  expect(view.render(120)).toContain(` > 1.   ${MASKED_EMAIL}`);
-  expect(view.render(120)).toContain(`   2. Work  ${MASKED_EMAIL}`);
-  expect(view.render(120)).toContain("   3.   ");
+  expect(view.render(120)).toContain(" > 1.");
+  expect(view.render(120)).toContain("   2. Work");
+  expect(view.render(120)).toContain("   3.");
+  expect(text()).not.toContain("••••");
   for (const label of [
     "Account 1",
     "Account 2",
@@ -183,8 +184,8 @@ test("ranking alias dialog preserves pending order and selection; cancel discard
     } as unknown as ExtensionContext;
     const result = await showRankings(ctx, original, new Map());
     if (save) {
-      expect(result?.map((a) => a.id)).toEqual(["two", "one"]);
-      expect(result?.[1]?.alias).toBe("Personal");
+      expect(result?.accounts.map((a) => a.id)).toEqual(["two", "one"]);
+      expect(result?.accounts[1]?.alias).toBe("Personal");
     } else expect(result).toBeUndefined();
     expect(original.map((a) => [a.id, a.alias])).toEqual([
       ["one", undefined],
@@ -192,6 +193,143 @@ test("ranking alias dialog preserves pending order and selection; cancel discard
     ]);
   }
 });
+test("combined router stages default separately from fallbacks and cancels all pending changes", async () => {
+  const keys = new KeybindingsManager({
+    ...TUI_KEYBINDINGS,
+    "app.models.reorderDown": { defaultKeys: "d", description: "Rank down" },
+  });
+  const original = [
+    { ...account("one"), alias: "Personal" },
+    { ...account("two"), alias: "Work" },
+  ];
+  for (const save of [true, false]) {
+    let screens = 0;
+    const ctx = {
+      mode: "tui",
+      ui: {
+        select: async (_title: string, labels: string[]) => {
+          // The pending fallback order is Work, Personal. Choose Work as default separately.
+          expect(labels).toEqual(["1. Work", "2. Personal ✓"]);
+          return labels[0];
+        },
+        custom: async (factory: (...args: any[]) => any) => {
+          let result: unknown;
+          const view = factory(
+            { terminal: { rows: 12 }, requestRender() {} },
+            theme,
+            keys,
+            (value: unknown) => {
+              result = value;
+            },
+          );
+          const text = () => view.render(120).join("\n");
+          expect(text()).not.toContain("Router");
+          expect(text()).not.toContain("Ranked fallbacks");
+          expect(text()).not.toContain("this session");
+          if (!screens++) {
+            expect(view.render(120).slice(1, -1)).toEqual([
+              " Test: Personal",
+              " > 1. Personal",
+              "   2. Work",
+              " a account · /d rank · n alias · e email · enter save · escape cancel",
+            ]);
+            view.handleInput("d");
+            expect(text()).toContain("Test: Personal");
+            view.handleInput("a");
+          } else {
+            expect(text()).toContain("Test: Work");
+            for (const width of [1, 20, 80]) {
+              expect(view.render(width).every((line: string) => visibleWidth(line) <= width)).toBe(
+                true,
+              );
+              expect(view.render(width).length).toBeLessThanOrEqual(12);
+            }
+            view.handleInput(save ? "\r" : "\u001b");
+          }
+          return result;
+        },
+      },
+    } as unknown as ExtensionContext;
+    const initialDefault = { provider: "test", accountId: "one" };
+    const result = await showRankings(ctx, original, new Map([["test", "Test"]]), new Map(), [
+      initialDefault,
+    ]);
+    if (save) {
+      expect(result?.accounts.map((a) => a.id)).toEqual(["two", "one"]);
+      expect(result?.sessionDefaults).toEqual([{ provider: "test", accountId: "two" }]);
+    } else expect(result).toBeUndefined();
+    expect(initialDefault.accountId).toBe("one");
+    expect(original.map((a) => a.id)).toEqual(["one", "two"]);
+  }
+});
+
+test("each provider has one header with its own default and account action", async () => {
+  const accounts = [
+    { ...account("one", "openai"), alias: "Personal" },
+    { ...account("two", "openai"), alias: "Work" },
+    { ...account("three", "xai"), alias: "Home" },
+    { ...account("four", "xai"), alias: "Office" },
+  ];
+  const defaults = [
+    { provider: "openai", accountId: "one" },
+    { provider: "xai", accountId: "three" },
+  ];
+  let screens = 0;
+  const ctx = {
+    mode: "tui",
+    ui: {
+      select: async (title: string, labels: string[]) => {
+        expect(title).toBe("xAI");
+        expect(labels).toEqual(["1. Home ✓", "2. Office"]);
+        return labels[1];
+      },
+      custom: async (factory: (...args: any[]) => any) => {
+        let result: unknown;
+        const view = factory(
+          { terminal: { rows: 24 }, requestRender() {} },
+          theme,
+          new KeybindingsManager(TUI_KEYBINDINGS),
+          (value: unknown) => {
+            result = value;
+          },
+        );
+        const rows = view.render(120);
+        expect(rows.filter((line: string) => line.includes("OpenAI"))).toEqual([
+          " OpenAI: Personal",
+        ]);
+        expect(rows.filter((line: string) => line.includes("xAI"))).toEqual([
+          screens ? " xAI: Office" : " xAI: Home",
+        ]);
+        if (!screens++) {
+          view.handleInput("\u001b[B");
+          view.handleInput("\u001b[B");
+          view.handleInput("a");
+        } else {
+          expect(rows).toContain(" > 1. Home");
+          view.handleInput("\r");
+        }
+        return result;
+      },
+    },
+  } as unknown as ExtensionContext;
+  const result = await showRankings(
+    ctx,
+    accounts,
+    new Map([
+      ["openai", "OpenAI"],
+      ["xai", "xAI"],
+    ]),
+    new Map(),
+    defaults,
+  );
+  expect(result?.sessionDefaults).toEqual([
+    { provider: "openai", accountId: "one" },
+    { provider: "xai", accountId: "four" },
+  ]);
+  expect(result?.accounts).toEqual(accounts);
+  expect(defaults[1]?.accountId).toBe("three");
+});
+
 test("native alias input validates, clears, and cancels without changing account identity", async () => {
   const answers = ["bad\u001b[31m", "  Work  ", "", undefined];
   const warnings: string[] = [];

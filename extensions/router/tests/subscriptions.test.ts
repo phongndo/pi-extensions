@@ -111,7 +111,7 @@ test("extension routes only subscriptions; old API slots stay removable and new 
     model: future.getModels()[0],
     modelRegistry: new ModelRegistry(runtime),
     isIdle: () => true,
-    sessionManager: { getSessionId: () => "session" },
+    sessionManager: { getSessionId: () => "session", getBranch: () => [] },
     ui: {},
   } as unknown as ExtensionContext;
   const pi = {

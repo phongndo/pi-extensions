@@ -10,7 +10,12 @@ import { normalizeAlias } from "./store.ts";
 
 export const MASKED_EMAIL = "••••••••";
 
-/** Headers are not selectable; movement and ranking operate only on accounts. */
+interface ProviderDefaults {
+  accounts: readonly SessionDefault[];
+  change: (accounts: NativeAccount[], selectedId: string) => void;
+}
+
+/** Headers show each provider's default; movement and ranking operate only on accounts. */
 export class RankingList implements Component {
   private accounts: NativeAccount[];
   private selected = 0;
@@ -22,6 +27,7 @@ export class RankingList implements Component {
   private rename?: (accounts: NativeAccount[], id: string) => void;
   private emails: ReadonlyMap<string, string>;
   private revealedId?: string;
+  private defaults?: ProviderDefaults;
   constructor(
     accounts: NativeAccount[],
     names: Map<string, string>,
@@ -32,7 +38,9 @@ export class RankingList implements Component {
     rename?: (accounts: NativeAccount[], id: string) => void,
     selectedId?: string,
     emails: ReadonlyMap<string, string> = new Map(),
+    defaults?: ProviderDefaults,
   ) {
+    this.defaults = defaults;
     this.names = names;
     this.theme = theme;
     this.keys = keys;
@@ -54,6 +62,11 @@ export class RankingList implements Component {
     }
     if (this.keys.matches(data, "tui.select.confirm")) {
       this.done(this.accounts);
+      return;
+    }
+    if (matchesKey(data, "a") && this.defaults && this.accounts[this.selected]) {
+      this.revealedId = undefined;
+      this.defaults.change(this.accounts, this.accounts[this.selected]!.id);
       return;
     }
     const move = this.keys.matches(data, "app.models.reorderUp")
@@ -96,7 +109,7 @@ export class RankingList implements Component {
       counters.set(a.provider, rank);
       return rank;
     });
-    const room = Math.max(2, Math.min(14, this.height() - 7));
+    const room = Math.max(2, Math.min(14, this.height() - 4));
     // Restart the first visible group with its header, even when scrolled into that group.
     const window = (start: number) => {
       const lines: string[] = [];
@@ -106,14 +119,21 @@ export class RankingList implements Component {
         const a = this.accounts[i]!;
         const header = provider !== a.provider;
         if (lines.length + (header ? 2 : 1) > room) break;
-        if (header)
-          lines.push(` ${t.fg("accent", t.bold(this.names.get(a.provider) ?? a.provider))}`);
+        if (header) {
+          const preferred = this.defaults?.accounts.find((d) => d.provider === a.provider);
+          const account = this.accounts.find((item) => item.id === preferred?.accountId);
+          const name = this.names.get(a.provider) ?? a.provider;
+          lines.push(
+            ` ${t.fg("accent", t.bold(account ? `${name}: ${account.alias ?? account.name}` : name))}`,
+          );
+        }
         provider = a.provider;
         const email = this.emails.get(a.id);
         const label = `${i === this.selected ? " >" : "  "} ${ranks[i]}. ${a.alias ?? ""}`;
-        const address = email ? (this.revealedId === a.id ? email : MASKED_EMAIL) : "";
+        const address = this.revealedId === a.id ? email : undefined;
         lines.push(
-          t.fg(i === this.selected ? "accent" : "text", label) + t.fg("muted", `  ${address}`),
+          t.fg(i === this.selected ? "accent" : "text", label.trimEnd()) +
+            (address ? t.fg("muted", `  ${address}`) : ""),
         );
         end = i + 1;
       }
@@ -124,10 +144,9 @@ export class RankingList implements Component {
     while (view.end <= this.selected && start < this.selected) view = window(++start);
     const border = new DynamicBorder((s: string) => t.fg("borderAccent", s)).render(width);
     const key = (id: Parameters<KeybindingsManager["getKeys"]>[0]) =>
-      this.keys.getKeys(id).join("/");
+      this.keys.getKeys(id)[0] ?? "";
     return [
       ...border,
-      ` ${t.fg("accent", t.bold("Router"))} ${t.fg("muted", "· priority within each provider")}`,
       ...view.lines,
       ...(start || view.end < this.accounts.length
         ? [
@@ -139,7 +158,7 @@ export class RankingList implements Component {
         : []),
       t.fg(
         "dim",
-        ` ${key("app.models.reorderUp")}/${key("app.models.reorderDown")} rank · n alias · e email · ${key("tui.select.confirm")} save · ${key("tui.select.cancel")} cancel`,
+        ` ${this.defaults ? "a account · " : ""}${key("app.models.reorderUp")}/${key("app.models.reorderDown")} rank · n alias · e email · ${key("tui.select.confirm")} save · ${key("tui.select.cancel")} cancel`,
       ),
       ...border,
     ].map((s) => truncateToWidth(s, Math.max(0, width)));
@@ -169,13 +188,26 @@ export async function promptAlias(
   }
 }
 
-type RankingAction = NativeAccount[] | { accounts: NativeAccount[]; renameId: string } | undefined;
+type RankingAction =
+  | NativeAccount[]
+  | { accounts: NativeAccount[]; renameId: string }
+  | { accounts: NativeAccount[]; changeDefault: string }
+  | undefined;
+export interface SessionDefault {
+  provider: string;
+  accountId: string;
+}
+export interface RankingResult {
+  accounts: NativeAccount[];
+  sessionDefaults: SessionDefault[];
+}
 export async function showRankings(
   ctx: ExtensionContext,
   accounts: NativeAccount[],
   names: Map<string, string>,
   emails: ReadonlyMap<string, string> = new Map(),
-): Promise<NativeAccount[] | undefined> {
+  sessionDefaults: readonly SessionDefault[] = [],
+): Promise<RankingResult | undefined> {
   if (ctx.mode !== "tui") {
     ctx.ui.notify(
       accounts
@@ -184,12 +216,13 @@ export async function showRankings(
             `${names.get(a.provider) ?? a.provider} · ${a.alias ?? ""}  ${emails.has(a.id) ? MASKED_EMAIL : ""}`,
         )
         .join("\n") +
-        "\nUse TUI mode to reorder, /router alias to label accounts. Manage logins with /login and /logout.",
+        "\nUse TUI mode for the default account and ranked fallbacks, /router account to select a session default, /router alias to label accounts. Manage logins with /login and /logout.",
       "info",
     );
     return;
   }
   let pending = accounts;
+  const pendingDefaults = sessionDefaults.map((d) => ({ ...d }));
   let selectedId: string | undefined;
   for (;;) {
     const result = await ctx.ui.custom<RankingAction>((tui, theme, keys, done) => {
@@ -203,6 +236,12 @@ export async function showRankings(
         (accounts, renameId) => done({ accounts, renameId }),
         selectedId,
         emails,
+        pendingDefaults.length
+          ? {
+              accounts: pendingDefaults,
+              change: (accounts, selectedId) => done({ accounts, changeDefault: selectedId }),
+            }
+          : undefined,
       );
       return {
         render: (width) => view.render(width),
@@ -213,8 +252,25 @@ export async function showRankings(
         },
       };
     });
-    if (!result || Array.isArray(result)) return result;
+    if (!result) return;
+    if (Array.isArray(result)) return { accounts: result, sessionDefaults: pendingDefaults };
     pending = result.accounts;
+    if ("changeDefault" in result) {
+      selectedId = result.changeDefault;
+      const provider = pending.find((a) => a.id === selectedId)!.provider;
+      const preferred = pendingDefaults.find((d) => d.provider === provider);
+      if (!preferred) continue;
+      const { accountId } = preferred;
+      const group = pending.filter((a) => a.provider === provider);
+      const labels = group.map(
+        (a, i) => `${i + 1}. ${a.alias ?? a.name}${a.id === accountId ? " ✓" : ""}`,
+      );
+      const choice = await ctx.ui.select(names.get(provider) ?? provider, labels);
+      const account = choice === undefined ? undefined : group[labels.indexOf(choice)];
+      if (account) preferred.accountId = account.id;
+      continue;
+    }
+    if (!("renameId" in result)) continue;
     selectedId = result.renameId;
     const account = pending.find((a) => a.id === selectedId)!;
     const updated = await promptAlias(

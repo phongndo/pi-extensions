@@ -18,16 +18,11 @@ import {
 } from "../../src/account-identity.ts";
 import { AccountRouter } from "./router.ts";
 import { setFooterStatus } from "../../src/footer-status.ts";
-import {
-  RankingStore,
-  multipleAccounts,
-  rankAccounts,
-  readLegacyAccounts,
-  type Rankings,
-} from "./store.ts";
+import { RankingStore, rankAccounts, readLegacyAccounts, type Rankings } from "./store.ts";
 import { MASKED_EMAIL, promptAlias, showRankings } from "./ui.ts";
 import { credentialEmail } from "./identity.ts";
 import { installNativeLogin } from "./native-login.ts";
+import { SESSION_ACCOUNT_ENTRY, sessionAccounts } from "./session.ts";
 
 export interface RouterExtensionOptions {
   configPath?: string;
@@ -49,6 +44,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     let ctx: ExtensionContext | undefined;
     let accounts: NativeAccount[] = [];
     let savedAccounts: NativeAccount[] = [];
+    let preferences = new Map<string, string>();
     let closed = false;
     let selecting = false;
     let poll: ReturnType<typeof setInterval> | undefined;
@@ -100,6 +96,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       readAccounts,
       lookup,
       {
+        preferred: (provider) => preferences.get(provider),
         selected: () => updateFooter(),
         attempt: (attempt) => {
           if (ctx && !closed)
@@ -117,12 +114,17 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       const group = accounts.filter((a) => a.provider === source);
       const account = provider?.startsWith(POOL_PREFIX)
         ? (group.find((a) => a.id === router.active.get(source!)) ??
+          group.find(
+            (a) =>
+              a.id === preferences.get(source!) &&
+              (router.health.get(a.id)?.until ?? 0) <= Date.now(),
+          ) ??
           group.find((a) => (router.health.get(a.id)?.until ?? 0) <= Date.now()))
         : group.find((a) => a.credentialId === provider);
       setFooterStatus(
         ctx,
         "router",
-        account ? `Account: ${account.alias ?? account.name}` : undefined,
+        account ? `account ${account.alias ?? account.name}` : undefined,
       );
     }
     const registered = new Map<string, { base: Provider; name: string }>();
@@ -217,6 +219,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     });
     pi.on("session_start", async (_event, context) => {
       ctx = context;
+      preferences = sessionAccounts(context.sessionManager.getBranch());
       await refresh();
       removeNativeLogin?.();
       removeNativeLogin = installNativeLogin(context, {
@@ -257,18 +260,32 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       updateFooter();
       if (!selecting) await refreshForInput(context);
     });
+    pi.on("session_tree", async (_event, context) => {
+      ctx = context;
+      preferences = sessionAccounts(context.sessionManager.getBranch());
+      router.active.clear();
+      await refreshForInput(context);
+    });
     pi.registerCommand("router", {
-      description: "Rank subscription accounts by provider; /router alias labels a subscription",
-      getArgumentCompletions: (prefix) =>
-        "alias".startsWith(prefix)
-          ? [{ value: "alias", label: "alias", description: "Name an individual account" }]
-          : null,
+      description: "Choose the session default and rank fallbacks; /router alias labels accounts",
+      getArgumentCompletions: (prefix) => {
+        const items = [
+          {
+            value: "account",
+            label: "account",
+            description: "Choose this session's preferred account",
+          },
+          { value: "alias", label: "alias", description: "Name an individual account" },
+        ].filter((item) => item.value.startsWith(prefix));
+        return items.length ? items : null;
+      },
       handler: async (args, context) => {
         if (!context.hasUI) return;
         const aliasOnly = args.trim() === "alias";
-        if (args.trim() && !aliasOnly) {
+        const sessionOnly = args.trim() === "account";
+        if (args.trim() && !aliasOnly && !sessionOnly) {
           context.ui.notify(
-            "/router ranks accounts; /router alias names them. Use /login and /logout to manage them.",
+            "/router ranks accounts; /router account selects for this session; /router alias names them. Use /login and /logout to manage them.",
             "info",
           );
           return;
@@ -280,6 +297,54 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
         try {
           await refresh();
           const names = new Map(sources().map((p) => [p.id, p.name]));
+          if (sessionOnly) {
+            const provider = context.model && sourceProvider(context.model.provider);
+            if (!provider) {
+              context.ui.notify("Select a model first.", "info");
+              return;
+            }
+            const group = accounts.filter((a) => a.provider === provider);
+            if (!group.length && !preferences.has(provider)) {
+              context.ui.notify(
+                "No signed-in subscriptions for this provider. Use /login.",
+                "info",
+              );
+              return;
+            }
+            const current = preferences.get(provider);
+            const labels = [
+              `Automatic · use global rankings${current ? "" : " ✓"}`,
+              ...group.map(
+                (a, i) => `${i + 1}. ${a.alias ?? a.name}${a.id === current ? " ✓" : ""}`,
+              ),
+            ];
+            const choice = await context.ui.select(
+              `Session account · ${names.get(provider) ?? provider} (fallback allowed)`,
+              labels,
+            );
+            const index = choice === undefined ? -1 : labels.indexOf(choice);
+            if (index < 0 || closed) return;
+            if (!context.isIdle()) {
+              context.ui.notify("Stop the current response before changing accounts.", "warning");
+              return;
+            }
+            const account = index === 0 ? undefined : group[index - 1];
+            if (account && !(await readAccounts()).some((a) => a.id === account.id))
+              throw new Error("Logins changed");
+            pi.appendEntry(SESSION_ACCOUNT_ENTRY, { provider, accountId: account?.id ?? null });
+            if (account) preferences.set(provider, account.id);
+            else preferences.delete(provider);
+            router.active.delete(provider);
+            await refresh();
+            await selectRoute(context);
+            context.ui.notify(
+              account
+                ? "Session account saved; usage-limit fallback remains enabled."
+                : "Session uses global rankings again.",
+              "info",
+            );
+            return;
+          }
           if (aliasOnly) {
             const initial = [...accounts];
             if (!initial.length) {
@@ -318,23 +383,44 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
             );
             return;
           }
-          const initial = multipleAccounts(accounts);
+          const provider = context.model && sourceProvider(context.model.provider);
+          const counts = new Map<string, number>();
+          for (const account of accounts)
+            counts.set(account.provider, (counts.get(account.provider) ?? 0) + 1);
+          const initial = accounts.filter(
+            (a) => a.provider === provider || counts.get(a.provider)! > 1,
+          );
           if (!initial.length) {
             context.ui.notify(
-              "No providers with two signed-in subscriptions. Add subscriptions with /login; name them with /router alias.",
+              "No signed-in subscriptions. Add subscriptions with /login; name them with /router alias.",
               "info",
             );
             return;
           }
           const expected = store.read();
           const emails = await readEmails(initial);
-          const result = await showRankings(context, initial, names, emails);
+          // Freeze each provider's default independently of pending fallback reordering.
+          const defaults = [...new Set(initial.map((a) => a.provider))].map((provider) => {
+            const group = initial.filter((a) => a.provider === provider);
+            const account =
+              group.find((a) => a.id === preferences.get(provider)) ??
+              group.find((a) => a.id === router.active.get(provider)) ??
+              group[0]!;
+            return { provider, accountId: account.id };
+          });
+          const result = await showRankings(context, initial, names, emails, defaults);
           if (!result || closed) return;
+          if (!context.isIdle()) throw new Error("Session became busy");
           const current = await readAccounts();
+          for (const selected of result.sessionDefaults)
+            if (
+              !current.some((a) => a.provider === selected.provider && a.id === selected.accountId)
+            )
+              throw new Error("Logins changed");
           const changes: Rankings = {};
           for (const provider of new Set(initial.map((a) => a.provider))) {
             const before = initial.filter((a) => a.provider === provider).map((a) => a.id);
-            const after = result.filter((a) => a.provider === provider).map((a) => a.id);
+            const after = result.accounts.filter((a) => a.provider === provider).map((a) => a.id);
             const live = current.filter((a) => a.provider === provider).map((a) => a.id);
             if (before.length !== live.length || live.some((id) => !before.includes(id)))
               throw new Error("Logins changed. Reopen /router.");
@@ -343,12 +429,18 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
           const aliasChanges: Record<string, string | undefined> = {};
           const expectedAliases: Record<string, string> = {};
           for (const account of initial) {
-            const updated = result.find((a) => a.id === account.id);
+            const updated = result.accounts.find((a) => a.id === account.id);
             if (!updated) throw new Error("Logins changed");
             if (updated.alias !== account.alias) aliasChanges[account.id] = updated.alias;
             if (account.alias !== undefined) expectedAliases[account.id] = account.alias;
           }
           store.save(changes, expected, aliasChanges, expectedAliases);
+          for (const selected of result.sessionDefaults) {
+            if (preferences.get(selected.provider) === selected.accountId) continue;
+            pi.appendEntry(SESSION_ACCOUNT_ENTRY, selected);
+            preferences.set(selected.provider, selected.accountId);
+            router.active.delete(selected.provider);
+          }
           await refresh();
         } catch {
           context.ui.notify(

@@ -40,6 +40,7 @@ export interface AccountHealth {
   reason: "rate limit" | "quota";
 }
 export interface RouterHooks {
+  preferred?(provider: string): string | undefined;
   attempt?(usage: AttemptUsage): void;
   selected?(account: Account): void;
 }
@@ -228,6 +229,8 @@ export class AccountRouter {
         isSubscriptionAccount(a, base) &&
         (this.health.get(a.id)?.until ?? 0) <= this.now(),
     );
+    const preferred = this.hooks.preferred?.(providerId);
+    accounts.sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred));
     let attempted = false;
     for (const account of accounts) {
       signal.throwIfAborted();

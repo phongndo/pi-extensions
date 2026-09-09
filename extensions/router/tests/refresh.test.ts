@@ -43,7 +43,7 @@ async function harness() {
     model: runtime.getProvider("openai-codex")!.getModels()[0],
     modelRegistry: new ModelRegistry(runtime),
     isIdle: () => true,
-    sessionManager: { getSessionId: () => "session" },
+    sessionManager: { getSessionId: () => "session", getBranch: () => [] },
     ui: { notify: (text: string) => notices.push(text) },
   } as unknown as ExtensionContext;
   const pi = {

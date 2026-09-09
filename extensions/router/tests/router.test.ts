@@ -53,7 +53,11 @@ function message(error?: string, partial = false): AssistantMessage {
     },
   };
 }
-function fixture(failures: Record<string, string> = {}, partial = false) {
+function fixture(
+  failures: Record<string, string> = {},
+  partial = false,
+  preferred?: () => string | undefined,
+) {
   const credentials = new InMemoryCredentialStore();
   const accounts = ["a", "b", "c"].map(
     (name): Account => ({
@@ -129,7 +133,7 @@ function fixture(failures: Record<string, string> = {}, partial = false) {
     (id) => credentials.read(id),
     async () => accounts,
     () => base,
-    { attempt: (a) => attempts.push(a) },
+    { attempt: (a) => attempts.push(a), preferred },
     () => 1000,
   );
   const ready = Promise.all(
@@ -152,6 +156,29 @@ function fixture(failures: Record<string, string> = {}, partial = false) {
 }
 
 describe("routing contract", () => {
+  test("session preference tries first, falls back in global order, respects cooldown and stays isolated", async () => {
+    let preferred: string | undefined = "b";
+    const f = fixture({ b: "429 rate limit" }, false, () => preferred);
+    await f.run();
+    expect(f.calls.map((c) => c.key)).toEqual(["b", "a"]);
+    expect(f.accounts.map((a) => a.id)).toEqual(["a", "b", "c"]);
+    f.calls.length = 0;
+    await f.run();
+    expect(f.calls.map((c) => c.key)).toEqual(["a"]);
+    preferred = "c";
+    f.calls.length = 0;
+    await f.run();
+    expect(f.calls.map((c) => c.key)).toEqual(["c"]);
+    const other = fixture();
+    await other.run();
+    expect(other.calls.map((c) => c.key)).toEqual(["a"]);
+    for (const missing of [undefined, "logged-out-account"]) {
+      preferred = missing;
+      f.calls.length = 0;
+      await f.run();
+      expect(f.calls.map((c) => c.key)).toEqual(["a"]);
+    }
+  });
   test("stale subscription metadata never routes a credential that became an API key", async () => {
     const f = fixture();
     await f.ready;
