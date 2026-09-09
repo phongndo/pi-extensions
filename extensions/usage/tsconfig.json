@@ -1,0 +1,4 @@
+{
+  "extends": "../fast-mode/tsconfig.json",
+  "include": ["*.ts", "tests/**/*.ts"]
+}

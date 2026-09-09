@@ -29,7 +29,7 @@
     },
     "extensions/context": {
       "name": "pi-context",
-      "version": "0.1.0",
+      "version": "0.6.0",
       "devDependencies": {
         "@earendil-works/pi-ai": "0.85.1",
         "@earendil-works/pi-coding-agent": "0.85.1",
@@ -100,6 +100,27 @@
         "@earendil-works/pi-coding-agent": "*",
         "@earendil-works/pi-tui": "*",
         "typebox": "*",
+      },
+    },
+    "extensions/router": {
+      "name": "pi-router",
+      "version": "0.1.0",
+      "dependencies": {
+        "proper-lockfile": "4.1.2",
+      },
+      "peerDependencies": {
+        "@earendil-works/pi-ai": ">=0.85.1",
+        "@earendil-works/pi-coding-agent": ">=0.85.1",
+        "@earendil-works/pi-tui": ">=0.85.1",
+      },
+    },
+    "extensions/usage": {
+      "name": "pi-usage",
+      "version": "0.1.0",
+      "peerDependencies": {
+        "@earendil-works/pi-ai": ">=0.85.1",
+        "@earendil-works/pi-coding-agent": ">=0.85.1",
+        "@earendil-works/pi-tui": ">=0.85.1",
       },
     },
     "extensions/web-tools": {
@@ -628,6 +649,10 @@
     "pi-mcp": ["pi-mcp@workspace:extensions/mcp"],
 
     "pi-question": ["pi-question@workspace:extensions/question"],
+
+    "pi-router": ["pi-router@workspace:extensions/router"],
+
+    "pi-usage": ["pi-usage@workspace:extensions/usage"],
 
     "pi-web-tools": ["pi-web-tools@workspace:extensions/web-tools"],
 

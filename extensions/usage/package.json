@@ -1,0 +1,24 @@
+{
+  "name": "pi-usage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native Pi usage, token graphs, and cost estimate dashboard",
+  "type": "module",
+  "scripts": {
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
+    "format:check": "bun run --bun oxfmt --check .",
+    "lint": "bun run --bun oxlint --deny-warnings --tsconfig tsconfig.json .",
+    "typecheck": "bun run --bun tsc --noEmit",
+    "test": "bun test ./tests"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.85.1",
+    "@earendil-works/pi-coding-agent": ">=0.85.1",
+    "@earendil-works/pi-tui": ">=0.85.1"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
