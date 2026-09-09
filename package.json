@@ -52,7 +52,6 @@
       "./extensions/fast-mode/index.ts",
       "./extensions/router/index.ts",
       "./extensions/usage/index.ts",
-      "./extensions/context/index.ts",
       "./extensions/web-tools/index.ts",
       "./extensions/mcp/index.ts"
     ],
