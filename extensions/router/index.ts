@@ -128,7 +128,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       setFooterStatus(
         ctx,
         "router",
-        account ? `route ${account.alias ?? account.name}` : undefined,
+        account && group.length >= 2 ? `route ${account.alias ?? account.name}` : undefined,
       );
     }
     const registered = new Map<string, { base: Provider; name: string }>();

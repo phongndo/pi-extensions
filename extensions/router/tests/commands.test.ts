@@ -139,7 +139,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     const interaction = { prompt: async () => "", notify: () => {} };
     await runtime.login("test", "oauth", interaction);
     await handlers.get("input")!({} as never, context);
-    expect(statuses.get("router")).toBe("route Account 1");
+    expect(statuses.get("router")).toBeUndefined();
     expect(runtime.getProvider(loginId("test", 2))).toBeUndefined();
     expect(runtime.getProvider(poolId("test"))).toBeUndefined();
     await command.handler("", context);
@@ -149,12 +149,13 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     expect(store.readAliases()).toEqual({ "native:test": "Personal" });
     expect(published.at(-1)?.[0]?.name).toBe("Personal");
     expect(activeAccount).toEqual({ id: "native:test", provider: "test" });
-    expect(statuses.get("router")).toBe("route Personal");
+    expect(statuses.get("router")).toBeUndefined();
     expect(store.read()).toEqual({});
     // The same public login/logout operations used by Pi's built-in slash commands.
     await runtime.login("test", "oauth", interaction);
     await handlers.get("input")!({} as never, context);
     expect(context.model?.provider).toBe(poolId("test"));
+    expect(statuses.get("router")).toBe("route Personal");
     expect(runtime.getProvider(loginId("test", 3))).toBeUndefined();
     expect(runtime.getProvider(loginId("test", 2))?.name).toContain("Account 2");
     loginNumber = 1; // Repeat token-2 accidentally: refresh it, don't create account 3.
@@ -225,7 +226,8 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     expect(dialogs).toBe(priorDialogs + 1);
     expect((await credentials.read("test"))?.type).toBe("oauth");
     expect(await credentials.read(loginId("test", 2))).toBeUndefined();
-    expect(statuses.get("router")).toBe("route Account 1");
+    expect(statuses.get("router")).toBeUndefined();
+    expect(activeAccount).toEqual({ id: "native:test", provider: "test" });
     Object.assign(context, { model: undefined });
     await handlers.get("model_select")!({} as never, context);
     expect(statuses.get("router")).toBeUndefined();
