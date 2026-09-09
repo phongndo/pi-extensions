@@ -121,6 +121,8 @@ mv ~/.pi/agent/fast-mode.json ~/.pi/agent/fast-mode.json.bad
 
 ## Child runtimes and compatibility
 
+Router's `accounts-openai-codex` route retains the same Fast preference and native request policy. Its footer uses model metadata/documented fallbacks, not a pooled account entitlement. Catalog discovery does not probe an arbitrary account for the route; each actual request evaluates capabilities with its resolved account's auth. Other providers and individual login-slot IDs are not enabled as public Fast routes.
+
 Provider lookup and active-runtime stream decorators retain the global policy when provider objects/authentication are transferred into isolated child runtimes. They compose with existing payload hooks, catalog refreshes, immutable providers, and out-of-order teardown. Unsupported providers/APIs and mismatched payload models remain untouched.
 
 `runtime.ts` uses Pi internals to cover both host and child requests. Tested on Pi 0.85.1; required methods are checked before installation, but future versions may need updates. The existing file-lock protocol remains compatible with already-running sessions.

@@ -1,18 +1,20 @@
 # Pi Extensions
 
-A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, always-on context recall, bounded web access, MCP tools, thirteen skills, and the `origin` theme.
+A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, multi-account routing, usage dashboards, always-on context recall, bounded web access, MCP tools, thirteen skills, and the `origin` theme.
 
 This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md) distributes compatible skill copies to other agents through their existing adapters. Chezmoi retains the single native `~/.pi/agent/settings.json` template and package pointer; it does not generate a Pi mirror or write into this checkout. Other agents keep their own native config/skill roots, not Pi package copies.
 
 ## Extension suite
 
-| Extension                                   | Entry points                                 | Side effects                                                                                  |
-| ------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Question](extensions/question/README.md)   | `question`                                   | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
-| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`  | Global preference; eligible Codex requests ask for priority service, which may affect billing |
-| [Context](extensions/context/README.md)     | `recall`                                     | Always-on read-only recall alongside stock Pi compaction; no mode or preference               |
-| [Web Tools](extensions/web-tools/README.md) | `search`, `map`, `fetch`, `crawl`, `extract` | Calls Firecrawl and spends provider credits                                                   |
-| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                  | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
+| Extension                                   | Entry points                                     | Side effects                                                                                  |
+| ------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| [Question](extensions/question/README.md)   | `question`                                       | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
+| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`      | Global preference; eligible Codex requests ask for priority service, which may affect billing |
+| [Router](extensions/router/README.md)       | `/router [alias]`; native `/login` and `/logout` | Label subscriptions; provider-grouped priority/fallback routing                               |
+| [Usage](extensions/usage/README.md)         | `/usage [session\|7d\|30d\|all] [provider]`      | Remaining subscriptions/Firecrawl credits; secondary token-history graphs                     |
+| [Context](extensions/context/README.md)     | `recall`                                         | Always-on read-only recall alongside stock Pi compaction; no mode or preference               |
+| [Web Tools](extensions/web-tools/README.md) | `search`, `map`, `fetch`, `crawl`, `extract`     | Calls Firecrawl and spends provider credits                                                   |
+| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                      | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
 
 Native footer slots display minimal, separated labels such as `speed fast · mcp 1/2`. Fast is hidden when off. Context has no mode footer.
 
@@ -85,6 +87,20 @@ machine-readable fields         → extract
 
 Treat returned web content as untrusted data. Crawl and extraction can cost substantially more than ordinary search, map, or fetch calls.
 
+### Accounts and usage
+
+```text
+/login
+/login
+/router
+/usage
+/usage openai-codex
+```
+
+For Pi-native OAuth subscriptions, `/login` shows one provider row with a compact account count (`OpenAI Codex ✓ 1`); selecting it adds another account directly, with duplicate detection. API-key and non-subscription OAuth logins retain native behavior and are never pooled. `/logout` lists individual accounts and available emails. `/router` lists providers with two or more subscription logins under flat provider headers; move an account to first to switch priority. Rows show only rank, optional alias, and masked email—no auth badges. Press `e` to reveal/hide the selected email, `n` to alias an account, or `/router alias` for a single subscription. Extra subscription accounts activate same-provider/model routing, never falling back to API keys or replaying partial output.
+
+Usage is a **separate extension**, opening directly to remaining allowances under flat provider/account headers. It includes Pi-native OAuth subscriptions and the explicit Firecrawl team-credit exception. Codex shows every returned window and banked-reset expiry; Firecrawl shows remaining credits. Grok reads the reported credit percentage/reset from the bearer billing endpoint used by CodexBar, using Pi's native login; missing percentages remain unknown. Short horizontal bars keep each limit readable, with compact banked-reset countdowns underneath. Future subscription providers are discovered through native metadata, with extensible allowance adapters. Press `h` for recorded subscription token/price-equivalent graphs and cache details. All-time graphs retain the full recorded span; no older-history backfill or inferred bills. Old API records remain on disk but are excluded. See [Router](extensions/router/README.md) and [Usage](extensions/usage/README.md) for testing and storage.
+
 ### Context management
 
 ```javascript
@@ -98,14 +114,16 @@ Recall is always registered alongside stock Pi compaction. There is no `/context
 
 Paths assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature       | Location                     | Contents                                                      |
-| ------------- | ---------------------------- | ------------------------------------------------------------- |
-| Theme         | `themes/origin.json`         | Packaged TUI theme; select `origin` in settings               |
-| Fast Mode     | `~/.pi/agent/fast-mode.json` | Global on/off preference                                      |
-| Context       | Session JSONL                | Original evidence and passive diagnostics; no preference file |
-| Firecrawl key | `~/.pi/agent/auth.json`      | Native credential store, created with `0600` permissions      |
-| MCP servers   | `~/.config/mcp/mcp.json`     | Shared server definitions                                     |
-| MCP overlay   | `~/.pi/agent/mcp.json`       | Pi-only enable/disable flags, not copied shared secrets       |
+| Feature       | Location                                      | Contents                                                      |
+| ------------- | --------------------------------------------- | ------------------------------------------------------------- |
+| Theme         | `themes/origin.json`                          | Packaged TUI theme; select `origin` in settings               |
+| Fast Mode     | `~/.pi/agent/fast-mode.json`                  | Global on/off preference                                      |
+| Router        | `~/.pi/agent/router.json`; native `auth.json` | Rankings and aliases; native account credentials              |
+| Usage         | `~/.pi/agent/usage/*.jsonl`                   | Private token/cost metadata; no prompts or credentials        |
+| Context       | Session JSONL                                 | Original evidence and passive diagnostics; no preference file |
+| Firecrawl key | `~/.pi/agent/auth.json`                       | Native credential store, created with `0600` permissions      |
+| MCP servers   | `~/.config/mcp/mcp.json`                      | Shared server definitions                                     |
+| MCP overlay   | `~/.pi/agent/mcp.json`                        | Pi-only enable/disable flags, not copied shared secrets       |
 
 ## Security model
 
@@ -124,7 +142,7 @@ Read extension-specific safety notes before enabling mutating or billed capabili
 
 ```text
 src/                      # Workspace /commit command and shared footer helper
-extensions/               # Question, Fast Mode, Context, Web Tools, MCP
+extensions/               # Question, Fast Mode, Router, Usage, Context, Web Tools, MCP
 skills/                   # The twelve bundles listed above
 themes/origin.json        # Packaged TUI theme
 THIRD_PARTY_NOTICES.md     # Skill provenance and licenses
