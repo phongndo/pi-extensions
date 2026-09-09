@@ -1,8 +1,8 @@
 {
   "name": "pi-context",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
-  "description": "Local notes, branch-aware recall, and verified fresh context windows for Pi",
+  "description": "Always-on branch-aware recall alongside stock Pi compaction",
   "keywords": [
     "context",
     "pi-extension",

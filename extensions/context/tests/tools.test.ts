@@ -3,87 +3,51 @@ import test from "node:test";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { TObject } from "typebox";
-import {
-  CHECKPOINT_TYPE,
-  MEMORY_TOOLS,
-  currentNotes,
-  evidenceFor,
-  latestCheckpoint,
-  type CheckpointData,
-} from "../model.ts";
+import { CHECKPOINT_TYPE, NOTE_TYPE, evidenceFor, recall } from "../model.ts";
 import { withEvidenceIds } from "../provenance.ts";
 import { assistant, checkpoint, harness, user } from "./helpers.ts";
 
-test("notes actions and no-argument new_context expose strict independent schemas", async (t) => {
+test("only recall is registered with a strict read-only schema", async (t) => {
   const app = await harness(t);
-  assert.deepEqual(new Set(app.tools.keys()), new Set(MEMORY_TOOLS));
-  const notes = app.tools.get("notes")! as unknown as { parameters: TObject };
-  const reset = app.tools.get("new_context")! as unknown as { parameters: TObject };
-  assert.deepEqual(notes.parameters.required, ["action", "name"]);
-  assert.deepEqual(Object.keys(notes.parameters.properties!), [
-    "action",
-    "name",
-    "text",
-    "revision",
-    "references",
+  assert.deepEqual([...app.tools.keys()], ["recall"]);
+  const tool = app.tools.get("recall")!;
+  const schema = tool.parameters as TObject & { additionalProperties: boolean };
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(Object.keys(schema.properties!), [
+    "query",
+    "entryId",
+    "offset",
+    "limit",
+    "cursor",
+    "role",
+    "toolName",
+    "source",
+    "window",
   ]);
-  assert.deepEqual(Object.keys(reset.parameters.properties!), []);
-  const validate = (name: string, args: Record<string, unknown>) =>
-    validateToolArguments(app.tools.get(name)!, {
+  const validate = (args: Record<string, unknown>) =>
+    validateToolArguments(tool, {
       type: "toolCall",
-      name,
+      name: "recall",
       id: "test",
       arguments: args,
     });
-  validate("notes", { action: "write", name: "finding", text: "Verified" });
-  validate("new_context", {});
+  validate({});
+  validate({ query: "failure", role: "user", source: "original", window: "previous" });
   for (const args of [
-    { action: "checkpoint", checkpoint, reset: true },
-    { action: "write", name: "finding", text: "x", reset: true },
-    { action: "write", name: "finding", text: "x", checkpoint },
-    { action: "write", text: "missing name" },
+    { action: "write", name: "finding" },
+    { reset: true },
+    { query: "" },
+    { offset: -1 },
+    { role: "system" },
+    { source: "bogus" },
+    { limit: 12001 },
   ])
-    assert.throws(() => validate("notes", args));
-  for (const args of [{ checkpoint }, { reset: true }, { ...checkpoint }, { references: [] }])
-    assert.throws(() => validate("new_context", args));
+    assert.throws(() => validate(args));
 });
 
-test("new_context terminates without writing a note or checkpoint, including a sibling batch", async (t) => {
-  const app = await harness(t);
-  user(app.sm);
-  await app.execute("notes", { action: "write", name: "finding", text: "Keep this" });
-  const before = currentNotes(app.sm.getBranch());
-  const result = await app.newContext();
-  assert.equal(result.terminate, true);
-  assert.equal(latestCheckpoint(app.sm.getBranch()), undefined);
-  assert.deepEqual(currentNotes(app.sm.getBranch()), before);
-  await app.emit("agent_settled");
-  assert.equal(app.compactions.length, 1);
-  assert.equal(app.sent.length, 0);
-});
-
-test("new_context is disabled in default and each memory tool exclusion blocks rollover", async (t) => {
-  const disabled = await harness(t, { initialMode: "default" });
-  user(disabled.sm);
-  await assert.rejects(disabled.execute("new_context", {}), /unavailable/);
-  assert.ok(!disabled.controls.tools.includes("new_context"));
-  await disabled.command("exp");
-  assert.ok(disabled.controls.tools.includes("new_context"));
-  for (const missing of MEMORY_TOOLS) {
-    const app = await harness(t);
-    user(app.sm);
-    app.controls.tools = app.controls.tools.filter((name) => name !== missing);
-    await app.command("default");
-    await app.command("exp");
-    assert.ok(!app.controls.tools.includes(missing));
-    assert.deepEqual(await app.beforeCompact(), { cancel: true });
-    assert.equal(await app.emit("before_agent_start", { systemPrompt: "base" }), undefined);
-  }
-});
-
-test("memory tools and legacy checkpoint omit recursive calls, receipts and evidence markers", () => {
+test("current and retired memory tools omit recursive calls, receipts and evidence markers", () => {
   const sm = SessionManager.inMemory();
-  for (const name of [...MEMORY_TOOLS, "checkpoint"]) {
+  for (const name of ["recall", "notes", "new_context", "checkpoint"]) {
     const call = sm.appendMessage(assistant([{ type: "toolCall", id: name, name, arguments: {} }]));
     const receipt = sm.appendMessage({
       role: "toolResult",
@@ -100,33 +64,40 @@ test("memory tools and legacy checkpoint omit recursive calls, receipts and evid
   assert.deepEqual(withEvidenceIds(messages, sm.getBranch()), messages);
 });
 
-test("legacy checkpoints remain readable after reopen but are not rollover prerequisites", async (t) => {
+test("legacy notes and checkpoints remain readable after reopen; no new writes", async (t) => {
   const app = await harness(t);
   const request = user(app.sm);
   const coveredThrough = app.sm.appendMessage(
-    assistant([
-      {
-        type: "toolCall",
-        id: "legacy",
-        name: "notes",
-        arguments: { action: "checkpoint", checkpoint },
-      },
-    ]),
+    assistant([{ type: "text", text: "Legacy findings" }]),
   );
-  const data: CheckpointData = {
+  const checkpointId = app.sm.appendCustomEntry(CHECKPOINT_TYPE, {
     version: 1,
     checkpoint,
     references: [request],
     coveredThrough,
     toolCallId: "legacy",
-  };
-  const entryId = app.sm.appendCustomEntry(CHECKPOINT_TYPE, data);
+  });
+  const noteId = app.sm.appendCustomEntry(NOTE_TYPE, {
+    version: 1,
+    name: "finding",
+    text: "Preserve the exact evidence",
+    references: [request],
+    deleted: false,
+  });
   const reopened = SessionManager.open(app.sm.getSessionFile()!);
-  assert.deepEqual(latestCheckpoint(reopened.getBranch()), { entryId, data });
-  const resumed = await harness(t, {}, reopened);
-  assert.match(JSON.stringify(await resumed.execute("recall", { entryId })), /First fix failed/);
-  const result = await resumed.beforeCompact();
-  assert.ok(result?.compaction);
-  assert.match(result.compaction.summary, new RegExp(entryId));
-  assert.doesNotMatch(result.compaction.summary, /First fix failed/);
+  const resumed = await harness(t, reopened);
+  assert.equal(await resumed.beforeCompact(), undefined);
+  const before = JSON.stringify(reopened.getEntries());
+  assert.match(
+    JSON.stringify(await resumed.execute("recall", { entryId: checkpointId })),
+    /First fix failed/,
+  );
+  assert.match(
+    JSON.stringify(await resumed.execute("recall", { entryId: noteId })),
+    /exact evidence/,
+  );
+  assert.match(JSON.stringify(await resumed.execute("recall", { source: "notes" })), /finding/);
+  const corrupt = reopened.appendCustomEntry(CHECKPOINT_TYPE, { version: 99 });
+  assert.throws(() => recall(reopened.getBranch(), { entryId: corrupt }), /unavailable/);
+  assert.equal(JSON.stringify(reopened.getEntries().slice(0, -1)), before);
 });

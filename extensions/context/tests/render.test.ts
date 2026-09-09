@@ -2,13 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import {
-  renderRecallCall,
-  renderRecallResult,
-  renderNotesCall,
-  renderNotesResult,
-  renderNewContextCall,
-} from "../render.ts";
+import { renderRecallCall, renderRecallResult } from "../render.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as Theme;
 const result = (data: unknown) => ({ content: [{ type: "text", text: JSON.stringify(data) }] });
@@ -68,9 +62,6 @@ test("headers tolerate partial args; all views fit narrow terminals and strip es
       { query: "漢字".repeat(200) + "\x1b[2J\nspoof", limit: 5, cursor: "secret" },
       theme,
     ),
-    renderNotesCall({}, theme),
-    renderNotesCall({ action: "write", name: "plan" }, theme),
-    renderNewContextCall({}, theme),
     renderRecallResult(result(data), options, theme),
     renderRecallResult(result(data), { ...options, expanded: true }, theme),
   ];
@@ -92,10 +83,6 @@ test("errors, pending, empty, and legacy results remain readable", () => {
     /Revision changed/,
   );
   assert.match(
-    renderNotesResult(legacy, options, theme, true).render(80).join("\n"),
-    /^Revision changed/,
-  );
-  assert.match(
     renderRecallResult(result({ results: [], notes: [] }), options, theme)
       .render(80)
       .join("\n"),
@@ -106,38 +93,5 @@ test("errors, pending, empty, and legacy results remain readable", () => {
       .render(80)
       .join("\n"),
     /Recalling/,
-  );
-  assert.match(
-    renderNotesResult(legacy, { ...options, isPartial: true }, theme)
-      .render(80)
-      .join("\n"),
-    /Saving/,
-  );
-});
-
-test("new_context header describes summary-free rollover", () => {
-  assert.equal(
-    renderNewContextCall({}, theme).render(100).join(""),
-    "new_context · summary-free rollover requested",
-  );
-});
-
-test("saved-memory results shorten boilerplate without hiding reset caveats", () => {
-  const text =
-    "Checkpoint abc saved and verified. Context resets are off/unavailable; continue in the existing window.";
-  assert.match(
-    renderNotesResult({ content: [{ type: "text", text }] }, options, theme)
-      .render(100)
-      .join("\n"),
-    /off\/unavailable/,
-  );
-  const note = {
-    content: [
-      { type: "text", text: "Note plan saved; revision abc. Read this entryId with recall." },
-    ],
-  };
-  assert.equal(
-    renderNotesResult(note, options, theme).render(100).join("\n").trim(),
-    "✓ Note plan saved; revision abc.",
   );
 });

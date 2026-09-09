@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
-import { type AssistantMessage, type ToolCall, type Model } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import {
   SessionManager,
   type ExtensionAPI,
@@ -13,8 +13,7 @@ import {
   type CompactionResult,
   type CompactOptions,
 } from "@earendil-works/pi-coding-agent";
-import { createContextExtension, type ContextOptions } from "../index.ts";
-import { saveMode, type ContextMode } from "../state.ts";
+import contextExtension from "../index.ts";
 
 export const checkpoint = {
   goal: "Implement the requested fix",
@@ -60,11 +59,6 @@ export function assistant(
 export function user(sm: SessionManager, text = "Fix the bug without deploying") {
   return sm.appendMessage({ role: "user", content: text, timestamp: Date.now() });
 }
-export function toolCall(sm: SessionManager, id = "window-call", siblings: ToolCall[] = []) {
-  return sm.appendMessage(
-    assistant([{ type: "toolCall", id, name: "new_context", arguments: {} }, ...siblings]),
-  );
-}
 export function receipt(sm: SessionManager, id = "window-call", isError = false) {
   return sm.appendMessage({
     role: "toolResult",
@@ -83,17 +77,9 @@ export async function temporary(t: TestContext) {
 }
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
-export async function harness(
-  t: TestContext,
-  options: ContextOptions & { initialMode?: ContextMode | null } = {},
-  existing?: SessionManager,
-) {
+export async function harness(t: TestContext, existing?: SessionManager) {
   const root = await temporary(t);
   const sm = existing ?? SessionManager.create(root, join(root, "sessions"));
-  const path = options.statePath ?? join(root, "context.json");
-  // Legacy regression fixtures exercise fresh mode explicitly; production now defaults to Pi.
-  const { initialMode = "exp", ...extensionOptions } = options;
-  if (!options.statePath && initialMode) await saveMode(path, initialMode);
   const handlers = new Map<string, Handler[]>();
   const tools = new Map<string, ToolDefinition>();
   const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
@@ -105,7 +91,7 @@ export async function harness(
     tokens: 100,
     pending: false,
     idle: true,
-    tools: ["recall", "notes", "new_context", "read", "bash"],
+    tools: ["recall", "read", "bash"],
     aborts: 0,
   };
   const ctx = {
@@ -142,13 +128,13 @@ export async function harness(
       commands.set(name, command);
     },
     getActiveTools: () => controls.tools,
-    setActiveTools: (names: string[]) => {
-      controls.tools = names;
+    setActiveTools: () => {
+      throw new Error("Recall must never change the caller's active tools");
     },
     appendEntry: (type: string, data: unknown) => sm.appendCustomEntry(type, data),
     sendMessage: (...args: unknown[]) => sent.push(args),
   } as unknown as ExtensionAPI;
-  createContextExtension({ pollMs: 0, ...extensionOptions, statePath: path })(api);
+  contextExtension(api);
   async function emit(name: string, event: object = {}) {
     let result: unknown;
     for (const handler of handlers.get(name) ?? [])
@@ -165,12 +151,6 @@ export async function harness(
     id = "window-call",
     signal = new AbortController().signal,
   ) => tools.get(name)!.execute(id, params, signal, undefined, ctx);
-  async function newContext(id = "window-call") {
-    toolCall(sm, id);
-    const result = await execute("new_context", {}, id);
-    receipt(sm, id);
-    return result;
-  }
   async function beforeCompact(extra: Partial<SessionBeforeCompactEvent> = {}) {
     const branchEntries = sm.getBranch();
     const preparation: SessionBeforeCompactEvent["preparation"] = {
@@ -190,11 +170,8 @@ export async function harness(
       ...extra,
     })) as { cancel?: boolean; compaction?: CompactionResult } | undefined;
   }
-  const command = (args: string) =>
-    commands.get("context")!.handler(args, ctx as Parameters<RegisteredCommand["handler"]>[1]);
   return {
     root,
-    path,
     sm,
     ctx,
     controls,
@@ -205,9 +182,8 @@ export async function harness(
     sent,
     compactions,
     emit,
+    handlers,
     execute,
-    newContext,
     beforeCompact,
-    command,
   };
 }
