@@ -1,5 +1,6 @@
 import { DynamicBorder, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import {
+  Input,
   matchesKey,
   truncateToWidth,
   type Component,
@@ -28,6 +29,24 @@ export class RankingList implements Component {
   private emails: ReadonlyMap<string, string>;
   private revealedId?: string;
   private defaults?: ProviderDefaults;
+  private search = new Input({ prompt: "> ", placeholder: "Search accounts…" });
+  get focused(): boolean {
+    return this.search.focused;
+  }
+  set focused(value: boolean) {
+    this.search.focused = value;
+  }
+  get query(): string {
+    return this.search.getValue();
+  }
+  private visibleAccounts(): NativeAccount[] {
+    const query = this.query.trim().toLowerCase();
+    return this.accounts.filter((a) =>
+      [a.alias, a.name, a.provider, this.names.get(a.provider)].some((value) =>
+        value?.toLowerCase().includes(query),
+      ),
+    );
+  }
   constructor(
     accounts: NativeAccount[],
     names: Map<string, string>,
@@ -39,7 +58,9 @@ export class RankingList implements Component {
     selectedId?: string,
     emails: ReadonlyMap<string, string> = new Map(),
     defaults?: ProviderDefaults,
+    query = "",
   ) {
+    this.search.setValue(query);
     this.defaults = defaults;
     this.names = names;
     this.theme = theme;
@@ -51,10 +72,12 @@ export class RankingList implements Component {
     this.accounts = [...accounts];
     this.selected = Math.max(
       0,
-      accounts.findIndex((a) => a.id === selectedId),
+      this.visibleAccounts().findIndex((a) => a.id === selectedId),
     );
   }
-  invalidate(): void {}
+  invalidate(): void {
+    this.search.invalidate();
+  }
   handleInput(data: string): void {
     if (this.keys.matches(data, "tui.select.cancel")) {
       this.done();
@@ -64,59 +87,61 @@ export class RankingList implements Component {
       this.done(this.accounts);
       return;
     }
-    if (matchesKey(data, "a") && this.defaults && this.accounts[this.selected]) {
+    const visible = this.visibleAccounts();
+    const selected = visible[this.selected];
+    if (matchesKey(data, "space")) {
       this.revealedId = undefined;
-      this.defaults.change(this.accounts, this.accounts[this.selected]!.id);
+      if (selected) this.defaults?.change(this.accounts, selected.id);
       return;
     }
-    const move = this.keys.matches(data, "app.models.reorderUp")
-      ? -1
-      : this.keys.matches(data, "app.models.reorderDown")
-        ? 1
-        : 0;
+    const move = matchesKey(data, "ctrl+up") ? -1 : matchesKey(data, "ctrl+down") ? 1 : 0;
     if (move) {
       this.revealedId = undefined;
-      const other = this.selected + move;
-      if (
-        this.accounts[other] &&
-        this.accounts[other]!.provider === this.accounts[this.selected]?.provider
-      ) {
-        [this.accounts[other], this.accounts[this.selected]] = [
-          this.accounts[this.selected]!,
-          this.accounts[other]!,
-        ];
-        this.selected = other;
+      const index = this.accounts.findIndex((a) => a.id === selected?.id);
+      const other = index + move;
+      if (selected && this.accounts[other]?.provider === selected.provider) {
+        [this.accounts[other], this.accounts[index]] = [selected, this.accounts[other]!];
+        this.selected = this.visibleAccounts().findIndex((a) => a.id === selected.id);
       }
-    } else if (this.keys.matches(data, "tui.select.up")) {
+    } else if (matchesKey(data, "up")) {
       this.revealedId = undefined;
       this.selected = Math.max(0, this.selected - 1);
-    } else if (this.keys.matches(data, "tui.select.down")) {
+    } else if (matchesKey(data, "down")) {
       this.revealedId = undefined;
-      this.selected = Math.min(Math.max(0, this.accounts.length - 1), this.selected + 1);
-    } else if (matchesKey(data, "n") && this.accounts[this.selected]) {
+      this.selected = Math.min(Math.max(0, visible.length - 1), this.selected + 1);
+    } else if (matchesKey(data, "ctrl+n") && selected) {
       this.revealedId = undefined;
-      this.rename?.(this.accounts, this.accounts[this.selected]!.id);
-    } else if (matchesKey(data, "e") && this.accounts[this.selected]) {
-      const id = this.accounts[this.selected]!.id;
-      this.revealedId = this.revealedId === id ? undefined : id;
+      this.rename?.(this.accounts, selected.id);
+    } else if (matchesKey(data, "ctrl+e") && selected) {
+      this.revealedId = this.revealedId === selected.id ? undefined : selected.id;
+    } else {
+      const before = this.query;
+      this.search.handleInput(data);
+      if (this.query !== before) {
+        this.revealedId = undefined;
+        this.selected = 0;
+      }
     }
   }
   render(width: number): string[] {
     const t = this.theme;
     const counters = new Map<string, number>();
-    const ranks = this.accounts.map((a) => {
-      const rank = (counters.get(a.provider) ?? 0) + 1;
-      counters.set(a.provider, rank);
-      return rank;
-    });
-    const room = Math.max(2, Math.min(14, this.height() - 4));
+    const ranks = new Map(
+      this.accounts.map((a) => {
+        const rank = (counters.get(a.provider) ?? 0) + 1;
+        counters.set(a.provider, rank);
+        return [a.id, rank] as const;
+      }),
+    );
+    const visible = this.visibleAccounts();
+    const room = Math.max(2, Math.min(14, this.height() - 5));
     // Restart the first visible group with its header, even when scrolled into that group.
     const window = (start: number) => {
       const lines: string[] = [];
       let provider: string | undefined;
       let end = start;
-      for (let i = start; i < this.accounts.length; i++) {
-        const a = this.accounts[i]!;
+      for (let i = start; i < visible.length; i++) {
+        const a = visible[i]!;
         const header = provider !== a.provider;
         if (lines.length + (header ? 2 : 1) > room) break;
         if (header) {
@@ -129,7 +154,10 @@ export class RankingList implements Component {
         }
         provider = a.provider;
         const email = this.emails.get(a.id);
-        const label = `${i === this.selected ? " >" : "  "} ${ranks[i]}. ${a.alias ?? ""}`;
+        const isDefault = this.defaults?.accounts.some(
+          (d) => d.provider === a.provider && d.accountId === a.id,
+        );
+        const label = `${i === this.selected ? " >" : "  "} ${ranks.get(a.id)}. ${a.alias ?? ""}${isDefault ? " ✓" : ""}`;
         const address = this.revealedId === a.id ? email : undefined;
         lines.push(
           t.fg(i === this.selected ? "accent" : "text", label.trimEnd()) +
@@ -147,18 +175,14 @@ export class RankingList implements Component {
       this.keys.getKeys(id)[0] ?? "";
     return [
       ...border,
-      ...view.lines,
-      ...(start || view.end < this.accounts.length
-        ? [
-            t.fg(
-              "dim",
-              ` ${this.selected + 1}/${this.accounts.length} accounts · ${key("tui.select.up")}/${key("tui.select.down")} navigate`,
-            ),
-          ]
+      ...this.search.render(width),
+      ...(visible.length ? view.lines : [t.fg("dim", " No matching accounts")]),
+      ...(start || view.end < visible.length
+        ? [t.fg("dim", ` ${this.selected + 1}/${visible.length} accounts · ↑↓ navigate`)]
         : []),
       t.fg(
         "dim",
-        ` ${this.defaults ? "a account · " : ""}${key("app.models.reorderUp")}/${key("app.models.reorderDown")} rank · n alias · e email · ${key("tui.select.confirm")} save · ${key("tui.select.cancel")} cancel`,
+        ` ${this.defaults ? "space default · " : ""}ctrl+↑↓ rank · ctrl+n alias · ctrl+e email · ${key("tui.select.confirm")} save · ${key("tui.select.cancel")} cancel`,
       ),
       ...border,
     ].map((s) => truncateToWidth(s, Math.max(0, width)));
@@ -188,11 +212,7 @@ export async function promptAlias(
   }
 }
 
-type RankingAction =
-  | NativeAccount[]
-  | { accounts: NativeAccount[]; renameId: string }
-  | { accounts: NativeAccount[]; changeDefault: string }
-  | undefined;
+type RankingAction = NativeAccount[] | { accounts: NativeAccount[]; renameId: string } | undefined;
 export interface SessionDefault {
   provider: string;
   accountId: string;
@@ -224,6 +244,7 @@ export async function showRankings(
   let pending = accounts;
   const pendingDefaults = sessionDefaults.map((d) => ({ ...d }));
   let selectedId: string | undefined;
+  let query = "";
   for (;;) {
     const result = await ctx.ui.custom<RankingAction>((tui, theme, keys, done) => {
       const view = new RankingList(
@@ -233,43 +254,34 @@ export async function showRankings(
         keys,
         done,
         () => tui.terminal.rows,
-        (accounts, renameId) => done({ accounts, renameId }),
+        (accounts, renameId) => {
+          query = view.query;
+          done({ accounts, renameId });
+        },
         selectedId,
         emails,
         pendingDefaults.length
           ? {
               accounts: pendingDefaults,
-              change: (accounts, selectedId) => done({ accounts, changeDefault: selectedId }),
+              change: (accounts, selectedId) => {
+                const account = accounts.find((a) => a.id === selectedId)!;
+                const preferred = pendingDefaults.find((d) => d.provider === account.provider);
+                if (preferred) preferred.accountId = selectedId;
+              },
             }
           : undefined,
+        query,
       );
-      return {
-        render: (width) => view.render(width),
-        invalidate: () => view.invalidate(),
-        handleInput: (data) => {
-          view.handleInput(data);
-          tui.requestRender();
-        },
+      const handleInput = view.handleInput.bind(view);
+      view.handleInput = (data) => {
+        handleInput(data);
+        tui.requestRender();
       };
+      return view;
     });
     if (!result) return;
     if (Array.isArray(result)) return { accounts: result, sessionDefaults: pendingDefaults };
     pending = result.accounts;
-    if ("changeDefault" in result) {
-      selectedId = result.changeDefault;
-      const provider = pending.find((a) => a.id === selectedId)!.provider;
-      const preferred = pendingDefaults.find((d) => d.provider === provider);
-      if (!preferred) continue;
-      const { accountId } = preferred;
-      const group = pending.filter((a) => a.provider === provider);
-      const labels = group.map(
-        (a, i) => `${i + 1}. ${a.alias ?? a.name}${a.id === accountId ? " ✓" : ""}`,
-      );
-      const choice = await ctx.ui.select(names.get(provider) ?? provider, labels);
-      const account = choice === undefined ? undefined : group[labels.indexOf(choice)];
-      if (account) preferred.accountId = account.id;
-      continue;
-    }
     if (!("renameId" in result)) continue;
     selectedId = result.renameId;
     const account = pending.find((a) => a.id === selectedId)!;
