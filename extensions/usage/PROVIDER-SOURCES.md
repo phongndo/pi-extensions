@@ -68,4 +68,4 @@ These providers remain eligible through native metadata, but their live readers 
 
 ## Implementation guardrails
 
-Fixed official status origins/paths only; reject redirects, bound response bodies and timeouts, redact failures, retain Pi-owned refresh locking. No model requests to learn limits, admin keys, purchases, reset consumption, credential copying, cookie scraping, or extra login flows. Live snapshots stay in memory, separate from the append-only subscription-history ledger.
+Fixed official status origins/paths only; reject redirects, bound response bodies and timeouts, redact failures, retain Pi-owned refresh locking. No model requests to learn limits, admin keys, purchases, reset consumption, credential copying, cookie scraping, or extra login flows. Live snapshots stay in memory; Usage does not persist request history.

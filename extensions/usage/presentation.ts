@@ -19,16 +19,6 @@ const PROVIDERS: Record<string, string> = {
 };
 export const providerName = (id: string, names?: ReadonlyMap<string, string>) =>
   names?.get(id) ?? (Object.hasOwn(PROVIDERS, id) ? PROVIDERS[id]! : id);
-export const estimate = (value: number) =>
-  value === 0
-    ? "$0"
-    : value < 0.01
-      ? "<$0.01"
-      : new Intl.NumberFormat("en", {
-          style: "currency",
-          currency: "USD",
-          maximumFractionDigits: 2,
-        }).format(value);
 /** Remaining allowance is a percentage of the provider window, never a token or dollar balance. */
 export function remainingUsage(used: number): { percent?: number; label: string } {
   if (!Number.isFinite(used) || used < 0) return { label: "Remaining unavailable" };
@@ -43,71 +33,6 @@ export function pad(text: string, width: number, right = false): string {
   const fitted = truncateToWidth(text, Math.max(0, width), "…");
   const space = " ".repeat(Math.max(0, width - visibleWidth(fitted)));
   return right ? space + fitted : fitted + space;
-}
-export function split(left: string, right: string, width: number): string {
-  const gap = width - visibleWidth(left) - visibleWidth(right);
-  return gap >= 3 ? left + " ".repeat(gap) + right : truncateToWidth(left, width);
-}
-export interface TableRow {
-  label: string;
-  tokens: string;
-  estimate: string;
-  accounts?: string;
-}
-/** Fixed numeric columns stay aligned; optional columns disappear before names become unreadable. */
-export function table(
-  rows: TableRow[],
-  heading: string,
-  width: number,
-  room: number,
-  theme: Theme,
-  selected?: number,
-  offset = 0,
-): string[] {
-  if (room < 2) return [];
-  const showCost = width >= 44;
-  const showAccounts = width >= 64 && rows.some((r) => r.accounts !== undefined);
-  const columns = [
-    { key: "tokens" as const, label: "Tokens", width: 9 },
-    ...(showCost ? [{ key: "estimate" as const, label: "Price eq.", width: 10 }] : []),
-    ...(showAccounts ? [{ key: "accounts" as const, label: "Accounts", width: 8 }] : []),
-  ];
-  // Account counts precede usage columns, close to the provider they qualify.
-  if (showAccounts) columns.unshift(columns.pop()!);
-  const labelWidth = Math.max(1, width - 2 - columns.reduce((n, c) => n + c.width + 2, 0));
-  const line = (label: string, cells: (string | undefined)[], prefix = "  ") =>
-    prefix +
-    pad(label, labelWidth) +
-    columns.map((c, i) => "  " + pad(cells[i] ?? "—", c.width, true)).join("");
-  const showScroll = room >= 3 && rows.length > room - 1;
-  const capacity = Math.max(1, room - 1 - Number(showScroll));
-  const start =
-    selected === undefined
-      ? Math.min(offset, Math.max(0, rows.length - capacity))
-      : Math.max(0, Math.min(selected - Math.floor(capacity / 2), rows.length - capacity));
-  const result = [
-    theme.fg(
-      "dim",
-      line(
-        heading,
-        columns.map((c) => c.label),
-      ),
-    ),
-  ];
-  for (let i = start; i < Math.min(rows.length, start + capacity); i++) {
-    const row = rows[i]!;
-    const text = line(
-      row.label,
-      columns.map((c) => row[c.key]),
-      selected === i ? "› " : "  ",
-    );
-    result.push(theme.fg(selected === i ? "accent" : "text", text));
-  }
-  if (showScroll)
-    result.push(
-      theme.fg("dim", `  ${start + 1}–${Math.min(rows.length, start + capacity)} / ${rows.length}`),
-    );
-  return result.map((s) => truncateToWidth(s, width));
 }
 /** Two useful units, not a full UTC timestamp on every row. */
 export function countdown(value?: number, now = Date.now()): string {

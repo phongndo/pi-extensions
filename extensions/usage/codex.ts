@@ -1,4 +1,4 @@
-import { safeLabel } from "./ledger.ts";
+import { safeLabel } from "./labels.ts";
 import { jsonResponse } from "./http.ts";
 
 export interface CodexAccount {

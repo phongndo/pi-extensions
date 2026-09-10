@@ -37,9 +37,9 @@ test("native loading UI returns results and propagates failures", async () => {
   expect(h.closes()).toBe(1);
   await expect(
     loadWithUsageUI(h.ctx, lifetime.signal, async () => {
-      throw new Error("history failed");
+      throw new Error("allowances failed");
     }),
-  ).rejects.toThrow("history failed");
+  ).rejects.toThrow("allowances failed");
   expect(h.closes()).toBe(2);
   h.component().dispose?.();
 });

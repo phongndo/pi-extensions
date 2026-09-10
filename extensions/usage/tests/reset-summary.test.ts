@@ -101,13 +101,10 @@ test("screenshot-sized three-provider dashboard fits in twenty lines without ver
     ];
     const view = new UsageDashboard(
       [],
-      [],
-      "session",
       theme,
       new KeybindingsManager(TUI_KEYBINDINGS),
       () => {},
       () => 80,
-      "7d",
       { snapshots },
     );
     const rows = view.render(100);

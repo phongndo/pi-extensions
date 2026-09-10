@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { setFooterStatus } from "../../src/footer-status.ts";
 import type { AllowanceSnapshot } from "./allowances.ts";
-import { safeLabel } from "./ledger.ts";
+import { safeLabel } from "./labels.ts";
 import { allowanceLabel } from "./presentation.ts";
 
 export function formatUsageFooter(snapshot: AllowanceSnapshot, now = Date.now()): string {

@@ -2,44 +2,17 @@ import { expect, spyOn, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { estimate, liveRows, providerName, remainingUsage, table } from "../presentation.ts";
+import { liveRows, providerName, remainingUsage } from "../presentation.ts";
 import { codexLines } from "../dashboard.ts";
 const theme = {
   fg: (_color: string, text: string) => `\u001b[36m${text}\u001b[0m`,
   bold: (text: string) => text,
 } as Theme;
-test("aligned usage columns, friendly provider labels, compact but honest currency", () => {
+test("friendly provider labels", () => {
   expect(providerName("openai-codex")).toBe("OpenAI Codex");
   expect(providerName("xai")).toBe("Grok");
   expect(providerName("custom-id", new Map([["custom-id", "My server"]]))).toBe("My server");
   expect(providerName("other-provider")).toBe("other-provider");
-  expect([0, 0.000001, 0.0123, 12.34].map(estimate)).toEqual(["$0", "<$0.01", "$0.01", "$12.34"]);
-  const rows = [
-    { label: "OpenAI Codex", accounts: "2", tokens: "12K", estimate: "$0" },
-    { label: "xAI", accounts: "1", tokens: "8K", estimate: "$0.25" },
-  ];
-  const rendered = table(rows, "Providers", 80, 5, theme, 0).map(stripVTControlCharacters);
-  expect(rendered[1]).toStartWith("› OpenAI Codex");
-  expect(rendered[1]!.indexOf("12K") + 3).toBe(rendered[2]!.indexOf("8K") + 2);
-  expect(rendered[1]!.endsWith("$0")).toBe(true);
-  expect(rendered[2]!.endsWith("$0.25")).toBe(true);
-});
-test("tables preserve selected rows, respect height, and shed optional columns at small widths", () => {
-  const rows = Array.from({ length: 25 }, (_, i) => ({
-    label: `Row ${i} 測試`,
-    tokens: "1K",
-    estimate: "$0.25",
-    accounts: "2",
-  }));
-  for (const width of [1, 20, 40, 80, 120])
-    for (const room of [0, 1, 2, 3, 5, 10]) {
-      const lines = table(rows, "Providers", width, room, theme, 24);
-      expect(lines.length).toBeLessThanOrEqual(room);
-      expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
-      if (width >= 20 && room >= 2) expect(lines.join("\n")).toContain("Row 24");
-    }
-  expect(table(rows, "Providers", 40, 5, theme).join("\n")).not.toContain("Price eq.");
-  expect(table(rows, "Providers", 60, 5, theme).join("\n")).not.toContain("Accounts");
 });
 test("remaining allowance stays bounded, distinguishes unavailable, and agrees between TUI and RPC", () => {
   expect(remainingUsage(0)).toEqual({ percent: 100, label: "100% remaining" });

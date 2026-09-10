@@ -52,7 +52,7 @@ Accounts share their source provider's models and endpoint configuration. Config
 - A short-lived `router-login.lock` serializes final duplicate checks and account-slot allocation across processes. Native authentication happens **before** this lock; browser and secret prompts never hold it. Pi's native credential store still owns locked persistence.
 - Earlier `accounts.json` entries are read for compatibility only; their names remain usable if their native credentials still exist. Removed credentials cannot be recreated by ranking metadata. Existing API/non-subscription slots and metadata are not deleted; old extra slots remain registered without models so native `/logout` can remove them, but Router excludes them from routing and its UI.
 
-Paths respect Pi's agent-directory configuration. Aliases appear in Router, native `/logout`, and Usage when both extensions are loaded. They are local labels, not provider-side account names. Router does not collect usage history, prompts, or billing information. It emits non-secret account metadata and per-attempt token/cost counters for the optional Usage extension.
+Paths respect Pi's agent-directory configuration. Aliases appear in Router, native `/logout`, and Usage when both extensions are loaded. They are local labels, not provider-side account names. Router does not collect usage history, prompts, or billing information. It emits non-secret account metadata for the optional Usage extension and per-attempt token/cost counters on the event bus.
 
 ## Test from a worktree
 
