@@ -1,10 +1,10 @@
 # Subscription allowance contracts and sources
 
-Initial scope: **OpenAI Codex, Grok, and Firecrawl**, with a provider-independent allowance interface for future integrations. Research and implementation use no live authenticated provider calls.
+Implemented scope: **OpenAI Codex, Grok, OpenCode Go, and Firecrawl**, with a provider-independent allowance interface for future integrations. Research and implementation use no live authenticated provider calls.
 
 ## Eligibility is separate from live support
 
-Router and Usage include native OAuth logins only when the provider marks the method `isSubscription: true`. API keys, including key-based coding plans, and non-subscription OAuth are excluded. Firecrawl credits are Usage's explicit tool-provider exception, never a Router account.
+Router and Usage include native OAuth logins only when the provider marks the method `isSubscription: true`. Usage additionally includes OpenCode Go API keys as a key-based subscription exception; Router eligibility is unchanged. Other API keys and non-subscription OAuth are excluded. Firecrawl credits are Usage's explicit tool-provider exception, never a Router account.
 
 An isolated Pi 0.85.1 `ModelRuntime` with an empty in-memory credential store reports subscription methods for `anthropic`, `github-copilot`, `kimi-coding`, `openai-codex`, and `xai`. OpenRouter and Radius OAuth methods are not marked subscriptions. This is an inventory observation, not a hardcoded eligibility list. See installed `@earendil-works/pi-ai/dist/providers/` definitions and `src/account-identity.ts` for the shared predicate.
 
@@ -15,6 +15,12 @@ The flat UI shows native subscription accounts even when no allowance adapter ex
 Existing reader implements all returned usage windows and every banked reset, retaining each reset's status and own expiration. Normal remaining percentage is `max(0, 100 − used_percent)`. Credits are separate from banked resets.
 
 See [CODEX-SOURCES.md](CODEX-SOURCES.md) for pinned first-party OpenAI endpoint/schema evidence. All status requests are passive GETs. Redemption is a separate mutation and is never called.
+
+## OpenCode Go — implemented
+
+[First-party usage route](https://github.com/anomalyco/opencode/blob/193de13a88d62a6409c6d385831180f1def527dc/packages/console/app/src/routes/zen/go/v1/usage.ts) establishes `GET https://opencode.ai/zen/go/v1/usage` with `Authorization: Bearer <API key>`. JSON `usage.rolling`, `usage.weekly`, and `usage.monthly` each contain used `percent`, ISO `resetsAt`, and `status`. Missing/invalid keys return 401; no Go entitlement returns 403. [Go docs](https://opencode.ai/docs/go/) describe the five-hour, weekly, and monthly limits.
+
+Display `max(0, 100 - percent)` per window; missing percentages remain unknown. No hardcoded dollar budget, request count, or balance inferred from rate-limit status. Pi's native `opencode-go` key resolution uses stored credentials before `OPENCODE_API_KEY`. Zen (`opencode`) credentials are not silently reused. No cookies, extra login, paid inference, or subscription changes. Tests use fake responses and in-memory credentials, not live authenticated verification.
 
 ## Firecrawl — implemented
 

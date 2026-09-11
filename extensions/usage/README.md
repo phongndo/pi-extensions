@@ -9,22 +9,23 @@ An independently loadable Pi-native dashboard for **remaining subscription allow
 
 ## Scope and live support
 
-Only native **OAuth logins whose Pi provider marks `isSubscription: true`** are included. API keys—including key-based coding plans—and non-subscription OAuth are excluded. **Firecrawl team credits are the explicit tool-provider exception**, not a model subscription or Router account.
+Native **OAuth logins whose Pi provider marks `isSubscription: true`** are included. **OpenCode Go is the explicit key-based subscription exception**, using `/login opencode-go` or `OPENCODE_API_KEY` (stored key first). Other API keys and non-subscription OAuth are excluded. **Firecrawl team credits are the explicit tool-provider exception**, not a model subscription or Router account.
 
 | Provider                      | Remaining status                                                                                                                                   |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | OpenAI Codex                  | Remaining percentage for every returned usage window, reset times, extra credit balance, and every returned banked reset with its own expiration   |
 | Grok (`xai`)                  | Reported credit-pool percentage and reset via the same bearer billing GET used by CodexBar; uses Pi's Grok login. Missing percentages stay unknown |
+| OpenCode Go (`opencode-go`)   | Remaining percentages and reset times for 5-hour, weekly, and monthly windows; `/usage opencode-go`                                                |
 | Firecrawl                     | Exact remaining team credits and billing-period end, using `/login firecrawl` or `FIRECRAWL_API_KEY`; a stored key takes precedence                |
 | Other/future Pi subscriptions | Discovered automatically; shown as unsupported until a verified allowance adapter is added                                                         |
 
 Grok reads the shared credit pool, not product/Voice quotas. This implements CodexBar's JSON billing path, not its browser/CLI/gRPC fallbacks; some plans omit a percentage. No live authenticated success for your account is claimed by the fake-response tests.
 
-Eligibility follows **Pi metadata**, not a fixed provider allowlist. `allowances.ts` holds the adapter registry and provider-independent snapshot interface. Adding an adapter does not require changing the UI or account discovery. No additional integrations for Claude, Copilot, or Kimi are implemented yet. See [provider contracts and research](PROVIDER-SOURCES.md).
+OAuth eligibility follows **Pi metadata**, with explicit Usage-only exceptions for Go and Firecrawl. `allowances.ts` holds the adapter registry and provider-independent snapshot interface. Adding an adapter does not require changing the UI or account discovery. No additional integrations for Claude, Copilot, or Kimi are implemented yet. See [provider contracts and research](PROVIDER-SOURCES.md).
 
 ## Native footer
 
-Pi's native status slot shows the active subscription account's remaining windows beside the MCP/Router labels, for example `remaining 41%` for one regular limit, or `remaining 5h 72% · remaining weekly 45%` when both exist. Spark windows are omitted from the footer but remain in `/usage`. Router supplies the actual selected account, including fallbacks; without Router, Usage follows the current native OAuth model. API-key models have no usage status. Unknown or unsupported limits stay explicit.
+Pi's native status slot shows the active subscription account's remaining windows beside the MCP/Router labels, for example `remaining 41%` for one regular limit, or `remaining 5h 72% · remaining weekly 45%` when both exist. Spark windows are omitted from the footer but remain in `/usage`. Router supplies the actual selected account, including fallbacks; without Router, Usage follows the current native OAuth model. OpenCode Go also shows remaining usage when it is the active native model. Other API-key models have no usage status. Unknown or unsupported limits stay explicit.
 
 Reads run in the background at startup, on model/account changes, and after an agent response. Input refreshes a snapshot older than one minute; repeated unchanged Router metadata events do not poll quotas. Opening `/usage` also updates the footer. Only the active account is queried for the footer, not other providers or Firecrawl. Switching accounts and shutdown abort pending reads; late responses cannot overwrite the new account. `PI_OFFLINE=1` disables live retrieval and hides the footer status. Full reset details and other accounts remain in `/usage`.
 

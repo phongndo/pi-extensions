@@ -34,8 +34,9 @@ export function createUsageExtension(options: LiveUsageOptions & { live?: boolea
           ? routedAccount.id
           : undefined
         : model &&
-            isSubscriptionProvider(ctx.modelRegistry.getProvider(model.provider)) &&
-            ctx.modelRegistry.isUsingOAuth(model)
+            (model.provider === "opencode-go" ||
+              (isSubscriptionProvider(ctx.modelRegistry.getProvider(model.provider)) &&
+                ctx.modelRegistry.isUsingOAuth(model)))
           ? `native:${model.provider}`
           : undefined;
       footer.update(ctx, accountId, force);

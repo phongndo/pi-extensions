@@ -27,7 +27,7 @@ export interface LiveUsageOptions {
 }
 type LiveAccount =
   | SubscriptionAccount
-  | (NativeAccount & { provider: "firecrawl"; type: "api_key" });
+  | (NativeAccount & { provider: "firecrawl" | "opencode-go"; type: "api_key" });
 
 /** Read-only allowance access; native credential refresh locking remains Pi-owned. */
 export async function loadLiveUsage(
@@ -55,7 +55,25 @@ export async function loadLiveUsage(
     [...providers.values()],
     credentials,
     options.legacy,
-  ).filter((a) => isSubscriptionAccount(a, providers.get(a.provider)));
+  ).filter(
+    (a): a is LiveAccount =>
+      isSubscriptionAccount(a, providers.get(a.provider)) ||
+      (a.provider === "opencode-go" && a.type === "api_key"),
+  );
+  // Go is an explicit key-based subscription exception, local to Usage (not Router).
+  if (
+    providers.has("opencode-go") &&
+    process.env.OPENCODE_API_KEY?.trim() &&
+    !accounts.some((a) => a.credentialId === "opencode-go")
+  ) {
+    accounts.push({
+      id: "native:opencode-go",
+      name: "Account 1",
+      provider: "opencode-go",
+      credentialId: "opencode-go",
+      type: "api_key",
+    });
+  }
   // Explicit tool-credit exception. Reuse the registered Web provider when present;
   // standalone mode uses the same native key/env contract without loading Web's tools.
   // It has no models, so it is deliberately outside subscription/model account discovery.
@@ -97,7 +115,8 @@ export async function loadLiveUsage(
         const account = pending.shift()!;
         const base = providers.get(account.provider)!;
         runtime.registerNativeProvider(
-          account.provider === "firecrawl"
+          account.provider === "firecrawl" ||
+            (account.provider === "opencode-go" && account.credentialId === "opencode-go")
             ? base
             : accountLoginProvider(base, account.credentialId, account.name),
         );

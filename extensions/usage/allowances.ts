@@ -100,12 +100,47 @@ export function parseGrokUsage(value: unknown): Allowance[] {
     },
   ];
 }
+/** Go reports used percentages, not dollar balances or request counts. */
+export function parseOpenCodeGoUsage(value: unknown): Allowance[] {
+  const usage = object(object(value).usage);
+  const windows = [
+    ["rolling", "5h"],
+    ["weekly", "Weekly"],
+    ["monthly", "Monthly"],
+  ] as const;
+  if (!windows.some(([key]) => key in usage)) throw new Error("Unknown Go usage response");
+  return windows.map(([key, label]) => {
+    const window = object(usage[key]);
+    const used = number(window.percent);
+    return {
+      label,
+      remainingPercent: used === undefined ? undefined : Math.max(0, 100 - used),
+      resetsAt: date(window.resetsAt),
+    };
+  });
+}
 export const allowanceAdapters: ReadonlyMap<string, AllowanceAdapter> = new Map([
   [
     "openai-codex",
     {
       read: async (account, token, signal, fetcher) =>
         fromCodex(await readCodexSnapshot(account, token, signal, fetcher)),
+    },
+  ],
+  [
+    "opencode-go",
+    {
+      read: async (account, resolveToken, signal, fetcher) => {
+        const token = await resolveToken();
+        if (!token) throw new Error("Missing auth");
+        return {
+          account,
+          checkedAt: Date.now(),
+          allowances: parseOpenCodeGoUsage(
+            await getStatus("https://opencode.ai/zen/go/v1/usage", token, signal, fetcher),
+          ),
+        };
+      },
     },
   ],
   [
