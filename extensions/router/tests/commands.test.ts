@@ -154,7 +154,7 @@ test("native login/logout own accounts; /router only ranks multi-account provide
     // The same public login/logout operations used by Pi's built-in slash commands.
     await runtime.login("test", "oauth", interaction);
     await handlers.get("input")!({} as never, context);
-    expect(context.model?.provider).toBe(poolId("test"));
+    expect(context.model?.provider).toBe("test");
     expect(statuses.get("router")).toBe("route Personal");
     expect(runtime.getProvider(loginId("test", 3))).toBeUndefined();
     expect(runtime.getProvider(loginId("test", 2))?.name).toContain("Account 2");

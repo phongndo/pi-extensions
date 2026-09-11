@@ -8,8 +8,8 @@ import {
   type Api,
 } from "@earendil-works/pi-ai";
 import { AccountRouter } from "../router.ts";
-import { poolId, type Account } from "../store.ts";
-import { accountLoginProvider } from "../../../src/account-identity.ts";
+import { type Account } from "../store.ts";
+import { accountRouteProvider } from "../../../src/account-identity.ts";
 
 test("real Pi ModelRuntime routes subscription auth without touching or borrowing the original API login", async () => {
   const credentials = new InMemoryCredentialStore();
@@ -112,19 +112,20 @@ test("real Pi ModelRuntime routes subscription auth without touching or borrowin
     accountRuntime,
     (id) => credentials.read(id),
     async () => accounts,
-    (id) => runtime.getProvider(id),
+    () => base,
   );
-  const login = accountLoginProvider(base, accounts[0]!.credentialId, accounts[0]!.name);
-  expect(login.getModels()).toEqual([]);
-  expect(login.auth.apiKey?.login).toBeDefined();
-  runtime.registerNativeProvider(login);
+  const slot = accountRouteProvider(base, accounts[0]!.credentialId, accounts[0]!.name);
+  expect(slot.getModels()).toEqual([]);
+  // OAuth-only: the route slot must never borrow the native API-key login.
+  expect(slot.auth.apiKey).toBeUndefined();
+  accountRuntime.registerNativeProvider(slot);
   runtime.registerNativeProvider(router.provider(base.id)!);
-  const pooled = runtime.getModel(poolId(base.id), model.id)!;
+  const pooled = runtime.getModel(base.id, model.id)!;
   expect(pooled).toBeDefined();
   const result = await runtime.completeSimple(pooled, { messages: [] });
   expect(result.stopReason).toBe("stop");
   expect(calls).toEqual(["separate"]);
   expect(((await credentials.read(base.id)) as { key: string }).key).toBe("original");
-  expect(result.provider).toBe(poolId(base.id));
+  expect(result.provider).toBe(base.id);
   router.close();
 });

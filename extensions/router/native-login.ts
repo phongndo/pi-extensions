@@ -76,6 +76,13 @@ function patchUI() {
     if (!owner) return options;
     return options
       .filter((option) => !hidden(option.id))
+      .filter((option) => {
+        if (type !== "api_key") return true;
+        // The transparent route keeps a non-interactive API-key check so Pi accepts a
+        // request when only pooled slots remain. It must never appear as a sign-in row.
+        const provider = this.session.modelRuntime.getProvider(option.id);
+        return !(isSubscriptionProvider(provider) && !provider.auth.apiKey?.login);
+      })
       .map((option) => {
         if (
           type === "api_key" ||

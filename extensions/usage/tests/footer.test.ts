@@ -210,7 +210,13 @@ test("extension follows routed defaults/fallbacks and native models through nati
     hooks.get("agent_end")!({}, ctx);
     await settle();
     expect(loaded).toEqual(["a", "b", "b"]);
+    // Transparent routing keeps the base provider id; the active routed account still wins.
     model.provider = "xai";
+    hooks.get("model_select")!({}, ctx);
+    await settle();
+    expect(loaded.at(-1)).toBe("b");
+    // With no active route, fall back to native OAuth detection under the same id.
+    events.emit("router:active-account", undefined);
     hooks.get("model_select")!({}, ctx);
     await settle();
     expect(loaded.at(-1)).toBe("native:xai");

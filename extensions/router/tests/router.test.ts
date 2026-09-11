@@ -13,7 +13,10 @@ import {
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { AccountRouter, limitReason, retryAt, type AttemptUsage } from "../router.ts";
-import { poolId, type Account } from "../store.ts";
+import {
+  accountRouteProvider,
+  type NativeAccount as Account,
+} from "../../../src/account-identity.ts";
 
 const model: Model<Api> = {
   id: "test-model",
@@ -124,6 +127,9 @@ function fixture(
     },
   };
   const client = createModels({ credentials });
+  // The extension registers one model-less route slot per pooled credential; mirror that here.
+  for (const account of accounts)
+    client.setProvider(accountRouteProvider(base, account.credentialId, account.name));
   const router = new AccountRouter(
     {
       registerNativeProvider: (p) => client.setProvider(p),
@@ -148,9 +154,7 @@ function fixture(
   );
   const run = async (options?: SimpleStreamOptions) => {
     await ready;
-    return router
-      .stream({ ...model, provider: poolId("test") }, { messages: [] }, options)
-      .result();
+    return router.stream({ ...model, provider: "test" }, { messages: [] }, options).result();
   };
   return { router, accounts, credentials, calls, attempts, run, ready, base, model };
 }
@@ -192,6 +196,21 @@ describe("routing contract", () => {
     expect(f.router.provider("test")).toBeUndefined();
     expect((await f.run()).stopReason).toBe("error");
     expect(f.calls).toHaveLength(0);
+  });
+  test("a route keeps the source provider id and stays configured when only slots remain", async () => {
+    const f = fixture();
+    await f.ready;
+    const route = f.router.provider("test")!;
+    expect(route.id).toBe("test");
+    expect(route.name).toBe("Test");
+    expect(route.getModels().map((m) => m.provider)).toEqual(["test"]);
+    const ctx = { env: async () => undefined, fileExists: async () => false };
+    const signal = new AbortController().signal;
+    // Pi gates the request on auth, so the route must read as configured even with no
+    // stored login under its own id (the original was removed, only slots remain).
+    expect(await route.auth.apiKey?.resolve({ ctx, signal })).toEqual({ auth: {} });
+    f.accounts.length = 0;
+    expect(await route.auth.apiKey?.resolve({ ctx, signal })).toBeUndefined();
   });
   test("a credential replaced after selection cannot resolve through the API-key auth method", async () => {
     const f = fixture();
@@ -307,7 +326,7 @@ describe("routing contract", () => {
     expect(f.calls[0]?.options?.reasoning).toBe("high");
     expect(f.calls[0]?.options?.headers?.["x-test"]).toBe("yes");
     expect(f.calls[0]?.options?.sessionId).toBe("session:b");
-    expect(result.provider).toBe(poolId("test"));
+    expect(result.provider).toBe("test");
   });
   test("OAuth refresh persists under native credential orchestration and preserves account endpoint", async () => {
     const f = fixture();
@@ -338,10 +357,7 @@ describe("routing contract", () => {
     const f = fixture({ a: "429" });
     await f.ready;
     const events = [];
-    for await (const event of f.router.stream(
-      { ...model, provider: poolId("test") },
-      { messages: [] },
-    ))
+    for await (const event of f.router.stream({ ...model, provider: "test" }, { messages: [] }))
       events.push(event.type);
     expect(events).toEqual(["start", "done"]);
   });
@@ -408,11 +424,18 @@ describe("routing contract", () => {
       "FreeUsageLimitError",
       "Monthly usage limit reached",
       "out of budget",
+      // Real pi-ai Codex strings: a stream error event has no HTTP status to lean on.
+      "Codex error: The usage limit has been reached",
+      "You have hit your ChatGPT usage limit (pro plan). Try again in ~990 min.",
+      "usage_limit_reached",
     ])
       expect(limitReason(undefined, message)).toBe("quota");
     expect(limitReason(undefined, "ResourceExhausted")).toBe("rate limit");
     expect(limitReason(401, "rate limit")).toBeUndefined();
     expect(limitReason(403, "quota exceeded")).toBeUndefined();
+    // A limit that was explicitly *not* reached is not a terminal limit.
+    expect(limitReason(undefined, "usage limit not reached")).toBeUndefined();
+    expect(limitReason(undefined, "the usage limit was not reached")).toBeUndefined();
   });
   test("cooldown parsing handles dates, missing/invalid values and quota defaults", () => {
     expect(retryAt("120", 1000, "rate limit")).toBe(121000);

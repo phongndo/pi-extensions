@@ -87,7 +87,7 @@ export function createFastModeExtension(
 
     pi.on("session_start", async (_event, ctx) => {
       current?.close();
-      current = new FastModeSession(ctx, options);
+      current = new FastModeSession(ctx, options, pi.events);
       await current.start();
     });
     pi.on("model_select", async (_event, ctx) => {
@@ -118,9 +118,12 @@ class FastModeSession {
   private readonly options: FastModeExtensionOptions;
   private readonly capabilities: CodexCapabilities;
   private readonly journal: FastRequestJournal;
+  private readonly events: ExtensionAPI["events"];
   private readonly lifetime = new AbortController();
   private active = true;
   private removePolicy?: () => void;
+  private removeRouterEvents?: () => void;
+  private routedProviders = new Set<string>();
   private uiAuth?: CapabilityAuth;
   private discovery?: { controller: AbortController; promise: Promise<void> };
   private discoveryGeneration = 0;
@@ -128,10 +131,15 @@ class FastModeSession {
   private modelKey: string;
   private renderedStatus?: string;
 
-  constructor(ctx: ExtensionContext, options: FastModeExtensionOptions) {
+  constructor(
+    ctx: ExtensionContext,
+    options: FastModeExtensionOptions,
+    events: ExtensionAPI["events"],
+  ) {
     this.ctx = ctx;
     this.modelKey = this.keyForContext(ctx);
     this.options = options;
+    this.events = events;
     this.state = new FastStateMonitor(() => this.render(), options.statePath);
     this.capabilities = new CodexCapabilities(options.fetchCatalog);
     this.journal = new FastRequestJournal(() => this.render());
@@ -206,6 +214,27 @@ class FastModeSession {
       this.policyError = error instanceof Error ? error.message : String(error);
       this.ctx.ui.notify(this.policyError, "error");
     }
+    // The router owns "is this provider pooled?" — never re-derive it from account counts or id
+    // prefixes, since a provider with a single remaining slot still routes. Ask for the current
+    // answer and follow later changes so UI discovery never borrows one account's entitlement.
+    const offRoutes = this.events.on("router:routes", (value: unknown) => {
+      if (!this.active) return;
+      const next = new Set(
+        Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [],
+      );
+      const changed =
+        next.size !== this.routedProviders.size ||
+        [...next].some((id) => !this.routedProviders.has(id));
+      this.routedProviders = next;
+      if (!changed) return;
+      this.uiAuth = undefined;
+      this.discovery?.controller.abort();
+      this.discovery = undefined;
+      this.discoveryGeneration++;
+      void this.discover();
+    });
+    this.removeRouterEvents = offRoutes;
+    this.events.emit("router:request-accounts", {});
     await this.state.refresh().catch((error: unknown) => {
       if (this.active)
         this.ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -221,7 +250,7 @@ class FastModeSession {
     if (this.discovery && !force) return this.discovery.promise;
     const model = this.ctx.model;
     if (!isCodexModel(model)) return;
-    if (model.provider === "accounts-openai-codex") {
+    if (this.routedProviders.has(model.provider)) {
       // A route has no single account entitlement. Never borrow the original login for its UI.
       this.uiAuth = undefined;
       this.discoveryError =
@@ -282,6 +311,9 @@ class FastModeSession {
     this.discoveryGeneration++;
     this.state.close();
     this.removePolicy?.();
+    this.removePolicy = undefined;
+    this.removeRouterEvents?.();
+    this.removeRouterEvents = undefined;
     this.capabilities.clear();
     this.uiAuth = undefined;
     setFooterStatus(this.ctx, FAST_MODE_STATUS_KEY, undefined);

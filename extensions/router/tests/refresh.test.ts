@@ -11,7 +11,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { createRouterExtension } from "../index.ts";
-import { loginId, poolId } from "../../../src/account-identity.ts";
+import { loginId } from "../../../src/account-identity.ts";
 
 const oauth = (access: string) => ({
   type: "oauth" as const,
@@ -104,9 +104,21 @@ test("input following a login does not reuse a pre-login in-flight metadata snap
     const input = h.invoke("input");
     release.resolve();
     await input;
-    expect(h.ctx.model?.provider).toBe(poolId("openai-codex"));
+    expect(h.ctx.model?.provider).toBe("openai-codex");
   } finally {
     release.resolve();
+    await h.close();
+  }
+});
+
+test("a legacy accounts- route migrates back to the transparent provider id", async () => {
+  const h = await harness();
+  try {
+    await h.credentials.modify(loginId("openai-codex", 2), async () => oauth("two"));
+    h.ctx.model = { ...h.ctx.model!, provider: "accounts-openai-codex" };
+    await h.invoke("input");
+    expect(h.ctx.model?.provider).toBe("openai-codex");
+  } finally {
     await h.close();
   }
 });
@@ -125,13 +137,13 @@ test("bad rankings do not throw into every input/model event; warn once and reco
     await h.credentials.modify(loginId("openai-codex", 2), async () => oauth("two"));
     writeFileSync(h.path, JSON.stringify({ version: 1, order: {} }));
     await h.invoke("input");
-    expect(h.ctx.model?.provider).toBe(poolId("openai-codex"));
+    expect(h.ctx.model?.provider).toBe("openai-codex");
     writeFileSync(h.path, "{broken again");
     await h.invoke("input");
     expect(h.notices).toHaveLength(2);
-    expect(h.ctx.model?.provider).toBe(poolId("openai-codex"));
+    expect(h.ctx.model?.provider).toBe("openai-codex");
     const result = await h.runtime
-      .getProvider(poolId("openai-codex"))!
+      .getProvider("openai-codex")!
       .streamSimple(h.ctx.model!, { messages: [] })
       .result();
     expect(result.stopReason).toBe("error");

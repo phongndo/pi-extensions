@@ -16,7 +16,6 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
-  accountLoginProvider,
   poolId,
   sourceProvider,
   isSubscriptionProvider,
@@ -90,7 +89,7 @@ export function limitReason(
 ): AccountHealth["reason"] | undefined {
   if (status === 401 || status === 403) return undefined;
   if (
-    /insufficient_quota|quota[_ ]exceeded|usage[_ ]limit[_ ]reached|GoUsageLimitError|FreeUsageLimitError|out of budget|credit balance is too low|exceeded your current quota/i.test(
+    /insufficient_quota|quota[_ ]exceeded|usage[_ ]limit(?:[_ ](?:has|have|had|was|were|is|are|been))*[_ ]*reached|GoUsageLimitError|FreeUsageLimitError|out of budget|credit balance is too low|available balance|exceeded your current quota|chatgpt usage limit/i.test(
       message,
     )
   )
@@ -153,30 +152,48 @@ export class AccountRouter {
     }
     this.sessionIds.clear();
   }
+  /**
+   * The public route for a subscription provider: the source provider with its
+   * own id and models, but a stream that picks the eligible account per request.
+   * Pi keys auth and model endpoints by provider id, so keeping the id makes
+   * routing transparent. Sessions record the normal provider, resumes resolve it
+   * without the extension, and `/model` shows one row per provider.
+   *
+   * The fallback API-key check keeps the provider "configured" while Pi gates a
+   * request, even when the original native login was removed and only pooled
+   * slots remain. It carries no `login`, so it never offers an API-key sign-in.
+   */
   provider(providerId: string): Provider | undefined {
     const base = this.lookup(providerId);
     if (!base || !isSubscriptionProvider(base)) return undefined;
-    const id = poolId(providerId);
     const available = async () =>
       (await this.read()).some(
         (a) => a.provider === providerId && isSubscriptionAccount(a, this.lookup(providerId)),
       );
+    const apiKey = base.auth.apiKey;
     return {
-      id,
-      name: `${base.name} · Accounts`,
+      ...base,
+      id: providerId,
       auth: {
+        ...base.auth,
         apiKey: {
-          name: "Managed by /router",
-          check: async () => ((await available()) ? { type: "api_key" } : undefined),
-          resolve: async () => ((await available()) ? { auth: {} } : undefined),
+          ...(apiKey ?? { name: "Managed by /router" }),
+          name: apiKey?.name ?? "Managed by /router",
+          check: async (input) =>
+            input.credential && apiKey?.check
+              ? apiKey.check(input)
+              : (await available())
+                ? { type: "api_key" }
+                : undefined,
+          resolve: async (input) =>
+            input.credential && apiKey?.resolve
+              ? apiKey.resolve(input)
+              : (await available())
+                ? { auth: {} }
+                : undefined,
         },
       },
-      getModels: () =>
-        (this.lookup(providerId)?.getModels() ?? []).map((m) => ({
-          ...m,
-          provider: id,
-          headers: undefined,
-        })),
+      getModels: () => base.getModels(),
       stream: (model, context, options) => this.stream(model, context, options, false),
       streamSimple: (model, context, options) => this.stream(model, context, options, true),
     };
@@ -218,6 +235,8 @@ export class AccountRouter {
     const signal = options.signal!;
     signal.throwIfAborted();
     if (options.deferred) throw new Error("Deferred account routing is unsupported");
+    // Transparent routing: the public provider id is the source provider id. A legacy
+    // `accounts-<provider>` tombstone normalizes here too, so a pre-migration request still routes.
     const providerId = sourceProvider(model.provider);
     const snapshot = await this.read();
     const base = this.lookup(providerId);
@@ -241,27 +260,19 @@ export class AccountRouter {
       const source = base.getModels().find((m) => m.id === model.id && m.api === model.api);
       if (!source) continue;
       if (base.filterModels && !base.filterModels([source], credential).length) continue;
-      const alias = accountLoginProvider(base, account.credentialId, account.alias ?? account.name);
       const nativeModel = { ...model, provider: providerId, headers: source.headers };
       const nativeContext: Context = {
         ...context,
+        // Old transcripts may name the retired `accounts-<provider>` route; normalize it back.
         messages: context.messages.map((m) =>
           m.role === "assistant" && m.provider === poolId(providerId)
             ? { ...m, provider: providerId }
             : m,
         ),
       };
-      // Auth is resolved against the unique credential id, while transports retain their native provider identity.
-      this.runtime.registerNativeProvider({
-        ...alias,
-        // Native auth reads the store again. If a login changes after selection, fail closed
-        // instead of resolving an API key (or ambient auth) through a different method.
-        auth: { oauth: base.auth.oauth },
-        headers: base.headers,
-        getModels: () => [{ ...nativeModel, provider: account.credentialId }],
-        stream: (m, c, o) => base.stream({ ...m, provider: providerId }, c, o),
-        streamSimple: (m, c, o) => base.streamSimple({ ...m, provider: providerId }, c, o),
-      });
+      // The extension registered this account's slot (accountRouteProvider): OAuth-only
+      // auth keyed by the credential id, delegating to the original provider. So a login
+      // that changed to an API key after selection fails closed rather than borrowing auth.
       attempted = true;
       this.active.set(providerId, account.id);
       this.hooks.selected?.(account);

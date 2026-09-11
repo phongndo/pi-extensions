@@ -13,6 +13,7 @@ import {
   ModelRuntime,
   SettingsManager,
   SessionManager,
+  createEventBus,
   initTheme,
   type ExtensionAPI,
   type ExtensionContext,
@@ -67,6 +68,7 @@ async function harness(path: string, options: FastModeExtensionOptions = {}) {
     registerCommand: (_name: string, value: Command) => {
       command = value;
     },
+    events: createEventBus(),
   } as unknown as ExtensionAPI;
   createFastModeExtension({ statePath: path, discovery: false, pollMs: 25, ...options })(api);
   const emit = async (name: string) => {
@@ -75,6 +77,7 @@ async function harness(path: string, options: FastModeExtensionOptions = {}) {
   return {
     ctx,
     registry,
+    events: api.events,
     statuses,
     notifications,
     emit,
@@ -162,11 +165,16 @@ test("account-route UI reports local Fast capability without probing an arbitrar
       return catalog([]);
     },
   });
-  app.ctx.model = { ...model(), provider: "accounts-openai-codex" };
+  app.ctx.model = { ...model(), provider: "openai-codex" };
   app.registry.getApiKeyAndHeaders = async () => {
     authCalls++;
     return { ok: true, apiKey: token() };
   };
+  // The router answers the request with the pooled provider set; a synchronous reply here models
+  // the state being known before Fast mode's first discovery.
+  app.events.on("router:request-accounts", () => {
+    app.events.emit("router:routes", ["openai-codex"]);
+  });
   t.after(async () => {
     await app.emit("session_shutdown");
     await rm(root, { recursive: true, force: true });

@@ -9,6 +9,7 @@ import {
   type AssistantMessage,
 } from "@earendil-works/pi-ai";
 import { AccountRouter } from "../../router/router.ts";
+import { accountRouteProvider } from "../../../src/account-identity.ts";
 import { installFastModeProviderLookup } from "../runtime.ts";
 
 test("the subscription account route retains Codex Fast capability; unrelated providers do not", () => {
@@ -92,11 +93,12 @@ test("account routing preserves native Fast payload policy and account-specific 
     async () => [
       { id: credentialId, credentialId, provider: base.id, name: "Work", type: "oauth" },
     ],
-    (id) => registry.getProvider(id),
+    () => base,
   );
   try {
+    routerRuntime.registerNativeProvider(accountRouteProvider(base, credentialId, "Work"));
     runtime.registerNativeProvider(router.provider(base.id)!);
-    const route = registry.find("accounts-openai-codex", native.id)!;
+    const route = registry.find("openai-codex", native.id)!;
     expect(resolveFastCapability(route).status).toBe("supported");
     expect((await runtime.completeSimple(route, { messages: [] })).stopReason).toBe("stop");
     enabled = false;

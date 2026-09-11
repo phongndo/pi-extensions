@@ -44,6 +44,15 @@ test("session accounts survive disk reopen and compaction, stay provider-scoped,
     reopened.branch(first);
     expect([...sessionAccounts(reopened.getBranch())]).toEqual([["test", "b"]]);
     expect(sessionAccounts(SessionManager.inMemory().getBranch()).size).toBe(0);
+    // Legacy entries that named the retired `accounts-<provider>` route still apply.
+    const legacy = SessionManager.inMemory();
+    legacy.appendCustomEntry(SESSION_ACCOUNT_ENTRY, {
+      provider: "accounts-openai-codex",
+      accountId: "account--openai-codex--2",
+    });
+    expect([...sessionAccounts(legacy.getBranch())]).toEqual([
+      ["openai-codex", "account--openai-codex--2"],
+    ]);
     expect(
       reopened
         .buildSessionContext()

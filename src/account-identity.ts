@@ -109,3 +109,27 @@ export function accountLoginProvider(base: Provider, id: string, label: string):
     },
   };
 }
+
+/**
+ * A model-less native slot for one pooled subscription credential.
+ *
+ * It resolves OAuth only, so a login that changed to an API key after the
+ * router selected it fails closed instead of borrowing ambient auth. Streaming
+ * is delegated to the original source provider under that provider's identity;
+ * the slot exists only so Pi can resolve the credential by its own id and so
+ * `/logout` can address it. Never publishes models, so it stays out of `/model`.
+ */
+export function accountRouteProvider(base: Provider, id: string, label: string): Provider {
+  return {
+    ...base,
+    id,
+    name: `${base.name} · ${label}`,
+    getModels: () => [],
+    refreshModels: undefined,
+    auth: { oauth: base.auth.oauth },
+    stream: (model, context, options) =>
+      base.stream({ ...model, provider: base.id }, context, options),
+    streamSimple: (model, context, options) =>
+      base.streamSimple({ ...model, provider: base.id }, context, options),
+  };
+}

@@ -4,7 +4,7 @@ import { loadWithUsageUI, showDashboard } from "./dashboard.ts";
 import type { AccountInfo } from "./model.ts";
 import { loadLiveUsage, type LiveUsageOptions } from "./live.ts";
 import type { AllowanceSnapshot } from "./allowances.ts";
-import { isSubscriptionProvider } from "../../src/account-identity.ts";
+import { isSubscriptionProvider, sourceProvider } from "../../src/account-identity.ts";
 import { UsageFooter } from "./footer.ts";
 
 export function createUsageExtension(options: LiveUsageOptions & { live?: boolean } = {}) {
@@ -29,16 +29,18 @@ export function createUsageExtension(options: LiveUsageOptions & { live?: boolea
     const updateFooter = (ctx: ExtensionContext, force = false) => {
       context = ctx;
       const model = ctx.model;
-      const accountId = model?.provider.startsWith("accounts-")
-        ? routedAccount?.provider === model.provider.slice("accounts-".length)
+      const source = model && sourceProvider(model.provider);
+      const accountId = !model
+        ? undefined
+        : routedAccount && routedAccount.provider === source
           ? routedAccount.id
-          : undefined
-        : model &&
-            (model.provider === "opencode-go" ||
-              (isSubscriptionProvider(ctx.modelRegistry.getProvider(model.provider)) &&
-                ctx.modelRegistry.isUsingOAuth(model)))
-          ? `native:${model.provider}`
-          : undefined;
+          : model.provider.startsWith("accounts-")
+            ? undefined // Legacy route before the router reports: never guess an account.
+            : model.provider === "opencode-go" ||
+                (isSubscriptionProvider(ctx.modelRegistry.getProvider(model.provider)) &&
+                  ctx.modelRegistry.isUsingOAuth(model))
+              ? `native:${model.provider}`
+              : undefined;
       footer.update(ctx, accountId, force);
     };
     const offActive = pi.events.on("router:active-account", (value: unknown) => {

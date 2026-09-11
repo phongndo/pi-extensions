@@ -104,8 +104,12 @@ test("extension routes only subscriptions; old API slots stay removable and new 
   const hooks = new Map<string, (event: never, ctx: ExtensionContext) => unknown>();
   const events = createEventBus();
   let published: NativeAccount[] = [];
+  let routed: string[] = [];
   events.on("router:accounts", (value) => {
     published = value as NativeAccount[];
+  });
+  events.on("router:routes", (value) => {
+    routed = value as string[];
   });
   const ctx = {
     model: future.getModels()[0],
@@ -137,7 +141,9 @@ test("extension routes only subscriptions; old API slots stay removable and new 
     })(pi);
     await hooks.get("session_start")!({} as never, ctx);
     expect(published.map((a) => a.credentialId)).toEqual(["future", loginId("future", 3)]);
-    expect(ctx.model?.provider).toBe(poolId("future"));
+    // The router names which providers it pools, so consumers never re-derive the rule.
+    expect(routed).toEqual(["future"]);
+    expect(ctx.model?.provider).toBe("future");
     expect(runtime.getProvider(poolId("not-sub"))).toBeUndefined();
     expect(runtime.getProvider(loginId("future", 2))?.getModels()).toEqual([]);
     expect((await credentials.read(loginId("future", 2)))?.type).toBe("api_key");

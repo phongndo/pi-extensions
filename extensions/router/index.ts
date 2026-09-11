@@ -9,9 +9,9 @@ import {
 import type { CredentialStore, Provider } from "@earendil-works/pi-ai";
 import {
   accountLoginProvider,
+  accountRouteProvider,
   nativeAccounts,
   isSubscriptionAccount,
-  poolId,
   POOL_PREFIX,
   sourceProvider,
   type NativeAccount,
@@ -50,7 +50,14 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     let poll: ReturnType<typeof setInterval> | undefined;
     let syncing: Promise<void> | undefined;
     let removeNativeLogin: (() => void) | undefined;
-    const lookup = (id: string) => ctx?.modelRegistry.getProvider(id) ?? baseline.get(id);
+    const registered = new Map<string, { base: Provider; name: string }>();
+    // Providers registered on the extension-local runtime the router streams through. Pi's
+    // registry and that runtime are separate instances; a streamed id must exist on both.
+    const localSlots = new Map<string, { base: Provider; name: string }>();
+    // The registry may hold our own in-place override; always resolve the untouched
+    // provider for account discovery, wrapper construction, and stream delegation.
+    const original = (id: string) =>
+      registered.get(id)?.base ?? baseline.get(id) ?? ctx?.modelRegistry.getProvider(id);
     const sources = () =>
       [
         ...new Set([
@@ -60,7 +67,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
         ]),
       ]
         .filter((id) => !id.startsWith("account-") && !id.startsWith(POOL_PREFIX))
-        .map(lookup)
+        .map(original)
         .filter((p): p is Provider => !!p && p.getModels().length > 0);
     const readAccounts = async () => {
       const credentials = await runtime.listCredentials();
@@ -70,7 +77,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
         order,
         aliases,
       );
-      return savedAccounts.filter((a) => isSubscriptionAccount(a, lookup(a.provider)));
+      return savedAccounts.filter((a) => isSubscriptionAccount(a, original(a.provider)));
     };
     // Display-only and command-scoped: never publish emails or put them in ranking metadata.
     const readEmails = async (group: NativeAccount[]) => {
@@ -94,7 +101,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       runtime,
       async (id) => (options.credentials ? options.credentials.read(id) : readStoredCredential(id)),
       readAccounts,
-      lookup,
+      original,
       {
         preferred: (provider) => preferences.get(provider),
         selected: () => updateFooter(),
@@ -111,16 +118,12 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       if (!ctx || closed) return;
       const provider = ctx.model?.provider;
       const source = provider && sourceProvider(provider);
-      const group = accounts.filter((a) => a.provider === source);
-      const account = provider?.startsWith(POOL_PREFIX)
-        ? (group.find((a) => a.id === router.active.get(source!)) ??
-          group.find(
-            (a) =>
-              a.id === preferences.get(source!) &&
-              (router.health.get(a.id)?.until ?? 0) <= Date.now(),
-          ) ??
-          group.find((a) => (router.health.get(a.id)?.until ?? 0) <= Date.now()))
-        : group.find((a) => a.credentialId === provider);
+      const group = provider ? accounts.filter((a) => a.provider === source) : [];
+      const healthy = (a: NativeAccount) => (router.health.get(a.id)?.until ?? 0) <= Date.now();
+      const account =
+        group.find((a) => a.id === router.active.get(source!)) ??
+        group.find((a) => a.id === preferences.get(source!) && healthy(a)) ??
+        group.find(healthy);
       pi.events.emit(
         "router:active-account",
         account ? { id: account.id, provider: account.provider } : undefined,
@@ -131,38 +134,85 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
         account && group.length >= 2 ? `route ${account.alias ?? account.name}` : undefined,
       );
     }
-    const registered = new Map<string, { base: Provider; name: string }>();
-    const publish = () =>
+    // Provider ids currently routing through the pool. Consumers (e.g. Fast mode) must not
+    // re-derive this from account counts or id prefixes: a sole remaining slot still routes.
+    let routes: string[] = [];
+    const publish = () => {
       pi.events.emit(
         "router:accounts",
         accounts.map((a) => ({ ...a, name: a.alias ?? a.name, enabled: true })),
       );
+      pi.events.emit("router:routes", routes);
+    };
     async function synchronize() {
       accounts = await readAccounts();
       if (closed) return;
-      const desired = new Set<string>();
-      const add = (provider: Provider, base: Provider) => {
-        desired.add(provider.id);
+      const desiredApp = new Set<string>();
+      const desiredLocal = new Set<string>();
+      const routed: string[] = [];
+      const addApp = (provider: Provider, base: Provider) => {
+        desiredApp.add(provider.id);
         const previous = registered.get(provider.id);
         if (previous?.base === base && previous.name === provider.name) return;
         pi.registerProvider(provider);
         registered.set(provider.id, { base, name: provider.name });
       };
+      // The router streams each attempt through its own ModelRuntime (for per-account transport
+      // isolation), which Pi never sees. Anything it may stream must be registered there too, or
+      // prepareRequest throws `Unknown provider`.
+      const addLocal = (provider: Provider, base: Provider) => {
+        desiredLocal.add(provider.id);
+        const previous = localSlots.get(provider.id);
+        if (previous?.base === base && previous.name === provider.name) return;
+        runtime.registerNativeProvider(provider);
+        localSlots.set(provider.id, { base, name: provider.name });
+      };
       for (const base of sources()) {
-        // Retain old non-subscription slots for native /logout, but never route them.
-        for (const a of savedAccounts.filter((a) => a.provider === base.id))
-          if (a.credentialId !== base.id)
-            add(accountLoginProvider(base, a.credentialId, a.alias ?? a.name), base);
         const group = accounts.filter((a) => a.provider === base.id);
-        // Only extra native login entries need a routed model. Single ordinary logins stay untouched.
-        if (group.some((a) => a.credentialId !== base.id)) add(router.provider(base.id)!, base);
+        // One ordinary login stays native; any extra subscription login makes the provider route itself.
+        const routedHere = group.some((a) => a.credentialId !== base.id);
+        for (const a of savedAccounts.filter((a) => a.provider === base.id)) {
+          if (a.credentialId === base.id) continue;
+          // Subscription slots are route targets; other slots stay on Pi's registry only so
+          // native /logout can remove them and are never streamed.
+          if (isSubscriptionAccount(a, base)) {
+            const slot = accountRouteProvider(base, a.credentialId, a.alias ?? a.name);
+            addApp(slot, base);
+            addLocal(slot, base);
+          } else {
+            addApp(accountLoginProvider(base, a.credentialId, a.alias ?? a.name), base);
+          }
+        }
+        if (routedHere) {
+          // Pi's public route: the source provider with a stream that picks the account.
+          addApp(router.provider(base.id)!, base);
+          // The router streams the native login from its own runtime too. Use an OAuth-only slot
+          // delegating to the pristine provider, never the public route, which would recurse.
+          addLocal(accountRouteProvider(base, base.id, base.name), base);
+          routed.push(base.id);
+        }
       }
-      // Keep a selected route as a fail-closed tombstone if its last login was removed mid-session.
-      if (ctx?.model?.provider.startsWith(POOL_PREFIX)) desired.add(ctx.model.provider);
+      // Resume tombstone: keep a previously selected legacy `accounts-<provider>` route resolvable
+      // until the session migrates to the transparent base id (see migrateLegacyRoute).
+      const legacy = ctx?.model?.provider;
+      if (legacy?.startsWith(POOL_PREFIX)) {
+        const base = original(sourceProvider(legacy));
+        const wrapped = base && router.provider(base.id);
+        if (base && wrapped) {
+          addApp({ ...wrapped, id: legacy, name: `${base.name} · Accounts` }, base);
+          routed.push(legacy);
+        }
+      }
+      routes = routed;
       for (const id of registered.keys())
-        if (!desired.has(id)) {
+        if (!desiredApp.has(id)) {
           pi.unregisterProvider(id);
           registered.delete(id);
+        }
+      for (const id of localSlots.keys())
+        if (!desiredLocal.has(id)) {
+          runtime.unregisterProvider(id);
+          localSlots.delete(id);
         }
       publish();
       updateFooter();
@@ -185,7 +235,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     async function refreshForInput(context: ExtensionContext) {
       try {
         await refresh();
-        await selectRoute(context);
+        await migrateLegacyRoute(context);
         refreshFailed = false;
       } catch {
         // Leave selected routes fail-closed; their request-time read still rejects bad metadata.
@@ -198,13 +248,11 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
         refreshFailed = true;
       }
     }
-    async function selectRoute(context: ExtensionContext) {
+    async function migrateLegacyRoute(context: ExtensionContext) {
       if (closed || selecting || !context.model) return;
-      const original = sourceProvider(context.model.provider);
-      const group = accounts.filter((a) => a.provider === original);
-      const id = group.some((a) => a.credentialId !== original) ? poolId(original) : original;
-      if (id === context.model.provider) return;
-      const model = context.modelRegistry.find(id, context.model.id);
+      const current = context.model.provider;
+      if (!current.startsWith(POOL_PREFIX)) return;
+      const model = context.modelRegistry.find(sourceProvider(current), context.model.id);
       if (!model) return;
       selecting = true;
       try {
@@ -240,16 +288,16 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
               store.save({}, {}, { [removed.id]: undefined }, aliases);
           }
           await refresh();
-          if (ctx && !closed) await selectRoute(ctx);
+          if (ctx && !closed) await migrateLegacyRoute(ctx);
         },
       });
-      await selectRoute(context);
+      await migrateLegacyRoute(context);
       if (!closed && !poll) {
         // Pi exposes no login/logout event. Observe credential metadata only; never refresh OAuth here.
         poll = setInterval(() => {
           if (!ctx?.isIdle() || closed || syncing) return;
           void refresh()
-            .then(() => (ctx && ctx.isIdle() ? selectRoute(ctx) : undefined))
+            .then(() => (ctx && ctx.isIdle() ? migrateLegacyRoute(ctx) : undefined))
             .catch(() => {});
         }, options.pollMs ?? 1000);
         poll.unref?.();
@@ -340,7 +388,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
             else preferences.delete(provider);
             router.active.delete(provider);
             await refresh();
-            await selectRoute(context);
+            await migrateLegacyRoute(context);
             context.ui.notify(
               account
                 ? "Session account saved; usage-limit fallback remains enabled."
