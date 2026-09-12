@@ -5,6 +5,7 @@ import {
   InMemoryCredentialStore,
   isRetryableAssistantError,
   isContextOverflow,
+  retryAssistantCall,
   registerSessionResourceCleanup,
   type AssistantMessage,
   type Model,
@@ -130,16 +131,24 @@ function fixture(
   // The extension registers one model-less route slot per pooled credential; mirror that here.
   for (const account of accounts)
     client.setProvider(accountRouteProvider(base, account.credentialId, account.name));
-  const router = new AccountRouter(
-    {
-      registerNativeProvider: (p) => client.setProvider(p),
-      stream: client.stream.bind(client),
-      streamSimple: client.streamSimple.bind(client),
+  const runtime = {
+    registerNativeProvider: (p: Provider) => client.setProvider(p),
+    stream: client.stream.bind(client),
+    streamSimple: client.streamSimple.bind(client),
+  };
+  const hooks = {
+    attempt: (a: AttemptUsage) => {
+      attempts.push(a);
     },
+    preferred,
+    selected: (_account: Account) => {},
+  };
+  const router = new AccountRouter(
+    runtime,
     (id) => credentials.read(id),
     async () => accounts,
     () => base,
-    { attempt: (a) => attempts.push(a), preferred },
+    hooks,
     () => 1000,
   );
   const ready = Promise.all(
@@ -156,10 +165,365 @@ function fixture(
     await ready;
     return router.stream({ ...model, provider: "test" }, { messages: [] }, options).result();
   };
-  return { router, accounts, credentials, calls, attempts, run, ready, base, model };
+  return {
+    router,
+    accounts,
+    credentials,
+    calls,
+    attempts,
+    run,
+    ready,
+    base,
+    model,
+    runtime,
+    hooks,
+  };
 }
 
 describe("routing contract", () => {
+  test("retains the sanitized upstream cause separately from the retry-controlling error", async () => {
+    const f = fixture({ "access-secret": "Invalid tool result: missing call_id for tool output" });
+    await f.ready;
+    await f.credentials.modify("account-a", async () => ({
+      type: "oauth",
+      access: "access-secret",
+      refresh: "refresh-secret",
+      expires: Date.now() + 600000,
+    }));
+    const diagnostics: unknown[] = [];
+    Object.assign(f.hooks, { failed: (diagnostic: unknown) => diagnostics.push(diagnostic) });
+    const result = await f.run();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      provider: "test",
+      model: "test-model",
+      accountId: "a",
+      status: 400,
+      category: "request",
+      upstream: "Invalid tool result: missing call_id for tool output",
+    });
+    expect(result.errorMessage).toContain("/router errors");
+    expect(isRetryableAssistantError(result)).toBe(false);
+  });
+  test("diagnostics redact credentials refreshed during the failing attempt", async () => {
+    const f = fixture({
+      "fresh-access-secret": "Provider rejected fresh-access-secret with missing call_id",
+    });
+    await f.ready;
+    await f.credentials.modify("account-a", async () => ({
+      type: "oauth",
+      access: "old-access",
+      refresh: "old-refresh",
+      expires: 0,
+    }));
+    f.base.auth.oauth!.refresh = async (c) => ({
+      ...c,
+      access: "fresh-access-secret",
+      expires: Date.now() + 600000,
+    });
+    const diagnostics: unknown[] = [];
+    Object.assign(f.hooks, { failed: (d: unknown) => diagnostics.push(d) });
+    await f.run();
+    expect(JSON.stringify(diagnostics)).toContain("missing call_id");
+    expect(JSON.stringify(diagnostics)).not.toContain("fresh-access-secret");
+  });
+  test("diagnostics preserve nested exceptions without changing replay policy", async () => {
+    const f = fixture();
+    const diagnostics: unknown[] = [];
+    Object.assign(f.hooks, { failed: (d: unknown) => diagnostics.push(d) });
+    f.runtime.streamSimple = () => {
+      throw new Error("Request failed", {
+        cause: Object.assign(new Error("Peer closed socket"), { code: "ECONNRESET" }),
+      });
+    };
+    const result = await f.run();
+    expect(JSON.stringify(diagnostics)).toContain("ECONNRESET");
+    expect(JSON.stringify(diagnostics)).toContain("Peer closed socket");
+    expect(result.errorMessage).not.toContain("ECONNRESET");
+  });
+  test("retaining upstream retry words cannot enable replay after partial output", async () => {
+    const f = fixture({ a: "503 backend overloaded" }, true);
+    const diagnostics: unknown[] = [];
+    Object.assign(f.hooks, { failed: (d: unknown) => diagnostics.push(d) });
+    const result = await f.run();
+    expect(JSON.stringify(diagnostics)).toContain("503 backend overloaded");
+    expect(result.errorMessage).not.toContain("503");
+    expect(isRetryableAssistantError(result)).toBe(false);
+    expect(isContextOverflow(result, model.contextWindow)).toBe(false);
+    expect(f.calls).toHaveLength(1);
+  });
+  test("diagnostic observers cannot prevent allowance fallback", async () => {
+    const f = fixture({ a: "429" });
+    let reports = 0;
+    Object.assign(f.hooks, {
+      failed: () => {
+        reports++;
+        throw new Error("Diagnostic storage unavailable");
+      },
+    });
+    expect((await f.run()).stopReason).toBe("stop");
+    expect(reports).toBe(1);
+    expect(f.calls.map((c) => c.key)).toEqual(["a", "b"]);
+  });
+  test("routing setup exceptions retain their cause without becoming retryable", async () => {
+    const f = fixture();
+    const diagnostics: unknown[] = [];
+    const router = new AccountRouter(
+      f.runtime,
+      async () => undefined,
+      async () => {
+        throw new Error("router.json parse failure: unexpected token");
+      },
+      () => f.base,
+      { failed: (d) => diagnostics.push(d) },
+    );
+    const result = await router.stream(model, { messages: [] }).result();
+    expect(diagnostics[0]).toMatchObject({
+      stage: "routing",
+      upstream: "router.json parse failure: unexpected token",
+    });
+    expect(result.errorMessage).toContain("/router errors");
+    expect(isRetryableAssistantError(result)).toBe(false);
+    expect(f.calls).toHaveLength(0);
+  });
+  test("HTTP 503 with an opaque body remains recoverable instead of becoming Account request failed", async () => {
+    const f = fixture({ a: "upstream unavailable: PRIVATE" });
+    const original = f.base.streamSimple;
+    f.base.streamSimple = (m, c, o) =>
+      original(m, c, {
+        ...o,
+        onResponse: (response, responseModel) =>
+          o?.onResponse?.({ ...response, status: 503 }, responseModel),
+      });
+    const result = await f.run();
+    expect(result.errorMessage).not.toContain("PRIVATE");
+    expect(isRetryableAssistantError(result)).toBe(true);
+    expect(f.calls).toHaveLength(1);
+  });
+  test.each([
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "UND_ERR_SOCKET",
+    "network disconnected",
+    "Connection closed",
+    "An error occurred while processing your request",
+  ])("recognizes a transient provider failure: %s", async (error) => {
+    const f = fixture({ a: error });
+    expect(isRetryableAssistantError(await f.run())).toBe(true);
+    expect(f.calls).toHaveLength(1);
+  });
+  test.each(["500 server error", "fetch failed", "WebSocket closed 1006"])(
+    "never lets Pi replay %s after visible output",
+    async (error) => {
+      const f = fixture({ a: error }, true);
+      const result = await f.run();
+      expect(isRetryableAssistantError(result)).toBe(false);
+      expect(isContextOverflow(result, model.contextWindow)).toBe(false);
+      expect(result.content).toHaveLength(1);
+      expect(f.calls).toHaveLength(1);
+    },
+  );
+  test.each(["input", "cost", "content"])(
+    "start-event %s evidence cannot be erased by an empty terminal error",
+    async (evidence) => {
+      const f = fixture({ a: "429" });
+      const original = f.base.streamSimple;
+      f.base.streamSimple = (m, c, o) => {
+        const stream = createAssistantMessageEventStream();
+        void (async () => {
+          for await (const event of original(m, c, o)) {
+            if (event.type === "start") {
+              const partial = message("429");
+              if (evidence === "input") partial.usage.input = 1;
+              if (evidence === "cost") partial.usage.cost.input = 0.01;
+              if (evidence === "content")
+                partial.content = [{ type: "text", text: "already generated" }];
+              stream.push({ ...event, partial });
+            } else stream.push(event);
+          }
+          stream.end();
+        })();
+        return stream;
+      };
+      const result = await f.run();
+      expect(f.calls).toHaveLength(1);
+      expect(isRetryableAssistantError(result)).toBe(false);
+    },
+  );
+  test("native bounded retry recovers the same account after a tool result without rerunning the tool", async () => {
+    const failures = { a: "ECONNRESET PRIVATE" };
+    const f = fixture(failures);
+    await f.ready;
+    const toolResult = {
+      role: "toolResult" as const,
+      toolCallId: "grep-1",
+      toolName: "grep",
+      content: [{ type: "text" as const, text: "matching lines" }],
+      isError: false,
+      timestamp: 1,
+    };
+    const contexts: unknown[] = [];
+    const original = f.base.streamSimple;
+    f.base.streamSimple = (m, c, o) => {
+      contexts.push(c.messages);
+      return original(m, c, o);
+    };
+    const result = await retryAssistantCall(
+      () => f.router.stream(model, { messages: [toolResult] }).result(),
+      { enabled: true, maxRetries: 2, baseDelayMs: 0 },
+      undefined,
+      {
+        onRetryAttemptStart: () => {
+          failures.a = "";
+        },
+      },
+    );
+    expect(result.stopReason).toBe("stop");
+    expect(f.calls.map((c) => c.key)).toEqual(["a", "a"]);
+    expect(contexts).toEqual([[toolResult], [toolResult]]);
+  });
+  test.each([408, 500, 502, 503, 504, 529])(
+    "HTTP %d alone is sufficient for safe transient recovery",
+    async (status) => {
+      const f = fixture({ a: "PRIVATE opaque response" });
+      const original = f.base.streamSimple;
+      f.base.streamSimple = (m, c, o) =>
+        original(m, c, { ...o, onResponse: (r, m) => o?.onResponse?.({ ...r, status }, m) });
+      const result = await f.run();
+      expect(isRetryableAssistantError(result)).toBe(true);
+      expect(result.errorMessage).toContain(`HTTP ${status}`);
+      expect(f.calls).toHaveLength(1);
+      expect(f.router.health.size).toBe(0);
+    },
+  );
+  test.each([401, 403])(
+    "HTTP %d overrides misleading transient and allowance text",
+    async (status) => {
+      const f = fixture({ a: "500 server error: 429 quota exceeded PRIVATE" });
+      const original = f.base.streamSimple;
+      f.base.streamSimple = (m, c, o) =>
+        original(m, c, { ...o, onResponse: (r, m) => o?.onResponse?.({ ...r, status }, m) });
+      const result = await f.run();
+      expect(isRetryableAssistantError(result)).toBe(false);
+      expect(result.errorMessage).toContain(status === 401 ? "authentication" : "permission");
+      expect(f.calls).toHaveLength(1);
+      expect(f.router.health.size).toBe(0);
+    },
+  );
+  test.each(["throw", "end"])(
+    "an attempt that unexpectedly %ss is retryable only before output",
+    async (ending) => {
+      for (const partial of [false, true]) {
+        const f = fixture();
+        f.runtime.streamSimple = () => {
+          const stream = createAssistantMessageEventStream();
+          stream[Symbol.asyncIterator] = async function* () {
+            const result = message("", partial);
+            result.usage = message("error").usage;
+            yield { type: "start", partial: result };
+            if (partial)
+              yield { type: "text_delta", contentIndex: 0, delta: "partial", partial: result };
+            if (ending === "throw") throw new Error("ECONNRESET PRIVATE");
+          };
+          return stream;
+        };
+        const result = await f.run();
+        expect(result.stopReason).toBe("error");
+        expect(isRetryableAssistantError(result)).toBe(!partial);
+        expect(result.content.length).toBe(partial ? 1 : 0);
+        expect(f.attempts).toHaveLength(1);
+        expect(result.errorMessage).not.toContain("PRIVATE");
+      }
+    },
+  );
+  test("native lazy-stream failures preserve the partial response and recorded usage", async () => {
+    const f = fixture();
+    f.base.streamSimple = () => {
+      const stream = createAssistantMessageEventStream();
+      stream[Symbol.asyncIterator] = async function* () {
+        const partial = message("", true);
+        yield { type: "start", partial };
+        yield { type: "text_delta", contentIndex: 0, delta: "partial", partial };
+        throw new Error("fetch failed PRIVATE");
+      };
+      return stream;
+    };
+    const result = await f.run();
+    expect(result.content).toEqual(message("", true).content);
+    expect(result.usage).toEqual(message().usage);
+    expect(f.attempts[0]?.usage).toEqual(message().usage);
+    expect(isRetryableAssistantError(result)).toBe(false);
+  });
+  test("shared partial mutations before an iterator failure also block replay", async () => {
+    const f = fixture();
+    f.runtime.streamSimple = () => {
+      const stream = createAssistantMessageEventStream();
+      stream[Symbol.asyncIterator] = async function* () {
+        const partial = message("pending");
+        yield { type: "start", partial };
+        partial.usage.input = 3;
+        throw new Error("fetch failed");
+      };
+      return stream;
+    };
+    const result = await f.run();
+    expect(result.usage.input).toBe(3);
+    expect(isRetryableAssistantError(result)).toBe(false);
+  });
+  test("synchronous transport errors use the same failure policy", async () => {
+    const f = fixture();
+    f.runtime.streamSimple = () => {
+      throw new Error("fetch failed PRIVATE");
+    };
+    expect(isRetryableAssistantError(await f.run())).toBe(true);
+    expect(f.attempts).toHaveLength(1);
+  });
+  test("cancellation wins even when a provider emits a late transport error", async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    f.runtime.streamSimple = () => {
+      controller.abort();
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: "error", reason: "error", error: message("fetch failed PRIVATE") });
+      stream.end();
+      return stream;
+    };
+    const result = await f.run({ signal: controller.signal });
+    expect(result.stopReason).toBe("aborted");
+    expect(isRetryableAssistantError(result)).toBe(false);
+    expect(f.attempts).toHaveLength(1);
+  });
+  test("all public stream events redact provider exceptions, including reused start messages", async () => {
+    const f = fixture({ a: "400 PRIVATE token" });
+    await f.ready;
+    const events = [];
+    for await (const event of f.router.stream(model, { messages: [] })) events.push(event);
+    expect(JSON.stringify(events)).not.toContain("PRIVATE");
+    expect(events.map((e) => e.type)).toEqual(["start", "error"]);
+    expect((await f.run()).errorMessage).toContain("provider rejected the request");
+  });
+  test("footer and usage observers cannot interrupt a successful response", async () => {
+    const f = fixture();
+    f.hooks.selected = () => {
+      throw new Error("PRIVATE observer");
+    };
+    f.hooks.attempt = () => {
+      throw new Error("PRIVATE observer");
+    };
+    expect((await f.run()).stopReason).toBe("stop");
+    expect(f.calls).toHaveLength(1);
+  });
+  test("native retry budget bounds persistent transport failures", async () => {
+    const f = fixture({ a: "ECONNRESET" });
+    const result = await retryAssistantCall(
+      () => f.run(),
+      { enabled: true, maxRetries: 2, baseDelayMs: 0 },
+      undefined,
+    );
+    expect(result.stopReason).toBe("error");
+    expect(f.calls.map((c) => c.key)).toEqual(["a", "a", "a"]);
+    expect(f.router.health.size).toBe(0);
+  });
   test("session preference tries first, falls back in global order, respects cooldown and stays isolated", async () => {
     let preferred: string | undefined = "b";
     const f = fixture({ b: "429 rate limit" }, false, () => preferred);

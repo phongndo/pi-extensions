@@ -23,6 +23,13 @@ import { MASKED_EMAIL, promptAlias, showRankings } from "./ui.ts";
 import { credentialEmail } from "./identity.ts";
 import { installNativeLogin } from "./native-login.ts";
 import { SESSION_ACCOUNT_ENTRY, sessionAccounts } from "./session.ts";
+import {
+  DIAGNOSTIC_ENTRY,
+  DIAGNOSTIC_LIMIT,
+  formatDiagnostics,
+  sessionDiagnostics,
+  type RouterDiagnostic,
+} from "./diagnostics.ts";
 
 export interface RouterExtensionOptions {
   configPath?: string;
@@ -45,6 +52,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     let accounts: NativeAccount[] = [];
     let savedAccounts: NativeAccount[] = [];
     let preferences = new Map<string, string>();
+    let diagnostics: RouterDiagnostic[] = [];
     let closed = false;
     let selecting = false;
     let poll: ReturnType<typeof setInterval> | undefined;
@@ -105,6 +113,14 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
       {
         preferred: (provider) => preferences.get(provider),
         selected: () => updateFooter(),
+        failed: (diagnostic) => {
+          if (!ctx || closed) return;
+          diagnostics.push(diagnostic);
+          if (diagnostics.length > DIAGNOSTIC_LIMIT) diagnostics.shift();
+          // Keep an in-memory copy even if session persistence fails. Custom entries are
+          // durable across reload/resume but never enter LLM context or Pi's retry logic.
+          pi.appendEntry(DIAGNOSTIC_ENTRY, diagnostic);
+        },
         attempt: (attempt) => {
           if (ctx && !closed)
             pi.events.emit("router:usage", {
@@ -272,6 +288,7 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     pi.on("session_start", async (_event, context) => {
       ctx = context;
       preferences = sessionAccounts(context.sessionManager.getBranch());
+      diagnostics = sessionDiagnostics(context.sessionManager.getBranch());
       await refresh();
       removeNativeLogin?.();
       removeNativeLogin = installNativeLogin(context, {
@@ -315,11 +332,13 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
     pi.on("session_tree", async (_event, context) => {
       ctx = context;
       preferences = sessionAccounts(context.sessionManager.getBranch());
+      diagnostics = sessionDiagnostics(context.sessionManager.getBranch());
       router.active.clear();
       await refreshForInput(context);
     });
     pi.registerCommand("router", {
-      description: "Choose the session default and rank fallbacks; /router alias labels accounts",
+      description:
+        "Choose/rank accounts; /router alias labels them; /router errors shows upstream failures",
       getArgumentCompletions: (prefix) => {
         const items = [
           {
@@ -328,16 +347,26 @@ export function createRouterExtension(options: RouterExtensionOptions = {}) {
             description: "Choose this session's preferred account",
           },
           { value: "alias", label: "alias", description: "Name an individual account" },
+          {
+            value: "errors",
+            label: "errors",
+            description: "Inspect sanitized upstream failures for this session",
+          },
         ].filter((item) => item.value.startsWith(prefix));
         return items.length ? items : null;
       },
       handler: async (args, context) => {
         if (!context.hasUI) return;
+        // Inspection is read-only and must work even while busy or router.json is broken.
+        if (args.trim() === "errors") {
+          context.ui.notify(formatDiagnostics(diagnostics), "info");
+          return;
+        }
         const aliasOnly = args.trim() === "alias";
         const sessionOnly = args.trim() === "account";
         if (args.trim() && !aliasOnly && !sessionOnly) {
           context.ui.notify(
-            "/router ranks accounts; /router account selects for this session; /router alias names them. Use /login and /logout to manage them.",
+            "/router ranks accounts; /router account selects for this session; /router alias names them; /router errors shows upstream failures. Use /login and /logout to manage them.",
             "info",
           );
           return;

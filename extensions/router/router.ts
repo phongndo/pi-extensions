@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   createAssistantMessageEventStream,
   cleanupSessionResources,
-  isContextOverflow,
-  isRetryableAssistantError,
   type Api,
   type AssistantMessage,
   type AssistantMessageEvent,
@@ -24,6 +22,22 @@ import {
   type NativeAccount as Account,
 } from "../../src/account-identity.ts";
 
+import {
+  classifyFailure,
+  failureMessage,
+  hasNoUsage,
+  retryAt,
+  type AccountHealth,
+} from "./failures.ts";
+export { limitReason, retryAt, type AccountHealth } from "./failures.ts";
+import {
+  DIAGNOSTIC_HINT,
+  diagnosticSecrets,
+  sanitizeDiagnostic,
+  upstreamDiagnostic,
+  type RouterDiagnostic,
+} from "./diagnostics.ts";
+
 export interface AttemptUsage {
   id: string;
   accountId: string;
@@ -35,14 +49,11 @@ export interface AttemptUsage {
   usage: AssistantMessage["usage"];
   outcome: string;
 }
-export interface AccountHealth {
-  until: number;
-  reason: "rate limit" | "quota";
-}
 export interface RouterHooks {
   preferred?(provider: string): string | undefined;
   attempt?(usage: AttemptUsage): void;
   selected?(account: Account): void;
+  failed?(diagnostic: RouterDiagnostic): void;
 }
 
 const zeroUsage = (): AssistantMessage["usage"] => ({
@@ -65,54 +76,6 @@ function failure(model: Model<Api>, aborted: boolean, message: string): Assistan
     errorMessage: message,
     timestamp: Date.now(),
   };
-}
-
-/** Missing or inconsistent totals are not proof of an unbilled, replayable attempt. */
-function hasNoUsage(usage: AssistantMessage["usage"]): boolean {
-  return [
-    usage.input,
-    usage.output,
-    usage.cacheRead,
-    usage.cacheWrite,
-    usage.totalTokens,
-    usage.cost.input,
-    usage.cost.output,
-    usage.cost.cacheRead,
-    usage.cost.cacheWrite,
-    usage.cost.total,
-  ].every((value) => value === 0);
-}
-
-/** Deliberately narrow: auth, overload, context, and arbitrary network errors never rotate accounts. */
-export function limitReason(
-  status: number | undefined,
-  message: string,
-): AccountHealth["reason"] | undefined {
-  if (status === 401 || status === 403) return undefined;
-  if (
-    /insufficient_quota|quota[_ ]exceeded|usage[_ ]limit(?:[_ ](?:has|have|had|was|were|is|are|been))*[_ ]*reached|GoUsageLimitError|FreeUsageLimitError|out of budget|credit balance is too low|available balance|exceeded your current quota|chatgpt usage limit/i.test(
-      message,
-    )
-  )
-    return "quota";
-  if (
-    status === 429 ||
-    /\b429\b|rate[_ -]?limit|too many requests|ResourceExhausted/i.test(message)
-  )
-    return "rate limit";
-  return undefined;
-}
-export function retryAt(
-  value: string | undefined,
-  now: number,
-  reason: AccountHealth["reason"],
-): number {
-  const seconds = value?.trim() ? Number(value) : NaN;
-  const date = value ? Date.parse(value) : NaN;
-  const target = Number.isFinite(seconds) && seconds >= 0 ? now + seconds * 1000 : date;
-  return Number.isFinite(target) && target > now
-    ? target
-    : now + (reason === "quota" ? 60 * 60_000 : 60_000);
 }
 
 /** One request-local routing loop; no global credential swapping or replay after visible output. */
@@ -211,14 +174,26 @@ export class AccountRouter {
       this.lifetime.signal,
       ...(options.signal ? [options.signal] : []),
     ]);
-    void this.run(output, model, context, { ...options, signal }, simple).catch(() => {
-      // Provider/storage exceptions may contain credentials. Never expose their raw messages.
+    void this.run(output, model, context, { ...options, signal }, simple).catch((cause) => {
+      this.report(
+        {
+          timestamp: this.now(),
+          provider: model.provider,
+          model: model.id,
+          stage: "routing",
+          category: signal.aborted ? "aborted" : "routing",
+          replaySafe: false,
+        },
+        cause,
+        options,
+      );
+      // Detailed diagnostics live outside Pi's retry-controlling error string.
       const error = failure(
         model,
         signal.aborted,
         signal.aborted
           ? "Account request cancelled."
-          : "Account routing failed. Check /router and re-login if needed.",
+          : `Account routing failed. Check /router.${DIAGNOSTIC_HINT}`,
       );
       output.push({ type: "error", reason: error.stopReason as "error" | "aborted", error });
       output.end();
@@ -276,7 +251,7 @@ export class AccountRouter {
       // that changed to an API key after selection fails closed rather than borrowing auth.
       attempted = true;
       this.active.set(providerId, account.id);
-      this.hooks.selected?.(account);
+      this.observe(() => this.hooks.selected?.(account));
       let status: number | undefined;
       let retryAfter: string | undefined;
       const { apiKey: _key, env: _env, ...rest } = options;
@@ -293,91 +268,184 @@ export class AccountRouter {
       };
       this.sessionIds.add(requestOptions.sessionId!);
       const requestModel = { ...nativeModel, provider: account.credentialId };
-      const input = simple
-        ? this.runtime.streamSimple(requestModel, nativeContext, requestOptions)
-        : this.runtime.stream(requestModel, nativeContext, requestOptions);
       let visible = false;
+      let replaySafe = true;
       let start: AssistantMessageEvent | undefined;
-      let terminal = false;
-      let rotate = false;
-      for await (const event of input) {
-        if (event.type === "start") {
-          start = event;
-          continue;
-        }
-        if (event.type === "error" || event.type === "done") {
-          terminal = true;
-          const message = event.type === "error" ? event.error : event.message;
-          const reason =
-            event.type === "error" && message.stopReason !== "aborted" && !signal.aborted
-              ? limitReason(status, message.errorMessage ?? "")
-              : undefined;
-          this.hooks.attempt?.({
-            id: randomUUID(),
-            accountId: account.id,
-            accountName: account.alias ?? account.name,
-            provider: providerId,
-            model: model.id,
-            subscription: true,
-            timestamp: this.now(),
-            usage: structuredClone(message.usage),
-            outcome: message.stopReason,
-          });
-          if (reason)
-            this.health.set(account.id, { until: retryAt(retryAfter, this.now(), reason), reason });
-          else if (event.type === "done") this.health.delete(account.id);
-          const replaySafe = !visible && message.content.length === 0 && hasNoUsage(message.usage);
-          if (reason && replaySafe) {
-            rotate = true;
+      let last: AssistantMessage | undefined;
+      let terminal: Extract<AssistantMessageEvent, { type: "done" | "error" }> | undefined;
+      let thrown: unknown;
+      try {
+        const input = simple
+          ? this.runtime.streamSimple(requestModel, nativeContext, requestOptions)
+          : this.runtime.stream(requestModel, nativeContext, requestOptions);
+        for await (const event of input) {
+          const message =
+            event.type === "error"
+              ? event.error
+              : event.type === "done"
+                ? event.message
+                : event.partial;
+          // Evidence is sticky across the entire attempt, not just the final message.
+          replaySafe &&= message.content.length === 0 && hasNoUsage(message.usage);
+          if (event.type === "error" || event.type === "done") {
+            // Pi's lazy adapter can turn an iterator exception into a fresh, empty error.
+            // Do not let that discard the response and accounting already received.
+            terminal =
+              event.type === "error" && last
+                ? {
+                    ...event,
+                    error: {
+                      ...message,
+                      content: message.content.length ? message.content : last.content,
+                      usage: hasNoUsage(message.usage) ? last.usage : message.usage,
+                    },
+                  }
+                : event;
             break;
           }
+          last = message;
+          if (event.type === "start") {
+            if (!visible && !start) start = event;
+            continue;
+          }
           if (!visible && start) output.push(this.publicEvent(start, model.provider));
-          output.push(this.publicEvent(event, model.provider, replaySafe));
-          output.end();
-          return;
+          visible = true;
+          replaySafe = false;
+          output.push(this.publicEvent(event, model.provider));
         }
-        if (!visible && start) output.push(this.publicEvent(start, model.provider));
-        visible = true;
-        output.push(this.publicEvent(event, model.provider));
+        if (!terminal) throw new Error("Provider ended without a terminal event");
+      } catch (cause) {
+        thrown = cause;
+        // Keep partial output/usage on iterator failures. Only provider execution is inside
+        // this catch; metadata/storage failures must not become retryable transport errors.
+        const error = {
+          ...(last ?? failure(model, false, "")),
+          stopReason: signal.aborted ? ("aborted" as const) : ("error" as const),
+          errorMessage:
+            cause instanceof Error
+              ? cause.message
+              : typeof cause === "string"
+                ? cause
+                : "Unknown provider failure",
+        };
+        terminal = { type: "error", reason: error.stopReason, error };
       }
-      if (!terminal) throw new Error("Provider ended without a terminal event");
-      if (!rotate) break;
+      // Native OAuth may have refreshed the credential during this attempt. Redact both
+      // selected and refreshed secrets. Diagnostic I/O is best effort; recheck abort afterwards.
+      let latest: Credential | undefined;
+      if (terminal.type === "error" && this.hooks.failed) {
+        try {
+          latest = await this.readCredential(account.credentialId);
+        } catch {
+          /* Best effort. */
+        }
+      }
+      if (signal.aborted) {
+        const error = {
+          ...(terminal.type === "error" ? terminal.error : terminal.message),
+          stopReason: "aborted" as const,
+        };
+        terminal = { type: "error", reason: "aborted", error };
+      }
+      const message = terminal.type === "error" ? terminal.error : terminal.message;
+      // A provider may mutate its shared partial before throwing, without emitting a delta.
+      replaySafe &&= message.content.length === 0 && hasNoUsage(message.usage);
+      const problem = terminal.type === "error" ? classifyFailure(message, status) : undefined;
+      if (problem && this.hooks.failed) {
+        this.report(
+          {
+            timestamp: this.now(),
+            provider: providerId,
+            model: model.id,
+            accountId: account.id,
+            stage: "request",
+            category: problem.kind,
+            status,
+            replaySafe,
+          },
+          thrown ?? message.errorMessage,
+          credential,
+          latest,
+          options,
+          model,
+        );
+      }
+      this.observe(() =>
+        this.hooks.attempt?.({
+          id: randomUUID(),
+          accountId: account.id,
+          accountName: account.alias ?? account.name,
+          provider: providerId,
+          model: model.id,
+          subscription: true,
+          timestamp: this.now(),
+          usage: structuredClone(message.usage),
+          outcome: message.stopReason,
+        }),
+      );
+      if (problem?.kind === "quota" || problem?.kind === "rate limit") {
+        const reason = problem.kind;
+        this.health.set(account.id, { until: retryAt(retryAfter, this.now(), reason), reason });
+        if (replaySafe) continue;
+      } else if (terminal.type === "done") this.health.delete(account.id);
+      if (terminal.type === "error") {
+        terminal = {
+          ...terminal,
+          error: {
+            ...message,
+            errorMessage: failureMessage(problem!, replaySafe) + DIAGNOSTIC_HINT,
+          },
+        };
+      }
+      if (!visible && start) output.push(this.publicEvent(start, model.provider));
+      output.push(this.publicEvent(terminal, model.provider));
+      output.end();
+      return;
     }
     const error = failure(
       model,
       signal.aborted,
       attempted
-        ? "All signed-in accounts have reached an allowance limit. Wait for a reset or use /login."
+        ? `All signed-in accounts have reached an allowance limit. Wait for a reset or use /login.${DIAGNOSTIC_HINT}`
         : "No signed-in account is eligible for this model. Check /login or wait for its allowance to reset.",
     );
     output.push({ type: "error", reason: signal.aborted ? "aborted" : "error", error });
     output.end();
   }
 
-  private publicEvent(
-    event: AssistantMessageEvent,
-    provider: string,
-    replaySafe = false,
-  ): AssistantMessageEvent {
-    if (event.type === "done") return { ...event, message: { ...event.message, provider } };
-    if (event.type === "error") {
-      // Rewrite only the stops the router deliberately makes (overflow, cancellation,
-      // exhausted allowance), so Pi's outer retry loop cannot replay them. For every
-      // other failure the provider's text is still replaced because provider/auth
-      // exceptions can carry credentials, but a transient transport drop must keep a
-      // retryable signature or Pi's auto-retry never fires and one blip becomes fatal.
-      const errorMessage =
-        replaySafe && isContextOverflow(event.error)
-          ? "context_length_exceeded: account request exceeds the model context window."
-          : event.reason === "aborted"
-            ? "Account request cancelled."
-            : limitReason(undefined, event.error.errorMessage ?? "")
-              ? "Account allowance exhausted. Request stopped; wait for its reset."
-              : isRetryableAssistantError(event.error)
-                ? "Transient network error while streaming this account; no account fallback was attempted for this error."
-                : "Account request failed. Check provider availability or /login; no account fallback was attempted for this error.";
-      return { ...event, error: { ...event.error, provider, errorMessage } };
+  private report(
+    diagnostic: Omit<RouterDiagnostic, "upstream">,
+    cause: unknown,
+    ...sources: unknown[]
+  ): void {
+    this.observe(() => {
+      if (!this.hooks.failed) return;
+      const secrets = diagnosticSecrets(...sources);
+      this.hooks.failed({
+        ...diagnostic,
+        provider: sanitizeDiagnostic(diagnostic.provider, secrets),
+        model: sanitizeDiagnostic(diagnostic.model, secrets),
+        accountId: diagnostic.accountId && sanitizeDiagnostic(diagnostic.accountId, secrets),
+        upstream: upstreamDiagnostic(cause, secrets),
+      });
+    });
+  }
+
+  /** Optional diagnostic/footer/usage observers must never turn a completed request into a failure. */
+  private observe(callback: () => void): void {
+    try {
+      callback();
+    } catch {
+      /* Observer failures do not affect routing. */
     }
-    return { ...event, partial: { ...event.partial, provider } };
+  }
+
+  private publicEvent(event: AssistantMessageEvent, provider: string): AssistantMessageEvent {
+    if (event.type === "done") return { ...event, message: { ...event.message, provider } };
+    if (event.type === "error") return { ...event, error: { ...event.error, provider } };
+    // Providers commonly reuse their terminal message as the start partial. Don't leak
+    // its raw errorMessage through an otherwise redacted stream.
+    const { errorMessage: _error, ...partial } = event.partial;
+    return { ...event, partial: { ...partial, provider } };
   }
 }
