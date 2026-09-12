@@ -296,6 +296,32 @@ describe("routing contract", () => {
       expect(isContextOverflow(result, model.contextWindow)).toBe(true);
     }
   });
+  test.each([
+    "500 internal server error",
+    "WebSocket closed 1006 Connection ended",
+    "WebSocket idle timeout after 300000ms",
+  ])("keeps a transient %s retryable without leaking the raw message", async (error) => {
+    const f = fixture({ a: error });
+    const result = await f.run();
+    expect(result.stopReason).toBe("error");
+    expect(f.calls).toHaveLength(1);
+    // The router must not turn a transient transport drop into a permanent failure:
+    // it rewrites the message to avoid leaking credentials, so it must keep a
+    // retryable signature or Pi's outer auto-retry never fires.
+    expect(result.errorMessage).not.toContain("WebSocket");
+    expect(isRetryableAssistantError(result)).toBe(true);
+  });
+  test.each(["401 unauthorized", "403 forbidden"])(
+    "keeps the opaque message for the non-retryable auth error %s",
+    async (error) => {
+      const f = fixture({ a: error });
+      const result = await f.run();
+      expect(result.stopReason).toBe("error");
+      expect(f.calls).toHaveLength(1);
+      expect(result.errorMessage).not.toBe(error);
+      expect(isRetryableAssistantError(result)).toBe(false);
+    },
+  );
   test("never replays after partial output", async () => {
     const f = fixture({ a: "429" }, true);
     const result = await f.run();

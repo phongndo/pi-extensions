@@ -3,6 +3,7 @@ import {
   createAssistantMessageEventStream,
   cleanupSessionResources,
   isContextOverflow,
+  isRetryableAssistantError,
   type Api,
   type AssistantMessage,
   type AssistantMessageEvent,
@@ -360,7 +361,11 @@ export class AccountRouter {
   ): AssistantMessageEvent {
     if (event.type === "done") return { ...event, message: { ...event.message, provider } };
     if (event.type === "error") {
-      // Do not invite Pi's outer retry loop to replay a response the router deliberately stopped.
+      // Rewrite only the stops the router deliberately makes (overflow, cancellation,
+      // exhausted allowance), so Pi's outer retry loop cannot replay them. For every
+      // other failure the provider's text is still replaced because provider/auth
+      // exceptions can carry credentials, but a transient transport drop must keep a
+      // retryable signature or Pi's auto-retry never fires and one blip becomes fatal.
       const errorMessage =
         replaySafe && isContextOverflow(event.error)
           ? "context_length_exceeded: account request exceeds the model context window."
@@ -368,7 +373,9 @@ export class AccountRouter {
             ? "Account request cancelled."
             : limitReason(undefined, event.error.errorMessage ?? "")
               ? "Account allowance exhausted. Request stopped; wait for its reset."
-              : "Account request failed. Check provider availability or /login; no account fallback was attempted for this error.";
+              : isRetryableAssistantError(event.error)
+                ? "Transient network error while streaming this account; no account fallback was attempted for this error."
+                : "Account request failed. Check provider availability or /login; no account fallback was attempted for this error.";
       return { ...event, error: { ...event.error, provider, errorMessage } };
     }
     return { ...event, partial: { ...event.partial, provider } };
