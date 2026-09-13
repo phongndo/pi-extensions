@@ -114,6 +114,12 @@ try {
       `Unexpected shorthand skill command: /${name}`,
     );
   }
+  assert.equal(
+    commands.filter((command) => command.source === "extension" && command.name === "commit")
+      .length,
+    0,
+    "Unexpected removed extension command: /commit",
+  );
   for (const name of await names) {
     const canonical = await expand(`/skill:${name} smoke argument`);
     assert.ok(canonical.prompt.includes(join(root, "skills", name)));

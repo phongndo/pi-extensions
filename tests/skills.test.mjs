@@ -116,5 +116,4 @@ test("Pi package resource paths have one owner", () => {
   for (const paths of Object.values(pi)) assert.equal(new Set(paths).size, paths.length);
   assert.deepEqual(pi.skills, ["./skills"]);
   assert.deepEqual(pi.themes, ["./themes"]);
-  assert.equal(pi.extensions.filter((path) => path === "./src/index.ts").length, 1);
 });

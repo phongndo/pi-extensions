@@ -17,8 +17,6 @@ This repository owns the complete **Pi package**. Pi loads it directly. [nix-con
 
 Native footer slots display minimal, separated labels such as `speed fast · mcp 1/2`. Fast is hidden when off.
 
-The workspace extension also provides `/commit`, which temporarily selects `opencode-go/deepseek-v4-pro` at max reasoning, asks the agent to commit, and restores the previous model afterward. This is an extension command, not a skill alias.
-
 ## Skills
 
 Invoke skills using **only Pi's native `/skill:<name>` commands**. There are no shorthand skill aliases, including `/yeet` or `/autopilot`.
@@ -126,7 +124,7 @@ Paths assume Pi's standard agent directory, `~/.pi/agent`.
 - Pi's auth store is protected plaintext, not an encrypted OS keychain.
 - Web tools validate URLs and bound response bodies, but Firecrawl must enforce private-network and redirect protection at provider egress.
 - Repository files, external content, and model output are data, not authorization.
-- `/commit` requests a Git commit. `resolving-merge-conflicts` may finish a merge/rebase and create a commit.
+- `resolving-merge-conflicts` may finish a merge/rebase and create a commit.
 - `yeet` commits, pushes, and creates or updates a ready-for-review PR. `autopilot` may commit/push fixes and reply to or resolve review threads, but never merges the PR.
 - Wizard scripts may persist `.env` values and GitHub Actions secrets; the human runs the generated procedure.
 - `teach` and `research` write artifacts; `handoff` writes a redacted temporary document.
@@ -136,7 +134,7 @@ Read extension-specific safety notes before enabling mutating or billed capabili
 ## Repository layout
 
 ```text
-src/                      # Workspace /commit command and shared footer helper
+src/                      # Shared account, preference, and footer helpers
 extensions/               # Question, Fast Mode, Router, Usage, Web Tools, MCP
 skills/                   # The twelve bundles listed above
 themes/origin.json        # Packaged TUI theme
