@@ -16,7 +16,7 @@ Native **OAuth logins whose Pi provider marks `isSubscription: true`** are inclu
 | OpenAI Codex                  | Remaining percentage for every returned usage window, reset times, extra credit balance, and every returned banked reset with its own expiration   |
 | Grok (`xai`)                  | Reported credit-pool percentage and reset via the same bearer billing GET used by CodexBar; uses Pi's Grok login. Missing percentages stay unknown |
 | OpenCode Go (`opencode-go`)   | Remaining percentages and reset times for 5-hour, weekly, and monthly windows; `/usage opencode-go`                                                |
-| Firecrawl                     | Exact remaining team credits and billing-period end, using `/login firecrawl` or `FIRECRAWL_API_KEY`; a stored key takes precedence                |
+| Firecrawl                     | Exact remaining team credits and billing-period end, using an existing Pi-stored key or `FIRECRAWL_API_KEY`; a stored key takes precedence         |
 | Other/future Pi subscriptions | Discovered automatically; shown as unsupported until a verified allowance adapter is added                                                         |
 
 Grok reads the shared credit pool, not product/Voice quotas. This implements CodexBar's JSON billing path, not its browser/CLI/gRPC fallbacks; some plans omit a percentage. No live authenticated success for your account is claimed by the fake-response tests.
@@ -38,7 +38,7 @@ Reads run in the background at startup, on model/account changes, and after an a
 - One allowance per aligned row, with a **short horizontal remaining bar**, percentage, and inline reset countdown. Account names appear on the first row; additional limits align underneath. Fixed, left-anchored columns are shared across providers, so renaming an account or limit never moves the bars, values, or reset times. Long names are ellipsized in the TUI; RPC retains full labels. Labels stay readable (`Weekly`, `Spark 5h`), and low remaining percentages are highlighted. No repeated “remaining”, checked timestamps, raw plan names, or zero extra-credit rows. Narrow terminals fall back to text.
 - Unknown, unsupported, forbidden, and failed status responses stay **unavailable**, never zero or inferred from token counts.
 - Banked resets use one compact countdown row: `Banked resets  3 available · ◷ 11d 23h · 25d 16m · 26d 2h`. No IDs, repeated titles, or full timestamps in the TUI. Each returned expiry remains represented; other statuses are grouped compactly, missing expiry stays unknown, and long lists wrap/scroll. RPC retains exact timestamps and IDs. Nonzero extra credits remain separate.
-- Firecrawl credits are team-wide, not per-key consumption. Its plan credit count is not assumed to be the denominator of a balance that may include top-ups.
+- Firecrawl credits are team-wide, not per-key consumption. Its plan credit count is not assumed to be the denominator of a balance that may include top-ups. Usage does not read Executor's MCP credentials. The package no longer registers `/login firecrawl`; existing Pi-stored keys remain supported, and new credit-reader credentials can use `FIRECRAWL_API_KEY`.
 
 | Key                | Action                            |
 | ------------------ | --------------------------------- |

@@ -33,7 +33,7 @@ Display `max(0, 100 - percent)` per window; missing percentages remain unknown. 
 
 Display `remainingCredits` directly and label `billingPeriodEnd` as the billing-period end. Do not infer a remaining percentage from `planCredits`: the documented fields do not establish that all remaining credits are confined to that denominator. Missing/invalid remaining credits produce unavailable status.
 
-Reuse the registered Pi Firecrawl provider when available. Standalone Usage uses the same Pi-native API-key auth definition as `extensions/web-tools/transport.ts`: `/login firecrawl` storage first, then `FIRECRAWL_API_KEY`. No credential copying, historical-credit requests, scraping, or billable web operations are needed to display the current balance.
+Usage owns an independent Firecrawl credit reader in `live.ts`. It uses Pi-native key resolution: an existing Pi-stored `firecrawl` credential first, then `FIRECRAWL_API_KEY`, reusing a registered provider if one is available. This package no longer registers a `/login firecrawl` provider. Web access is configured separately in Executor; Usage does not read or copy its credentials. No historical-credit requests, scraping, or billable web operations are needed to display the current balance.
 
 ## Grok / xAI — bearer billing reader implemented
 

@@ -114,6 +114,13 @@ test("wizard reports when no browser opener is available", () => {
 test("Pi package resource paths have one owner", () => {
   const { pi } = JSON.parse(readFileSync("package.json", "utf8"));
   for (const paths of Object.values(pi)) assert.equal(new Set(paths).size, paths.length);
+  const extensions = ["fast-mode", "mcp", "question", "router", "usage"];
+  assert.deepEqual(readdirSync("extensions").sort(), extensions);
+  assert.deepEqual(
+    [...pi.extensions].sort(),
+    extensions.map((name) => `./extensions/${name}/index.ts`),
+  );
+  for (const path of pi.extensions) assert.ok(statSync(path).isFile(), path);
   assert.deepEqual(pi.skills, ["./skills"]);
   assert.deepEqual(pi.themes, ["./themes"]);
 });

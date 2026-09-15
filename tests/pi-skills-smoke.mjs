@@ -36,7 +36,8 @@ export default function(pi) {
   });
   pi.on("before_agent_start", event => {
     writeFileSync(${JSON.stringify(join(home, "expanded.json"))}, JSON.stringify({
-      prompt: event.prompt, skills: event.systemPromptOptions.skills
+      prompt: event.prompt, skills: event.systemPromptOptions.skills,
+      tools: pi.getAllTools().map(tool => tool.name)
     }));
   });
 }
@@ -125,6 +126,9 @@ try {
     assert.ok(canonical.prompt.includes(join(root, "skills", name)));
     assert.ok(canonical.prompt.includes("smoke argument"));
     assert.equal(canonical.skills.length, (await names).length);
+    for (const removed of ["search", "map", "fetch", "crawl", "extract"]) {
+      assert.ok(!canonical.tools.includes(removed), `Unexpected removed native tool: ${removed}`);
+    }
   }
   assert.equal(events.filter((event) => event.type === "extension_error").length, 0);
   console.log(

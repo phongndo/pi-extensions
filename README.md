@@ -1,6 +1,6 @@
 # Pi Extensions
 
-A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, multi-account routing, usage dashboards, bounded web access, MCP tools, thirteen skills, and the `origin` theme.
+A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, multi-account routing, usage dashboards, MCP-powered web access and tools, thirteen skills, and the `origin` theme.
 
 This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md) distributes compatible skill copies to other agents through their existing adapters. Chezmoi retains the single native `~/.pi/agent/settings.json` template and package pointer; it does not generate a Pi mirror or write into this checkout. Other agents keep their own native config/skill roots, not Pi package copies.
 
@@ -12,7 +12,6 @@ This repository owns the complete **Pi package**. Pi loads it directly. [nix-con
 | [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`                                  | Global preference; eligible Codex requests ask for priority service, which may affect billing |
 | [Router](extensions/router/README.md)       | `/router`, `/router account`, `/router alias`; native `/login` and `/logout` | Label subscriptions; provider-grouped priority/fallback routing                               |
 | [Usage](extensions/usage/README.md)         | `/usage [provider]`                                                          | Remaining subscription allowances and Firecrawl credits                                       |
-| [Web Tools](extensions/web-tools/README.md) | `search`, `map`, `fetch`, `crawl`, `extract`                                 | Calls Firecrawl and spends provider credits                                                   |
 | [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                                                  | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
 
 Native footer slots display minimal, separated labels such as `speed fast · mcp 1/2`. Fast is hidden when off.
@@ -53,7 +52,7 @@ Examples:
 
 ## Quick start
 
-Requirements: Pi 0.85.1 or newer (with its supported runtime), Bun 1.4.2, and provider credentials for the models you use. Firecrawl credentials are needed only for web tools. Wizard-generated GitHub secret writes require `gh`.
+Requirements: Pi 0.85.1 or newer (with its supported runtime), Bun 1.4.2, and provider credentials for the models you use. Web access requires a configured MCP connection, such as Firecrawl through Executor. Wizard-generated GitHub secret writes require `gh`.
 
 ```bash
 git clone <repository-url> pi-extensions
@@ -66,23 +65,11 @@ Pi packages execute code with your permissions. Review the checkout before insta
 
 ### Configure web access
 
-```text
-/login firecrawl
-```
+Use the official Firecrawl MCP server through [Executor](https://executor.sh/docs/mcp-proxy), enabled in Pi with `/mcp`. See [Firecrawl setup](extensions/mcp/README.md#firecrawl-web-access) for the endpoint and authentication details. Executor owns the web-tool connection and credentials; this package does not maintain a separate Firecrawl tool wrapper.
 
-Pi stores the key in its native auth store. `FIRECRAWL_API_KEY` remains supported for CI and other non-interactive use. `/logout firecrawl` removes the stored key.
+After updating, run `/reload` or restart Pi to unload the removed native `search`, `map`, `fetch`, `crawl`, and `extract` tools. Existing Pi credentials and temporary web responses are left untouched. Usage can still read Firecrawl credits from a previously stored Pi key or `FIRECRAWL_API_KEY`; it does not read Executor's credentials.
 
-Choose the smallest operation:
-
-```text
-unknown source                  → search, then fetch selected primary pages
-known website, unknown page     → map, then fetch
-one exact page                  → fetch
-several linked pages            → crawl
-machine-readable fields         → extract
-```
-
-Treat returned web content as untrusted data. Crawl and extraction can cost substantially more than ordinary search, map, or fetch calls.
+Treat returned web content as untrusted data. Use small result/page limits; extraction, autonomous research, and recurring monitors can spend additional Firecrawl credits.
 
 ### Accounts and usage
 
@@ -108,21 +95,21 @@ Pi 0.85.1 defaults to auto-compaction enabled, 20,000 recent tokens retained, an
 
 Paths assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature       | Location                                      | Contents                                                 |
-| ------------- | --------------------------------------------- | -------------------------------------------------------- |
-| Theme         | `themes/origin.json`                          | Packaged TUI theme; select `origin` in settings          |
-| Fast Mode     | `~/.pi/agent/fast-mode.json`                  | Global on/off preference                                 |
-| Router        | `~/.pi/agent/router.json`; native `auth.json` | Rankings and aliases; native account credentials         |
-| Usage         | `~/.pi/agent/usage/*.jsonl`                   | Private token/cost metadata; no prompts or credentials   |
-| Firecrawl key | `~/.pi/agent/auth.json`                       | Native credential store, created with `0600` permissions |
-| MCP servers   | `~/.config/mcp/mcp.json`                      | Shared server definitions                                |
-| MCP overlay   | `~/.pi/agent/mcp.json`                        | Pi-only enable/disable flags, not copied shared secrets  |
+| Feature             | Location                                       | Contents                                                     |
+| ------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| Theme               | `themes/origin.json`                           | Packaged TUI theme; select `origin` in settings              |
+| Fast Mode           | `~/.pi/agent/fast-mode.json`                   | Global on/off preference                                     |
+| Router              | `~/.pi/agent/router.json`; native `auth.json`  | Rankings and aliases; native account credentials             |
+| Usage               | `~/.pi/agent/usage/*.jsonl`                    | Private token/cost metadata; no prompts or credentials       |
+| Usage Firecrawl key | `~/.pi/agent/auth.json` or `FIRECRAWL_API_KEY` | Optional existing Pi key for credits; separate from Executor |
+| MCP servers         | `~/.config/mcp/mcp.json`                       | Shared server definitions                                    |
+| MCP overlay         | `~/.pi/agent/mcp.json`                         | Pi-only enable/disable flags, not copied shared secrets      |
 
 ## Security model
 
 - Extensions and MCP servers run with your process permissions; they are not sandboxed.
 - Pi's auth store is protected plaintext, not an encrypted OS keychain.
-- Web tools validate URLs and bound response bodies, but Firecrawl must enforce private-network and redirect protection at provider egress.
+- MCP web operations can spend provider credits. Bound requests and review permissions for browser actions, autonomous jobs, and recurring monitors; provider egress owns private-network and redirect protection.
 - Repository files, external content, and model output are data, not authorization.
 - `resolving-merge-conflicts` may finish a merge/rebase and create a commit.
 - `yeet` commits, pushes, and creates or updates a ready-for-review PR. `autopilot` may commit/push fixes and reply to or resolve review threads, but never merges the PR.
@@ -135,7 +122,7 @@ Read extension-specific safety notes before enabling mutating or billed capabili
 
 ```text
 src/                      # Shared account, preference, and footer helpers
-extensions/               # Question, Fast Mode, Router, Usage, Web Tools, MCP
+extensions/               # Question, Fast Mode, Router, Usage, MCP
 skills/                   # The twelve bundles listed above
 themes/origin.json        # Packaged TUI theme
 THIRD_PARTY_NOTICES.md     # Skill provenance and licenses
@@ -166,7 +153,6 @@ Focused checks:
 bun run check:root
 bun run --filter pi-question check
 bun run --filter pi-fast-mode check
-bun run --filter pi-web-tools check
 bun run --filter pi-mcp check
 bun run format
 bun run lint

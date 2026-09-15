@@ -74,8 +74,8 @@ export async function loadLiveUsage(
       type: "api_key",
     });
   }
-  // Explicit tool-credit exception. Reuse the registered Web provider when present;
-  // standalone mode uses the same native key/env contract without loading Web's tools.
+  // Independent tool-credit reader: reuse a registered provider when present,
+  // otherwise resolve an existing Pi key or environment key without MCP credentials.
   // It has no models, so it is deliberately outside subscription/model account discovery.
   if (
     credentials.some((c) => c.providerId === "firecrawl" && c.type === "api_key") ||

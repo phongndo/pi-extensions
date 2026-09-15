@@ -127,7 +127,9 @@ test("empty dashboard explains missing logins", () => {
     () => {},
     () => 30,
   );
-  expect(text(view)).toContain("No signed-in subscriptions or Firecrawl key. Use /login.");
+  expect(text(view)).toContain(
+    "No signed-in subscriptions or Firecrawl key. Use /login for subscriptions or set FIRECRAWL_API_KEY for credits.",
+  );
 });
 
 test("compact reset rows retain every expiry while scrolling with configured keys", () => {

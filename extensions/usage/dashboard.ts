@@ -224,7 +224,8 @@ export class UsageDashboard implements Component {
         rows = [
           t.fg(
             "muted",
-            this.options.liveError ?? "No signed-in subscriptions or Firecrawl key. Use /login.",
+            this.options.liveError ??
+              "No signed-in subscriptions or Firecrawl key. Use /login for subscriptions or set FIRECRAWL_API_KEY for credits.",
           ),
         ];
     }

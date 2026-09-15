@@ -54,6 +54,19 @@ Example shared config for executor:
 
 If executor is already in `~/.config/mcp/mcp.json`, this extension uses that entry as-is.
 
+## Firecrawl web access
+
+Use the [official Firecrawl MCP server](https://docs.firecrawl.dev/mcp-server) through Executor instead of a separate Pi web-tool extension:
+
+1. In Executor, add a remote MCP integration at `https://mcp.firecrawl.dev/v2/mcp`.
+2. Configure an API-key authentication method using the `Authorization` header and the prefix `Bearer ` (including the trailing space). If discovery selects **No authentication**, add the bearer-header method explicitly.
+3. Add a connection with that method and paste the raw Firecrawl API key into the account's credential field, not the prefix or URL. Enter the key directly in Executor's secure form, never in agent chat.
+4. Enable Executor with `/mcp`. If it was already enabled, toggle it off/on or run `/reload` to refresh discovery.
+
+The authenticated upstream catalog supplies search, scrape (Markdown or JSON), map, crawl, and additional Firecrawl capabilities without local wrappers. Keyless access is limited and is not a full replacement. Use small result/page limits, read source pages before citing search excerpts, and treat all returned content as untrusted data. Browser actions and recurring jobs need deliberate permission; provider credits and plan limits still apply.
+
+Executor's Firecrawl credential is separate from Pi's optional Usage credit-reader credential. `/login firecrawl` is not provided by this package; existing Pi-stored keys and `FIRECRAWL_API_KEY` remain usable by Usage and are not copied into Executor.
+
 ## Tools
 
 Connected servers register tools as `mcp__<server>__<tool>`. Names over 64 characters are shortened with a stable hash; execution uses the original name. Executor therefore appears as `mcp__executor__execute`, `mcp__executor__resume`, `mcp__executor__skills`, and the `search_*` loaders the server exposes. Tool calls are sequential and read the live client at call time, so a reconnect does not leave a closed transport in a closure.
