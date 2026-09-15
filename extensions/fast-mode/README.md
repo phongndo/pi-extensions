@@ -121,7 +121,7 @@ mv ~/.pi/agent/fast-mode.json ~/.pi/agent/fast-mode.json.bad
 
 ## Child runtimes and compatibility
 
-Router keeps a provider's own id and models when it pools two or more subscription logins. Fast mode reads the router's `router:routes` event to learn which providers are pooled, so a routed provider keeps the same Fast preference and native request policy but its footer uses model metadata/documented fallbacks, not a pooled account entitlement. Catalog discovery does not probe an arbitrary account for a routed provider; each actual request still evaluates capabilities with its resolved account's auth. Other providers and individual login-slot IDs are not enabled as public Fast routes.
+Fast Mode applies only to the native `openai-codex` provider with the `openai-codex-responses` API. A custom proxy provider such as `local-codex` using `openai-responses` is outside this scope: `/fast` does not request priority on that path, and its status remains unavailable when enabled. Proxy service-tier configuration and actual provider admission must be handled separately. There are no account-pool event listeners or route aliases.
 
 Provider lookup and active-runtime stream decorators retain the global policy when provider objects/authentication are transferred into isolated child runtimes. They compose with existing payload hooks, catalog refreshes, immutable providers, and out-of-order teardown. Unsupported providers/APIs and mismatched payload models remain untouched.
 

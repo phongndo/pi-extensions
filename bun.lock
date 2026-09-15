@@ -83,27 +83,6 @@
         "typebox": "*",
       },
     },
-    "extensions/router": {
-      "name": "pi-router",
-      "version": "0.1.0",
-      "dependencies": {
-        "proper-lockfile": "4.1.2",
-      },
-      "peerDependencies": {
-        "@earendil-works/pi-ai": ">=0.85.1",
-        "@earendil-works/pi-coding-agent": ">=0.85.1",
-        "@earendil-works/pi-tui": ">=0.85.1",
-      },
-    },
-    "extensions/usage": {
-      "name": "pi-usage",
-      "version": "0.1.0",
-      "peerDependencies": {
-        "@earendil-works/pi-ai": ">=0.85.1",
-        "@earendil-works/pi-coding-agent": ">=0.85.1",
-        "@earendil-works/pi-tui": ">=0.85.1",
-      },
-    },
   },
   "trustedDependencies": [
     "@google/genai",
@@ -609,10 +588,6 @@
     "pi-mcp": ["pi-mcp@workspace:extensions/mcp"],
 
     "pi-question": ["pi-question@workspace:extensions/question"],
-
-    "pi-router": ["pi-router@workspace:extensions/router"],
-
-    "pi-usage": ["pi-usage@workspace:extensions/usage"],
 
     "pkce-challenge": ["pkce-challenge@5.0.1", "", {}, "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ=="],
 

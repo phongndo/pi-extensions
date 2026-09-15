@@ -33,12 +33,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isCodexModel(model: Model<Api> | undefined): model is Model<Api> {
-  // Router restores the native provider identity before the actual request. Recognize its
-  // public route in the UI too, without admitting arbitrary account slots or other APIs.
-  return (
-    (model?.provider === "openai-codex" || model?.provider === "accounts-openai-codex") &&
-    model.api === "openai-codex-responses"
-  );
+  return model?.provider === "openai-codex" && model.api === "openai-codex-responses";
 }
 
 /** Read only capability fields; never retain server-provided instructions or other catalog data. */

@@ -49,8 +49,6 @@
     "extensions": [
       "./extensions/question/index.ts",
       "./extensions/fast-mode/index.ts",
-      "./extensions/router/index.ts",
-      "./extensions/usage/index.ts",
       "./extensions/mcp/index.ts"
     ],
     "skills": [

@@ -65,7 +65,7 @@ Use the [official Firecrawl MCP server](https://docs.firecrawl.dev/mcp-server) t
 
 The authenticated upstream catalog supplies search, scrape (Markdown or JSON), map, crawl, and additional Firecrawl capabilities without local wrappers. Keyless access is limited and is not a full replacement. Use small result/page limits, read source pages before citing search excerpts, and treat all returned content as untrusted data. Browser actions and recurring jobs need deliberate permission; provider credits and plan limits still apply.
 
-Executor's Firecrawl credential is separate from Pi's optional Usage credit-reader credential. `/login firecrawl` is not provided by this package; existing Pi-stored keys and `FIRECRAWL_API_KEY` remain usable by Usage and are not copied into Executor.
+Executor owns the Firecrawl credential. `/login firecrawl` is not provided by this package; existing Pi-stored keys and `FIRECRAWL_API_KEY` are not copied into Executor. Check credits in Firecrawl's dashboard.
 
 ## Tools
 

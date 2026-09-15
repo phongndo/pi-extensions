@@ -1,18 +1,16 @@
 # Pi Extensions
 
-A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, multi-account routing, usage dashboards, MCP-powered web access and tools, thirteen skills, and the `origin` theme.
+A local package for [Pi](https://github.com/earendil-works/pi): interactive clarification, Codex Fast Mode, MCP-powered web access and tools, thirteen skills, and the `origin` theme.
 
-This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/docs/agent-skills.md) distributes compatible skill copies to other agents through their existing adapters. Chezmoi retains the single native `~/.pi/agent/settings.json` template and package pointer; it does not generate a Pi mirror or write into this checkout. Other agents keep their own native config/skill roots, not Pi package copies.
+This repository owns the complete **Pi package**. Pi loads it directly. [nix-config's chezmoi setup](https://github.com/phongndo/nixos-config/blob/main/home/chezmoi.nix) distributes compatible skill copies to other agents through their existing adapters. Chezmoi retains the single native `~/.pi/agent/settings.json` template and package pointer; it does not generate a Pi mirror or write into this checkout. Other agents keep their own native config/skill roots, not Pi package copies.
 
 ## Extension suite
 
-| Extension                                   | Entry points                                                                 | Side effects                                                                                  |
-| ------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Question](extensions/question/README.md)   | `question`                                                                   | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
-| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]`                                  | Global preference; eligible Codex requests ask for priority service, which may affect billing |
-| [Router](extensions/router/README.md)       | `/router`, `/router account`, `/router alias`; native `/login` and `/logout` | Label subscriptions; provider-grouped priority/fallback routing                               |
-| [Usage](extensions/usage/README.md)         | `/usage [provider]`                                                          | Remaining subscription allowances and Firecrawl credits                                       |
-| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                                                  | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
+| Extension                                   | Entry points                                | Side effects                                                                                  |
+| ------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [Question](extensions/question/README.md)   | `question`                                  | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
+| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]` | Global preference; eligible Codex requests ask for priority service, which may affect billing |
+| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                 | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
 
 Native footer slots display minimal, separated labels such as `speed fast · mcp 1/2`. Fast is hidden when off.
 
@@ -67,23 +65,17 @@ Pi packages execute code with your permissions. Review the checkout before insta
 
 Use the official Firecrawl MCP server through [Executor](https://executor.sh/docs/mcp-proxy), enabled in Pi with `/mcp`. See [Firecrawl setup](extensions/mcp/README.md#firecrawl-web-access) for the endpoint and authentication details. Executor owns the web-tool connection and credentials; this package does not maintain a separate Firecrawl tool wrapper.
 
-After updating, run `/reload` or restart Pi to unload the removed native `search`, `map`, `fetch`, `crawl`, and `extract` tools. Existing Pi credentials and temporary web responses are left untouched. Usage can still read Firecrawl credits from a previously stored Pi key or `FIRECRAWL_API_KEY`; it does not read Executor's credentials.
+After updating, run `/reload` or restart Pi to unload the removed native `search`, `map`, `fetch`, `crawl`, and `extract` tools. Existing Pi credentials and temporary web responses are left untouched.
 
 Treat returned web content as untrusted data. Use small result/page limits; extraction, autonomous research, and recurring monitors can spend additional Firecrawl credits.
 
-### Accounts and usage
+### Accounts and quotas
 
-```text
-/login
-/login
-/router
-/usage
-/usage openai-codex
-```
+Account pooling is delegated to [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), configured outside this package. nix-config runs an independent local proxy on the Mac and NixOS box. Both default to `local-codex/gpt-6-astra` at `http://127.0.0.1:8317/v1`; see the [proxy configuration](https://github.com/phongndo/nixos-config/blob/main/home/cli-proxy.nix).
 
-For Pi-native OAuth subscriptions, `/login` shows one provider row with a compact account count (`OpenAI Codex ✓ 1`); selecting it adds another account directly, with duplicate detection. API-key and non-subscription OAuth logins retain native behavior and are never pooled. `/logout` lists individual accounts and available emails. `/router` shows each provider's session default in its header (`OpenAI Codex: personal`), with ranked fallbacks directly underneath. Type in the `> ` search input to filter accounts, navigate with ↑/↓, and press Space to set the highlighted account as its provider's session default (✓). Ctrl+↑/↓ reorders fallbacks without changing the default; Enter saves and Esc cancels pending changes. The footer reads `route <alias>`. With Usage loaded, a native status slot alongside it shows the active subscription account's remaining allowance windows. Rows show rank, optional alias, and the default checkmark—no auth badges or email placeholders. Press Ctrl+E to reveal/hide the selected email, Ctrl+N to alias an account, or `/router alias` for a single subscription. Extra subscription accounts activate same-provider/model routing, never falling back to API keys or replaying partial output.
+Use `cli-proxy-local login` to add accounts, `cli-proxy-local check` to list available models, and the proxy's management dashboard to view accounts and quotas. Use `/model` to switch providers. Pi's native `/login` and `/logout` remain unchanged for direct providers.
 
-Usage is a **separate extension**, opening directly to remaining allowances under flat provider/account headers. It includes Pi-native OAuth subscriptions and the explicit Firecrawl team-credit exception. Codex shows every returned window and banked-reset expiry; Firecrawl shows remaining credits. Grok reads the reported credit percentage/reset from the bearer billing endpoint used by CodexBar, using Pi's native login; missing percentages remain unknown. Short horizontal bars keep each limit readable, with compact banked-reset countdowns underneath. Future subscription providers are discovered through native metadata, with extensible allowance adapters. Usage shows live snapshots only; it does not record request history. Existing history files from earlier versions remain untouched. See [Router](extensions/router/README.md) and [Usage](extensions/usage/README.md) for testing and storage.
+Router and Usage have been removed, including their commands and account polling. Restart Pi or run `/reload` to unload them. Existing credentials, session archives, and old runtime files are left untouched. [Fast Mode](extensions/fast-mode/README.md) remains native-Codex-only; it does not enable priority service on the custom proxy provider.
 
 ### Context management
 
@@ -95,15 +87,12 @@ Pi 0.85.1 defaults to auto-compaction enabled, 20,000 recent tokens retained, an
 
 Paths assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature             | Location                                       | Contents                                                     |
-| ------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
-| Theme               | `themes/origin.json`                           | Packaged TUI theme; select `origin` in settings              |
-| Fast Mode           | `~/.pi/agent/fast-mode.json`                   | Global on/off preference                                     |
-| Router              | `~/.pi/agent/router.json`; native `auth.json`  | Rankings and aliases; native account credentials             |
-| Usage               | `~/.pi/agent/usage/*.jsonl`                    | Private token/cost metadata; no prompts or credentials       |
-| Usage Firecrawl key | `~/.pi/agent/auth.json` or `FIRECRAWL_API_KEY` | Optional existing Pi key for credits; separate from Executor |
-| MCP servers         | `~/.config/mcp/mcp.json`                       | Shared server definitions                                    |
-| MCP overlay         | `~/.pi/agent/mcp.json`                         | Pi-only enable/disable flags, not copied shared secrets      |
+| Feature     | Location                     | Contents                                                |
+| ----------- | ---------------------------- | ------------------------------------------------------- |
+| Theme       | `themes/origin.json`         | Packaged TUI theme; select `origin` in settings         |
+| Fast Mode   | `~/.pi/agent/fast-mode.json` | Global on/off preference                                |
+| MCP servers | `~/.config/mcp/mcp.json`     | Shared server definitions                               |
+| MCP overlay | `~/.pi/agent/mcp.json`       | Pi-only enable/disable flags, not copied shared secrets |
 
 ## Security model
 
@@ -121,9 +110,9 @@ Read extension-specific safety notes before enabling mutating or billed capabili
 ## Repository layout
 
 ```text
-src/                      # Shared account, preference, and footer helpers
-extensions/               # Question, Fast Mode, Router, Usage, MCP
-skills/                   # The twelve bundles listed above
+src/                      # Shared preference and footer helpers
+extensions/               # Question, Fast Mode, MCP
+skills/                   # The thirteen bundles listed above
 themes/origin.json        # Packaged TUI theme
 THIRD_PARTY_NOTICES.md     # Skill provenance and licenses
 package.json              # Pi resource manifest, Bun workspaces, and checks
