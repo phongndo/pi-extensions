@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import type { Api, Model, ProviderHeaders, StreamOptions } from "@earendil-works/pi-ai";
+import { FastModeRoutes, NATIVE_FAST_ROUTES, isCodexModel } from "./routes.ts";
+
+export { isCodexModel } from "./routes.ts";
 
 export interface FastCapability {
   status: "supported" | "unsupported" | "unknown";
@@ -30,10 +33,6 @@ const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function isCodexModel(model: Model<Api> | undefined): model is Model<Api> {
-  return model?.provider === "openai-codex" && model.api === "openai-codex-responses";
 }
 
 /** Read only capability fields; never retain server-provided instructions or other catalog data. */
@@ -67,12 +66,16 @@ export function capabilityFromMetadata(
   };
 }
 
-export function resolveFastCapability(model: Model<Api> | undefined): FastCapability {
-  if (!isCodexModel(model)) {
+export function resolveFastCapability(
+  model: Model<Api> | undefined,
+  routes: FastModeRoutes = NATIVE_FAST_ROUTES,
+  auth?: CapabilityAuth,
+): FastCapability {
+  if (!routes.includes(model, auth?.baseUrl)) {
     return {
       status: "unsupported",
       source: "none",
-      reason: "Requires the openai-codex provider and Responses API.",
+      reason: "Requires native Codex or an explicitly opted-in Responses proxy route.",
     };
   }
   const metadata = capabilityFromMetadata(model, "model");
@@ -81,7 +84,9 @@ export function resolveFastCapability(model: Model<Api> | undefined): FastCapabi
     return {
       status: "supported",
       source: "fallback",
-      reason: "Documented model fallback; account availability is unverified.",
+      reason: isCodexModel(model)
+        ? "Documented model fallback; account availability is unverified."
+        : "Documented model fallback on an opted-in proxy route; upstream account availability is unverified.",
     };
   }
   if (SEPARATE_MODELS.has(model.id)) {
@@ -213,14 +218,20 @@ export class CodexCapabilities {
 
   private readonly fetchCatalog: typeof fetch;
   private readonly now: () => number;
+  private readonly routes: FastModeRoutes;
 
-  constructor(fetchCatalog: typeof fetch = globalThis.fetch, now: () => number = Date.now) {
+  constructor(
+    fetchCatalog: typeof fetch = globalThis.fetch,
+    now: () => number = Date.now,
+    routes: FastModeRoutes = NATIVE_FAST_ROUTES,
+  ) {
     this.fetchCatalog = fetchCatalog;
     this.now = now;
+    this.routes = routes;
   }
 
   resolve(model: Model<Api> | undefined, auth?: CapabilityAuth): FastCapability {
-    if (!isCodexModel(model)) return resolveFastCapability(model);
+    if (!isCodexModel(model)) return resolveFastCapability(model, this.routes, auth);
     const local = capabilityFromMetadata(model, "model");
     if (local) return local;
     const snapshot = this.snapshot;

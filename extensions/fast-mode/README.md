@@ -2,22 +2,21 @@
 
 A global Codex Fast-mode preference with a minimal native footer status, capability discovery, and private request diagnostics. Requires Pi **0.85.1 or newer**; tested against 0.85.1.
 
-Fast mode requests `service_tier: "priority"` for eligible `openai-codex` / `openai-codex-responses` calls. It **does not lower reasoning, change models, or promise a speedup**. The preference is global across Pi processes sharing the same agent directory and defaults to off.
+Fast mode requests `service_tier: "priority"` for eligible native `openai-codex` / `openai-codex-responses` calls and explicitly opted-in Codex proxies using `openai-responses`. It **does not lower reasoning, change models, or promise a speedup**. The preference is global across Pi processes sharing the same agent directory and defaults to off.
 
 > If your saved preference is already on, this version starts requesting priority for **GPT-6 Astra** after reload. OpenAI documents Astra Fast mode at **2.5× Standard credit consumption**, where available. Check your account terms. [Codex speed and pricing](https://developers.openai.com/codex/speed)
 
 ## Commands
 
-| Command         | Effect                                                                      |
-| --------------- | --------------------------------------------------------------------------- |
-| `/fast`         | Toggle the global preference                                                |
-| `/fast on`      | Enable; repeated calls do not rewrite unchanged state                       |
-| `/fast off`     | Disable; repeated calls do not rewrite unchanged state                      |
-| `/fast status`  | Read-only check: `Fast mode on` or `Fast mode off`                          |
-| `/fast refresh` | Refresh model capabilities, then show status; does not write the preference |
-| `/fast details` | Opt-in diagnostics: model support, discovery, and last request              |
+| Command         | Effect                                                                        |
+| --------------- | ----------------------------------------------------------------------------- |
+| `/fast`         | Toggle the global preference                                                  |
+| `/fast on`      | Enable; repeated calls do not rewrite unchanged state                         |
+| `/fast off`     | Disable; repeated calls do not rewrite unchanged state                        |
+| `/fast status`  | Read-only diagnostics: preference, model support, discovery, and last request |
+| `/fast refresh` | Refresh model capabilities, then show on/off; does not write the preference   |
 
-Normal commands reply only **`Fast mode on`** or **`Fast mode off`**. Startup is quiet; errors are still reported. Detailed output appears only when explicitly requested with `/fast details`.
+Toggle, on/off, and refresh commands reply only **`Fast mode on`** or **`Fast mode off`**. Startup is quiet; errors are still reported. Detailed output appears only when explicitly requested with `/fast status`.
 
 After installing/updating, run **`/reload`**, then `/fast status`.
 
@@ -27,7 +26,7 @@ Uses Pi's public `ctx.ui.setStatus` API: **`speed fast`** when enabled and suppo
 
 Pi lays this out alongside other extension statuses. No model-line decoration, prototype patch, or custom-footer replacement. Status updates while idle and clears on shutdown/reload. RPC receives the same minimal labels; headless modes publish no UI.
 
-### Detailed status (`/fast details`)
+### Detailed status (`/fast status`)
 
 | Status                                 | Meaning                                                |
 | -------------------------------------- | ------------------------------------------------------ |
@@ -36,7 +35,7 @@ Pi lays this out alongside other extension statuses. No model-line decoration, p
 | `fast on · unavailable for this model` | Preference on, but the selected model is unsupported   |
 | `fast on · support unknown`            | No usable capability metadata or documented fallback   |
 | `fast unknown`                         | State has not been read yet                            |
-| `fast error`                           | State/policy is unavailable; inspect `/fast details`   |
+| `fast error`                           | State/policy is unavailable; inspect `/fast status`    |
 
 **On is a preference, not proof of backend admission.** Changing it affects subsequent requests, not one already sent. Off leaves another caller's explicit `service_tier` unchanged; it is not a guarantee that the provider uses Standard routing.
 
@@ -64,15 +63,15 @@ Pi 0.85.1 does not expose service-tier capabilities in its public `Model` interf
 - Catalogs are memory-only, credential/account-scoped, and cached for 15 minutes. Failed discovery is retried no more than once per minute unless explicitly refreshed.
 - Discovery has a five-second session-level deadline and a 4 MiB response bound. Shutdown/reload cancels it and invalidates late results.
 - Only model IDs and normalized capability decisions are retained. Catalog instructions, prompts, credentials, and response bodies are never persisted or logged.
-- `PI_OFFLINE=1` disables discovery. Neither `/fast status` nor `/fast details` refreshes credentials or fetches a catalog.
+- `PI_OFFLINE=1` disables discovery. `/fast status` does not refresh credentials or fetch a catalog.
 
-Discovery is **never performed inside the request payload hook**. Until metadata arrives, requests use the documented fallback or remain unchanged if support is unknown. A fallback is not proof of account entitlement. Failures are explained by `/fast details`; they do not disable an otherwise documented model.
+Discovery is **never performed inside the request payload hook**. Until metadata arrives, requests use the documented fallback or remain unchanged if support is unknown. A fallback is not proof of account entitlement. Failures are explained by `/fast status`; they do not disable an otherwise documented model.
 
 This adapter does not alter Pi's model picker, model catalog, authentication, reasoning capabilities, or generated model definitions. Future Pi versions exposing native metadata can feed the same resolver without replacing the rest of the extension.
 
 ## Request diagnostics
 
-`/fast details` includes the newest observed request from this extension instance (including inherited child-runtime calls):
+`/fast status` includes the newest observed request from this extension instance (including inherited child-runtime calls):
 
 - model and timestamp;
 - requested tier, and whether Fast mode set it;
@@ -119,9 +118,37 @@ Invalid state is not mislabeled as off. Eligible requests fail on a state-read e
 mv ~/.pi/agent/fast-mode.json ~/.pi/agent/fast-mode.json.bad
 ```
 
+## Codex proxies (explicit opt-in)
+
+To use `/fast` with CLIProxyAPI while keeping its account pooling, create `~/.pi/agent/fast-mode-proxies.json`:
+
+```json
+{
+  "version": 1,
+  "routes": [
+    {
+      "provider": "local-codex",
+      "baseUrl": "http://127.0.0.1:8317/v1"
+    }
+  ]
+}
+```
+
+Then run **`/reload`**, followed by `/fast on` and `/fast status`. If your global preference is already on, opting in starts requesting priority after reload. This can increase credit consumption; it does not prove that an upstream account admits the request to Fast mode.
+
+- Only the exact provider, the `openai-responses` API, and the normalized endpoint match. Trailing URL slashes are ignored; different hosts (including `localhost` versus `127.0.0.1`), ports, schemes and paths are separate routes. Runtime-resolved endpoint changes are checked on the actual request model.
+- The same metadata and exact-model fallback rules apply. Unknown model names/aliases are not automatically enabled just because their proxy is opted in.
+- `/fast off` stops this extension from setting priority. Remove any static `samplingParams.service_tier` or proxy-side override if you want this toggle to be the sole owner; off intentionally preserves another caller's explicit tier.
+- Proxy credentials are never used for capability discovery, and the extension does not query upstream accounts or alter pool selection. `/fast status` identifies the opted-in route as a proxy and reports requested versus raw response tiers separately. A response reporting `default` is not proof that Fast was ignored. See the [upstream explanation](https://github.com/router-for-me/CLIProxyAPI/issues/5772#issuecomment-5647673503).
+- The file is optional; without it, behavior stays native-Codex-only. An invalid file shows `speed !` and installs no policy decorators. Fix it and `/reload`.
+- Routes are snapshotted at session start/reload, **not** hot-reloaded by `/fast refresh`. After editing/removing the file, reload every affected Pi session. No network requests or credential resolution occur when reading it.
+- The file lives beside `fast-mode.json`, including with a custom agent directory or SDK `statePath`. SDK embeddings may instead pass `proxyRoutes: [{ provider, baseUrl }]` to `createFastModeExtension`; an explicit empty array disables proxy opt-in for that instance.
+
+Use only trusted Codex-compatible proxy routes. Opt-in requests the `priority` wire value; it does not add an account entitlement or guarantee a speedup. The file contains no credentials. See [research and alternatives](../../docs/research/fast-mode-cli-proxy.md).
+
 ## Child runtimes and compatibility
 
-Fast Mode applies only to the native `openai-codex` provider with the `openai-codex-responses` API. A custom proxy provider such as `local-codex` using `openai-responses` is outside this scope: `/fast` does not request priority on that path, and its status remains unavailable when enabled. Proxy service-tier configuration and actual provider admission must be handled separately. There are no account-pool event listeners or route aliases.
+Native Codex and opted-in proxy providers share the same global on/off policy. There are no account-pool event listeners or model-route aliases.
 
 Provider lookup and active-runtime stream decorators retain the global policy when provider objects/authentication are transferred into isolated child runtimes. They compose with existing payload hooks, catalog refreshes, immutable providers, and out-of-order teardown. Unsupported providers/APIs and mismatched payload models remain untouched.
 
@@ -134,6 +161,6 @@ bun run --filter pi-fast-mode check
 bun run --filter pi-fast-mode format
 ```
 
-Tests use fake credentials and synthetic responses, not paid model calls. Coverage includes Astra, positive/negative/unknown capabilities, credential-scoped catalog caching, stale-response races, actual Codex SSE serialization, response-tier diagnostics, the real Pi loader/footer, commands, cross-session synchronization, atomic persistence, and child/runtime refresh behavior.
+Tests use fake credentials and synthetic responses, not paid model calls. Coverage includes opt-in proxy request serialization and child inheritance, route/API/model isolation, resolved endpoint overrides, route reload and validation, proxy discovery exclusion, Astra, positive/negative/unknown capabilities, credential-scoped catalog caching, stale-response races, actual Codex SSE serialization, response-tier diagnostics, the real Pi loader/footer, commands, cross-session synchronization, atomic persistence, and child/runtime refresh behavior.
 
 The discovery protocol follows [Codex's ModelsClient](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/models.rs); capability checks follow [Codex model metadata](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).

@@ -9,13 +9,9 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { OpenAICodexResponsesOptions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 
-import {
-  isCodexModel,
-  isRecord,
-  resolveFastCapability,
-  type FastCapabilityResolver,
-} from "./capabilities.ts";
+import { isRecord, resolveFastCapability, type FastCapabilityResolver } from "./capabilities.ts";
 import type { FastRequestJournal, FastRequestObservation } from "./diagnostics.ts";
+import { NATIVE_FAST_ROUTES, type FastModeRoutes } from "./routes.ts";
 
 const FAST_PROVIDER_MARKER = Symbol("pi-fast-mode.provider");
 
@@ -24,6 +20,7 @@ type CodexTierOptions = Pick<OpenAICodexResponsesOptions, "serviceTier">;
 export type FastModeReader = () => Promise<boolean>;
 
 export interface FastModeHooks {
+  routes?: FastModeRoutes;
   resolveCapability?: FastCapabilityResolver;
   journal?: FastRequestJournal;
   isActive?: () => boolean;
@@ -69,20 +66,20 @@ export function withFastPayload<TOptions extends StreamOptions>(
   effective.onPayload = async function (this: unknown, payload, requestModel) {
     const previousResult = await previous?.call(this, payload, requestModel);
     const transformed = previousResult === undefined ? payload : previousResult;
+    // The receiver is the final API options, including runtime-resolved auth.
+    // Pi applies endpoint overrides to requestModel; streamSimple may copy this hook.
+    const requestOptions = isRecord(this) ? (this as StreamOptions) : effective;
     if (
       hooks?.isActive?.() === false ||
-      !isCodexModel(requestModel) ||
+      !(hooks?.routes ?? NATIVE_FAST_ROUTES).includes(requestModel) ||
       !isRecord(transformed) ||
       transformed.model !== requestModel.id
     )
       return transformed;
 
-    // The receiver is the final API options, including runtime-resolved auth. This also
-    // works when streamSimple copied the hook into a separate API options object.
-    const requestOptions = isRecord(this) ? (this as StreamOptions) : effective;
     const capability =
       hooks?.resolveCapability?.(requestModel, requestOptions) ??
-      resolveFastCapability(requestModel);
+      resolveFastCapability(requestModel, hooks?.routes, requestOptions);
     const applied = capability.status === "supported" && (await readEnabled());
     if (hooks?.isActive?.() === false) return transformed;
     const fastPayload = applied ? { ...transformed, service_tier: "priority" } : transformed;
@@ -109,7 +106,7 @@ export function isFastModeProvider(provider: Provider): boolean {
   );
 }
 
-/** Decorate the Codex provider so child ModelRuntimes inherit Fast mode without loading extensions. */
+/** Decorate an eligible provider so child ModelRuntimes inherit policy without loading extensions. */
 export function decorateCodexProvider(
   provider: Provider,
   readEnabled: FastModeReader,

@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { setFooterStatus } from "../../src/footer-status.ts";
 import {
@@ -10,11 +11,20 @@ import { FastRequestJournal } from "./diagnostics.ts";
 import { FAST_MODE_STATUS_KEY, formatFastDetails, formatFastFooterStatus } from "./footer.ts";
 import { FastStateMonitor } from "./monitor.ts";
 import { installFastModeProviderLookup } from "./runtime.ts";
+import {
+  FastModeRoutes,
+  NATIVE_FAST_ROUTES,
+  loadFastProxyRoutes,
+  type FastProxyRoute,
+} from "./routes.ts";
+import { FAST_MODE_STATE_PATH } from "./state.ts";
 
 export { installFastModeProviderLookup } from "./runtime.ts";
 
 export interface FastModeExtensionOptions {
   statePath?: string;
+  /** SDK opt-in; otherwise read fast-mode-proxies.json beside the preference file on startup/reload. */
+  proxyRoutes?: readonly FastProxyRoute[];
   fetchCatalog?: typeof fetch;
   /** Disable discovery for offline embedding/testing; PI_OFFLINE also disables it. */
   discovery?: boolean;
@@ -49,16 +59,15 @@ export function createFastModeExtension(
     let current: FastModeSession | undefined;
 
     pi.registerCommand("fast", {
-      description:
-        "Codex Fast mode globally: on, off, status, refresh, details (bare /fast toggles)",
+      description: "Codex Fast mode globally: on, off, status, refresh (bare /fast toggles)",
       getArgumentCompletions: (prefix) =>
-        ["on", "off", "status", "refresh", "details"]
+        ["on", "off", "status", "refresh"]
           .filter((value) => value.startsWith(prefix))
           .map((value) => ({ value, label: value })),
       handler: async (args, ctx) => {
         const action = args.trim().toLowerCase();
-        if (!["", "on", "off", "status", "refresh", "details"].includes(action)) {
-          ctx.ui.notify("Usage: /fast [on|off|status|refresh|details]", "warning");
+        if (!["", "on", "off", "status", "refresh"].includes(action)) {
+          ctx.ui.notify("Usage: /fast [on|off|status|refresh]", "warning");
           return;
         }
         if (!current) {
@@ -68,7 +77,7 @@ export function createFastModeExtension(
         const session = current;
         session.setContext(ctx);
         try {
-          if (action === "status" || action === "refresh" || action === "details") {
+          if (action === "status" || action === "refresh") {
             await session.state.refresh();
             if (action === "refresh") await session.discover(true);
           } else {
@@ -77,7 +86,7 @@ export function createFastModeExtension(
             void session.discover();
           }
           if (current === session)
-            ctx.ui.notify(action === "details" ? session.details() : session.status(), "info");
+            ctx.ui.notify(action === "status" ? session.status() : session.summary(), "info");
         } catch (error) {
           if (current === session)
             ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -116,7 +125,8 @@ class FastModeSession {
   policyError?: string;
   private ctx: ExtensionContext;
   private readonly options: FastModeExtensionOptions;
-  private readonly capabilities: CodexCapabilities;
+  private capabilities: CodexCapabilities;
+  private routes = NATIVE_FAST_ROUTES;
   private readonly journal: FastRequestJournal;
   private readonly lifetime = new AbortController();
   private active = true;
@@ -156,14 +166,14 @@ class FastModeSession {
     }
   }
 
-  status(): string {
+  summary(): string {
     const state = this.snapshot();
     if (state.error) throw new Error(state.error);
     if (state.enabled === undefined) return "Fast mode unknown";
     return `Fast mode ${state.enabled ? "on" : "off"}`;
   }
 
-  details(): string {
+  status(): string {
     return formatFastDetails(
       this.snapshot(),
       this.ctx.model,
@@ -182,6 +192,7 @@ class FastModeSession {
     if (key !== this.modelKey) {
       this.modelKey = key;
       this.uiAuth = undefined;
+      this.discoveryError = undefined;
       this.discovery?.controller.abort();
       this.discovery = undefined;
       this.discoveryGeneration++;
@@ -192,10 +203,18 @@ class FastModeSession {
 
   async start(): Promise<void> {
     try {
+      this.routes = this.options.proxyRoutes
+        ? new FastModeRoutes(this.options.proxyRoutes)
+        : await loadFastProxyRoutes(
+            join(dirname(this.options.statePath ?? FAST_MODE_STATE_PATH), "fast-mode-proxies.json"),
+          );
+      if (!this.active) return;
+      this.capabilities = new CodexCapabilities(this.options.fetchCatalog, Date.now, this.routes);
       this.removePolicy = installFastModeProviderLookup(
         this.ctx.modelRegistry,
         () => this.state.refresh(),
         {
+          routes: this.routes,
           resolveCapability: (model, requestOptions) =>
             this.capabilities.resolve(model, requestOptions),
           journal: this.journal,
@@ -220,7 +239,12 @@ class FastModeSession {
     if (!this.active || this.policyError) return;
     if (this.discovery && !force) return this.discovery.promise;
     const model = this.ctx.model;
-    if (!isCodexModel(model)) return;
+    if (!isCodexModel(model)) {
+      if (this.routes.includes(model))
+        this.discoveryError =
+          "Proxy capability discovery is disabled: upstream account availability and priority admission are unverified. Proxy credentials are never sent to ChatGPT.";
+      return;
+    }
     if (
       this.options.discovery === false ||
       (process.env.PI_OFFLINE && process.env.PI_OFFLINE !== "0")

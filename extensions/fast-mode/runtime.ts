@@ -1,5 +1,6 @@
 import type { Provider } from "@earendil-works/pi-ai";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { NATIVE_FAST_ROUTES } from "./routes.ts";
 import {
   decorateCodexProvider,
   isFastModeProvider,
@@ -34,7 +35,9 @@ function installFastModeRuntime(runtime: ModelRuntime, registration: Registratio
       runtime,
     ) as ModelRuntime["streamSimple"];
     const needsDecoration = (providerId: string): boolean => {
-      if (providerId !== "openai-codex") return false;
+      const current = registrations.values().next().value;
+      if (!current || !(current.hooks?.routes ?? NATIVE_FAST_ROUTES).hasProvider(providerId))
+        return false;
       const provider =
         runtime.getRegisteredNativeProvider(providerId) ?? runtime.getProvider(providerId);
       return provider !== undefined && !isFastModeProvider(provider);
@@ -128,7 +131,13 @@ export function installFastModeProviderLookup(
     const caches = new WeakMap<Registration, WeakMap<Provider, Provider>>();
     const decorate = (provider: Provider | undefined): Provider | undefined => {
       const current = registrations.values().next().value;
-      if (!current || !provider || isFastModeProvider(provider)) return provider;
+      if (
+        !current ||
+        !provider ||
+        isFastModeProvider(provider) ||
+        !(current.hooks?.routes ?? NATIVE_FAST_ROUTES).hasProvider(provider.id)
+      )
+        return provider;
       let cache = caches.get(current);
       if (!cache) {
         cache = new WeakMap();
@@ -141,14 +150,10 @@ export function installFastModeProviderLookup(
       }
       return decorated;
     };
-    const getProvider = (providerId: string) => {
-      const provider = originalGetProvider.call(registry, providerId);
-      return providerId === "openai-codex" ? decorate(provider) : provider;
-    };
-    const getNativeProvider = (providerId: string) => {
-      const provider = originalGetNativeProvider.call(registry, providerId);
-      return providerId === "openai-codex" ? decorate(provider) : provider;
-    };
+    const getProvider = (providerId: string) =>
+      decorate(originalGetProvider.call(registry, providerId));
+    const getNativeProvider = (providerId: string) =>
+      decorate(originalGetNativeProvider.call(registry, providerId));
     const restore = () => {
       if (registry.getProvider === getProvider) registry.getProvider = originalGetProvider;
       if (registry.getRegisteredNativeProvider === getNativeProvider)

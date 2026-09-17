@@ -103,7 +103,7 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.deepEqual(app.notifications, [], "startup stays quiet");
   assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), undefined);
   await app.command("status");
-  assert.equal(app.notifications.at(-1), "Fast mode off");
+  assert.match(app.notifications.at(-1)!, /^fast off \(global\)/);
   await assert.rejects(stat(path), { code: "ENOENT" });
   await app.command("on");
   assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
@@ -112,14 +112,17 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   await app.command("on");
   assert.equal(app.notifications.at(-1), "Fast mode on");
   await app.command("status");
-  assert.equal(app.notifications.at(-1), "Fast mode on");
-  await app.command("details");
+  assert.match(app.notifications.at(-1)!, /^fast on \(global\)/);
   assert.match(app.notifications.at(-1)!, /Support: supported \(fallback\)/);
   assert.match(app.notifications.at(-1)!, /Last request:/);
   assert.equal((await stat(path)).mtimeMs, modified);
-  assert.deepEqual(app.definition.getArgumentCompletions?.("d"), [
-    { value: "details", label: "details" },
+  assert.deepEqual(app.definition.getArgumentCompletions?.("s"), [
+    { value: "status", label: "status" },
   ]);
+  assert.deepEqual(app.definition.getArgumentCompletions?.("d"), []);
+  await app.command("details");
+  assert.equal(app.notifications.at(-1), "Usage: /fast [on|off|status|refresh]");
+  assert.equal((await stat(path)).mtimeMs, modified);
   app.ctx.model = model("gpt-future");
   await app.emit("model_select");
   assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed ?");
@@ -176,6 +179,7 @@ test("explicit capability refresh changes UI support without changing saved stat
   const path = join(root, "fast-mode.json");
   await saveFastMode(true, path);
   let calls = 0;
+  let authCalls = 0;
   const app = await harness(path, {
     discovery: true,
     fetchCatalog: async () => {
@@ -184,7 +188,10 @@ test("explicit capability refresh changes UI support without changing saved stat
     },
   });
   app.ctx.model = model("gpt-future");
-  app.registry.getApiKeyAndHeaders = async () => ({ ok: true, apiKey: token() });
+  app.registry.getApiKeyAndHeaders = async () => {
+    authCalls++;
+    return { ok: true, apiKey: token() };
+  };
   t.after(async () => {
     await app.emit("session_shutdown");
     await rm(root, { recursive: true, force: true });
@@ -195,12 +202,13 @@ test("explicit capability refresh changes UI support without changing saved stat
   assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
   assert.equal(app.notifications.at(-1), "Fast mode on");
   const count = calls;
+  const authCount = authCalls;
   const before = (await stat(path)).mtimeMs;
   await app.command("status");
-  assert.equal(app.notifications.at(-1), "Fast mode on");
-  await app.command("details");
+  assert.match(app.notifications.at(-1)!, /^fast on \(global\)/);
   assert.match(app.notifications.at(-1)!, /Support: supported \(catalog\)/);
-  assert.equal(calls, count, "status and details do not fetch or refresh credentials");
+  assert.equal(calls, count, "status does not fetch a catalog");
+  assert.equal(authCalls, authCount, "status does not refresh credentials");
   assert.equal((await stat(path)).mtimeMs, before);
 });
 

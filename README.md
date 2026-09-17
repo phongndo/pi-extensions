@@ -6,11 +6,11 @@ This repository owns the complete **Pi package**. Pi loads it directly. [nix-con
 
 ## Extension suite
 
-| Extension                                   | Entry points                                | Side effects                                                                                  |
-| ------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Question](extensions/question/README.md)   | `question`                                  | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
-| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh\|details]` | Global preference; eligible Codex requests ask for priority service, which may affect billing |
-| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`                 | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
+| Extension                                   | Entry points                       | Side effects                                                                                  |
+| ------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| [Question](extensions/question/README.md)   | `question`                         | Pauses for clarification and resumes the same tool call; supports TUI and RPC                 |
+| [Fast Mode](extensions/fast-mode/README.md) | `/fast [on\|off\|status\|refresh]` | Global preference; eligible Codex requests ask for priority service, which may affect billing |
+| [MCP](extensions/mcp/README.md)             | `/mcp`, `mcp__server__tool`        | Runs configured MCP tools; persists Pi-only enable/disable flags                              |
 
 Native footer slots display minimal, separated labels such as `speed fast · mcp 1/2`. Fast is hidden when off.
 
@@ -75,7 +75,7 @@ Account pooling is delegated to [CLIProxyAPI](https://github.com/router-for-me/C
 
 Use `cli-proxy-local login` to add accounts, `cli-proxy-local check` to list available models, and the proxy's management dashboard to view accounts and quotas. Use `/model` to switch providers. Pi's native `/login` and `/logout` remain unchanged for direct providers.
 
-Router and Usage have been removed, including their commands and account polling. Restart Pi or run `/reload` to unload them. Existing credentials, session archives, and old runtime files are left untouched. [Fast Mode](extensions/fast-mode/README.md) remains native-Codex-only; it does not enable priority service on the custom proxy provider.
+Router and Usage have been removed, including their commands and account polling. Restart Pi or run `/reload` to unload them. Existing credentials, session archives, and old runtime files are left untouched. [Fast Mode](extensions/fast-mode/README.md#codex-proxies-explicit-opt-in) supports native Codex and explicitly opted-in Responses proxy routes. Add your provider/endpoint to `~/.pi/agent/fast-mode-proxies.json` and `/reload` to use `/fast` with the account pool; no proxy/auth changes are required.
 
 ### Context management
 
@@ -87,12 +87,13 @@ Pi 0.85.1 defaults to auto-compaction enabled, 20,000 recent tokens retained, an
 
 Paths assume Pi's standard agent directory, `~/.pi/agent`.
 
-| Feature     | Location                     | Contents                                                |
-| ----------- | ---------------------------- | ------------------------------------------------------- |
-| Theme       | `themes/origin.json`         | Packaged TUI theme; select `origin` in settings         |
-| Fast Mode   | `~/.pi/agent/fast-mode.json` | Global on/off preference                                |
-| MCP servers | `~/.config/mcp/mcp.json`     | Shared server definitions                               |
-| MCP overlay | `~/.pi/agent/mcp.json`       | Pi-only enable/disable flags, not copied shared secrets |
+| Feature      | Location                             | Contents                                                |
+| ------------ | ------------------------------------ | ------------------------------------------------------- |
+| Theme        | `themes/origin.json`                 | Packaged TUI theme; select `origin` in settings         |
+| Fast Mode    | `~/.pi/agent/fast-mode.json`         | Global on/off preference                                |
+| Fast proxies | `~/.pi/agent/fast-mode-proxies.json` | Explicit provider/endpoint opt-in; reload after editing |
+| MCP servers  | `~/.config/mcp/mcp.json`             | Shared server definitions                               |
+| MCP overlay  | `~/.pi/agent/mcp.json`               | Pi-only enable/disable flags, not copied shared secrets |
 
 ## Security model
 
