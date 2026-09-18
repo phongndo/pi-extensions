@@ -144,7 +144,7 @@ Then run **`/reload`**, followed by `/fast on` and `/fast status`. If your globa
 - Routes are snapshotted at session start/reload, **not** hot-reloaded by `/fast refresh`. After editing/removing the file, reload every affected Pi session. No network requests or credential resolution occur when reading it.
 - The file lives beside `fast-mode.json`, including with a custom agent directory or SDK `statePath`. SDK embeddings may instead pass `proxyRoutes: [{ provider, baseUrl }]` to `createFastModeExtension`; an explicit empty array disables proxy opt-in for that instance.
 
-Use only trusted Codex-compatible proxy routes. Opt-in requests the `priority` wire value; it does not add an account entitlement or guarantee a speedup. The file contains no credentials. See [research and alternatives](../../docs/research/fast-mode-cli-proxy.md).
+Use only trusted Codex-compatible proxy routes. Opt-in requests the `priority` wire value; it does not add an account entitlement or guarantee a speedup. The file contains no credentials.
 
 ## Child runtimes and compatibility
 
