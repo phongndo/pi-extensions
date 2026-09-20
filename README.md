@@ -21,6 +21,4 @@ nix develop --command bun run check
 
 Extensions run with your permissions; Fast Mode and MCP tools can incur charges.
 
-Keep docs short, current, and task-specific ([OpenAI's GPT-6 guidance](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)).
-
 [Third-party notices](THIRD_PARTY_NOTICES.md).

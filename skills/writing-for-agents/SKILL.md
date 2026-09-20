@@ -1,6 +1,6 @@
 ---
 name: writing-for-agents
-description: Writing documents for agents. Use when creating or editing skills, or modifying AGENTS.md or CLAUDE.md.
+description: Write reusable agent instructions. Use when creating or editing skills, AGENTS.md, or CLAUDE.md.
 ---
 
 Reference for writing any document an agent consumes: a skill, an `AGENTS.md` / `CLAUDE.md`, a doc reached by a pointer. The packaging differs; the writing does not: the same levers make each one predictable, since the agent takes the same _process_ every run rather than producing the same output.
@@ -72,6 +72,16 @@ Hunt for opportunities to refactor with leading words. A triad spelled out at th
 You win twice: fewer tokens, and a sharper hook for the agent to hang its thinking on. Assume every document is carrying restatements that leading words retire. Go find them.
 
 **Negation** is the failure mode beside this lever: steering by prohibition drags the forbidden behaviour into context and makes it _more_ available, not less. _Don't think of an elephant_, and the elephant is all there is; the negation is a weak modifier the strongly-activated concept overruns, so the ban half-reads as an instruction to do the thing. Prompt the **positive**: state the target behaviour ("write one-line comments") so the banned one is never spoken. A prohibition earns its place only as a hard guardrail you cannot phrase positively; even then, pair it with the positive target so attention lands on what to do.
+
+## Keeping docs live
+
+Give each retained document a reader and a recurring task or decision it supports. Put current instructions in their owning file; use session context or OS temporary files for working notes, handoffs, raw research, and progress reports. A user-requested research or learning artifact can be durable without becoming standing agent guidance.
+
+Before adding guidance, check the source that already owns it: code, configuration, an existing doc, or upstream documentation. Link to that source when the reader can cheaply look it up. Keep non-obvious constraints and rationale where the relevant task reaches them.
+
+When behavior changes, replace superseded text and remove obsolete links in the same change. Git holds prior versions; appending a correction or moving a stale report into an archive leaves competing accounts available to agents. Retain historical evidence only when the history itself serves the reader, with its status clearly separated from current instructions.
+
+Treat an instruction's necessity as something to revisit, especially after model or harness changes. Check the actual trigger, decision boundary, and completion condition; stronger wording is not a substitute for an instruction that still helps.
 
 ## Pruning
 

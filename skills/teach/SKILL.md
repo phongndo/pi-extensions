@@ -9,7 +9,9 @@ The user has asked you to teach them something. This is a stateful request - the
 
 ## Teaching Workspace
 
-Treat the current directory as a teaching workspace. The state of their learning is captured in this directory in several files:
+Use the current directory when it is already a teaching workspace or the user has chosen it for that purpose. Otherwise agree on a teaching-workspace location before creating learning files inside a software project. Create each artifact only when the lesson needs it.
+
+The state of their learning is captured in that workspace:
 
 - `MISSION.md`: A document capturing the _reason_ the user is interested in the topic. This should be used to ground all teaching. Use the format in [MISSION-FORMAT.md](./MISSION-FORMAT.md).
 - `./reference/*.html`: A directory of reference materials. These are the compressed learnings from the lessons - cheat sheets, reference algorithms, syntax, yoga poses, glossaries. They are the raw units of learning. They should be beautiful documents which print out well, and are designed for quick reference.
@@ -17,7 +19,7 @@ Treat the current directory as a teaching workspace. The state of their learning
 - `./learning-records/*.md`: A directory of learning records, which capture what the user has learned. These are loosely equivalent to architectural decision records in software development - they capture non-obvious lessons and key insights that may need to be revised later, or drive future sessions. These should be used to calculate the zone of proximal development. They are titled `0001-<dash-case-name>.md`, where the number increments each time. Use the format in [LEARNING-RECORD-FORMAT.md](./LEARNING-RECORD-FORMAT.md).
 - `./lessons/*.html`: A directory of lessons. A **lesson** is a single, self-contained HTML output that teaches one tightly-scoped thing tied to the mission. This is the primary unit of teaching in this workspace.
 - `./assets/*`: Reusable **components** shared across lessons. See [Assets](#assets).
-- `NOTES.md`: A scratchpad for you to jot down user preferences, or working notes.
+- `NOTES.md`: Current teaching preferences explicitly expressed by the user that are not already captured in the mission.
 
 ## Philosophy
 
@@ -137,4 +139,4 @@ Glossaries, in particular, are an essential reference. Once one is created, it s
 
 ## `NOTES.md`
 
-The user will sometimes express preferences of how they want to be taught, or things you should keep in mind. This is the place to record those preferences, so you can refer back to them when designing lessons or working with the user.
+Keep only current, user-stated teaching preferences that affect future lessons. Replace preferences when the user changes them; keep mission constraints in `MISSION.md`. Session logs, speculative user profiles, and agent working notes belong in the session or temporary storage, not this file.

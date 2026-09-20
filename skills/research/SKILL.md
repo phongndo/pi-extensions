@@ -1,14 +1,18 @@
 ---
 name: research
-description: Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo. Use when the user wants a topic researched, docs or API facts gathered, or reading legwork delegated.
+description: Research a question using primary sources. Use when the user delegates an investigation or asks for a cited research report.
 ---
 
-Investigate the question against **primary sources** and write the findings to a single cited Markdown file in the repo.
+Investigate the question against **primary sources**. Discover sources with web search, then read the selected pages; search snippets are leads, not evidence. Use broader crawling only when the question requires it.
 
-If you can dispatch a sub-agent, do the research there so this session can keep working. The research agent must complete the reading itself and must not spawn further agents. If you cannot dispatch a sub-agent, or you already are one, do the research in this session.
+Follow claims to the source that owns them: official docs, source code, specifications, or first-party accounts. Distinguish documented facts, attributed claims, and your inference. Report gaps rather than filling them from an older report.
 
-Use the available web search and page-reading tools to reach primary sources. Discover sources first, then read the selected primary pages; use broader crawling only when the question requires it. Follow every claim back to the source that owns it: official docs, source code, specs, first-party APIs, not a secondary write-up of them.
+If an available subagent can usefully handle the investigation, give it the question, scope, and output destination. It must read the sources itself and must not spawn further agents. Otherwise research in the current session.
 
-1. Investigate the question against those primary sources.
-2. Write the findings to a single Markdown file, citing each claim's source.
-3. Save it where the repo already keeps such notes; match the existing convention, and if there is none, put it somewhere sensible and say where.
+## Deliver the findings
+
+Answer the question with citations and material uncertainties. For a report, write one concise Markdown file containing the question, research date, supported findings, limitations, and primary-source links. Keep raw extracts, search logs, and intermediate notes out of the report.
+
+Use the user's requested destination. Otherwise put a report in an OS temporary directory and give its path. Retain it in the repository only when the user requests that or the findings support an identified ongoing project decision; follow the repository's documentation policy. An existing research directory alone is not a reason to add a file.
+
+When revisiting a retained report, recheck the relevant sources and replace superseded conclusions in place. Promote accepted operational guidance into its owning documentation; keep the report as evidence only while its rationale remains useful. Completion is a supported answer to the scoped question, with unresolved points explicit—not an exhaustive source collection.

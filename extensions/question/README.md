@@ -1,32 +1,22 @@
 # Pi Question
 
-A small, native interactive clarification tool for Pi. The model can call `question` during an ordinary agent run, Pi pauses that tool call for the user's response, and the same run resumes with a compact answer result.
+The `question` tool pauses an agent run for clarification, then resumes it with a compact answer map. It works in ordinary chat, without plan mode or configuration.
 
-## Behavior
+## Answering questions
 
-- Available as the `question` tool in normal interactive chat; it is not tied to plan mode.
-- Uses Pi's native `SelectList` and chat editor, including configured select/cancel keybindings.
-- Supports one to four related questions per call and up to six options per question.
-- Keeps every question in one layered dialog, preserving drafts and editor focus while navigating layers. Editing a submitted answer or note requires Enter to reconfirm before the dialog can finish.
-- Supports single choice, multiple choice, and wrapped multi-line free-text answers.
-- Follows Codex's request-user-input flow: Enter or a number submits a single choice, Space marks it without advancing, and Tab opens notes for that choice.
-- Adds “None of the above” as the final option; its note can stand alone as the answer.
-- Lets notes supplement any selected option and wraps them below the option list without extra indentation or another pane.
-- Shows no empty circle markers; marked answers receive a trailing `✓`.
-- Expands the option-label column to avoid cutting readable choices off at the native 32-column default.
-- Keeps option rows compact and wraps the highlighted option's complete description in a right-hand detail pane on wide terminals, falling back below the list on narrow terminals.
-- Labels supplemental editor input as “Your note” so it cannot be mistaken for option details.
-- Uses a compact native chat editor without the stock shortcut footer.
-- Supports `j`/`k` option navigation and `h`/`l` or left/right question-layer navigation.
-- Uses Ctrl+P/Ctrl+N to switch question layers while editing free text or notes.
-- Executes sequentially so sibling tool calls do not run past a clarification prompt.
-- Waits without a default timeout.
-- Returns cancellation as a normal tool result, allowing the model to recover.
-- Returns immediately with an unavailable result in print and JSON modes instead of hanging.
+The TUI presents up to four related questions in one layered dialog, preserving drafts while you navigate:
 
-RPC uses native select/editor prompts instead of the layered TUI. TUI notes use `user_note: ` in results; RPC custom answers and free text remain plain strings.
+- Enter or a displayed number submits a single choice. For multiple choice, Space marks options and Enter submits.
+- To add a note to a single choice, mark it with Space, then press Tab. Enter submits the choice and note together.
+- “None of the above” accepts a standalone answer through its note field.
+- Use `j`/`k` to navigate options, `h`/`l` or left/right to switch question layers, and Ctrl+P/Ctrl+N to switch layers while editing text.
+- Editing a submitted answer requires Enter to reconfirm. Pi's configured select/cancel keybindings are respected.
 
-## Tool input
+There is no default timeout. Cancellation returns `{ "cancelled": true }`. RPC uses native select/editor prompts; print and JSON modes return an unavailable result rather than waiting for input.
+
+## Calling the tool
+
+Call `question` when user input about intent, scope, preferences, constraints, or tradeoffs is needed before continuing. Discoverable facts and trivial choices do not need clarification. Batch related questions in one call.
 
 ```json
 {
@@ -35,20 +25,14 @@ RPC uses native select/editor prompts instead of the layered TUI. TUI notes use 
       "id": "database",
       "question": "Which database should I use?",
       "options": [
-        {
-          "label": "PostgreSQL",
-          "description": "Best fit for production workloads"
-        },
-        {
-          "label": "SQLite",
-          "description": "Simplest local deployment"
-        }
+        { "label": "PostgreSQL", "description": "Shared production database" },
+        { "label": "SQLite", "description": "Local single-file storage" }
       ]
     },
     {
-      "id": "checks",
-      "question": "Which checks should I run?",
-      "options": [{ "label": "Unit tests" }, { "label": "Integration tests" }, { "label": "Lint" }],
+      "id": "platforms",
+      "question": "Which platforms must this support?",
+      "options": [{ "label": "macOS" }, { "label": "Linux" }],
       "multiple": true
     },
     {
@@ -59,52 +43,26 @@ RPC uses native select/editor prompts instead of the layered TUI. TUI notes use 
 }
 ```
 
-Omit `options` for free text. Use two to four choices normally; the hard cap is six. When user input is needed before continuing, call `question` instead of printing questions in assistant prose. Batch up to four related questions in one call. The TUI adds “None of the above” automatically, so models should not add an `Other` option. Enter or a displayed number submits a single choice immediately. Press Space first to mark a choice without advancing, then Tab to add notes; Enter submits the choice and note together. Notes attached to “None of the above” become a standalone answer. Navigate question layers with `h`/`l` or left/right while choosing, and Ctrl+P/Ctrl+N while editing.
+Omit `options` for free text. Prefer two to four choices; the hard cap is six. The TUI adds “None of the above,” so do not add an `Other` option. Calls execute sequentially so sibling tool calls cannot run past a clarification.
 
-## Tool result
-
-Only the compact answer map is sent back to the model:
+The model receives only the answer map:
 
 ```json
 {
   "database": ["PostgreSQL", "user_note: Keep the existing schema"],
-  "checks": ["Unit tests", "Lint"],
+  "platforms": ["macOS", "Linux"],
   "notes": ["Keep the existing API compatible"]
 }
 ```
 
-The original questions and richer state remain in tool-result `details` for Pi's transcript renderer and session reconstruction. They are not repeated in model-facing result text.
-
-Cancellation is represented as:
-
-```json
-{ "cancelled": true }
-```
-
-## Context efficiency
-
-The tool keeps its recurring prompt cost small:
-
-- One short tool description, one-line tool snippet, and focused system-prompt guideline
-- The description routes user-input decisions through `question` instead of assistant prose; the guideline keeps the discoverable-fact and trivial-choice exceptions
-- A six-option ceiling for flexibility, while prompting models to prefer two to four
-- No duplicated headers or option values
-- Short answer IDs rather than question text as result keys
-- No prose wrapper around answers
-- Full display state kept in `details`, not model-facing `content`
-
-The model is instructed to call `question` whenever it needs user input about intent, scope, preferences, constraints, decisions, or tradeoffs before continuing, rather than printing those questions in prose. It still avoids asking about discoverable facts or trivial choices.
-
-## Prompt caching
-
-Calling `question` does not change Pi's active tools, system prompt, or provider-visible tool definitions. The answer is an ordinary tool result, so repeated calls preserve the existing prompt prefix.
-
-OpenAI requires tool definitions and their ordering to remain identical for a cache hit. Adding `question`, or changing its name, description, snippet, guideline, or JSON schema during `/reload`, therefore causes one expected cache miss in the current session. UI and execution code live separately in `ui.ts` so visual changes can be reloaded without changing that provider-visible contract. A focused test snapshots the contract fingerprint to make accidental cache-busting changes explicit.
-
-For extension development, load contract changes before a session becomes large or use a short test session. At runtime, `question` itself does not invalidate the cache.
+TUI notes use the `user_note: ` prefix; RPC custom answers and free text remain plain strings. Original questions and richer display state stay in tool-result `details` for transcript rendering and session reconstruction.
 
 ## Development
 
+From the repository root:
+
 ```bash
-bun run --filter pi-question check
+nix develop -c bun run --filter pi-question check
 ```
+
+Tool calls do not change the system prompt or tool definitions. Changing the tool contract during `/reload` changes the prompt prefix and can invalidate provider caching; make those changes in a short test session. UI-only changes live in `ui.ts`. The contract-fingerprint test in [`tests/question.test.ts`](tests/question.test.ts) guards accidental definition changes.

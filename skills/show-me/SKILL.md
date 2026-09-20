@@ -118,6 +118,8 @@ function expandSkill(command: string): string {
 
 ### guidance
 
+Save one-off HTML visuals in an OS temporary directory and provide the path. Use a durable workspace location only when the user requests a reusable artifact or the visual belongs to maintained documentation; update that artifact rather than accumulating revisions.
+
 Place each visual next to the short text it supports. Keep only the calls, files, props, states, and boundaries needed to answer the user's current question or the options to resolve the current discussion point.
 
 You may use one of these, you may use several, it is unlikely you will use all of them. Use your judgement and don't overwhelm the user.

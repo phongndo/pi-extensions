@@ -7,11 +7,13 @@ description: Diagnosis loop for hard bugs and performance regressions. Use when 
 
 A discipline for hard bugs. Skip phases only when explicitly justified.
 
-When exploring the codebase, read `CONTEXT.md` (if it exists) to get a clear mental model of the relevant modules, and check ADRs in the area you're touching.
+Use current module documentation or relevant ADRs when the diagnosis depends on a design constraint. Verify descriptions against the affected code; an old context summary is not evidence of current behavior.
 
 ## Redact
 
 This skill has you show commands, outputs and captured artifacts. **Redact every secret first**: write `<REDACTED>` in its place. Build loops against env vars, so the credential stays in the environment rather than in what you show. Captured artifacts carry auth headers: quote only the lines that carry the signal.
+
+Keep captured traces, logs, and throwaway harnesses in an OS temporary directory. Retain a minimal fixture or regression test in the repository only when it belongs to the maintained test suite.
 
 If the redacted output is not enough to diagnose the bug, say so and ask the user.
 
@@ -134,5 +136,5 @@ Required before declaring done:
 - [ ] Original repro no longer reproduces (re-run the Phase 1 loop)
 - [ ] Regression test passes (or absence of seam is documented)
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
-- [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)
+- [ ] Session-created temporary probes removed once no longer needed; retained regression fixtures contain only the data the test needs
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message, so the next debugger learns
