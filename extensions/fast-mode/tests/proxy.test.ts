@@ -17,8 +17,10 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { createFastModeExtension } from "../index.ts";
+import { resolveFastCapability } from "../capabilities.ts";
 import { FAST_MODE_STATUS_KEY } from "../footer.ts";
+import { createFastModeExtension } from "../index.ts";
+import { FastModeRoutes } from "../routes.ts";
 
 const endpoint = "http://127.0.0.1:8317/v1";
 const proxyRoute = { provider: "local-codex", baseUrl: endpoint };
@@ -38,13 +40,11 @@ async function harness(routes: unknown = { version: 1, routes: [proxyRoute] }) {
           api: "openai-responses",
           baseUrl: endpoint,
           apiKey: "fake-test-key",
-          models: [
-            {
-              id: "gpt-6-astra",
-              reasoning: true,
-              thinkingLevelMap: { xhigh: "xhigh" },
-            },
-          ],
+          models: ["gpt-6-astra", "gpt-6-luna", "gpt-6-sol"].map((id) => ({
+            id,
+            reasoning: true,
+            thinkingLevelMap: { xhigh: "xhigh" },
+          })),
         },
       },
     }),
@@ -189,6 +189,24 @@ test("opted-in proxy sends priority through real Responses serialization, follow
     ),
   );
   assert.equal(app.payloads.at(-1)?.service_tier, "priority", "off preserves caller policy");
+});
+
+test("new Codex models request priority through the opted-in proxy", async (t) => {
+  const app = await harness();
+  t.after(() => app.close());
+  await app.emit("session_start");
+  await app.command("on");
+  const routes = new FastModeRoutes([proxyRoute]);
+  for (const id of ["gpt-6-luna", "gpt-6-sol"]) {
+    const selected = app.runtime.getModel("local-codex", id)!;
+    assert.ok(selected, id);
+    assert.equal(selected.api, "openai-responses");
+    assert.equal(routes.includes(selected), true);
+    assert.equal(resolveFastCapability(selected, routes).source, "fallback");
+    await completed(app.runtime.streamSimple(selected, { messages: [] }, app.options));
+    assert.equal(app.payloads.at(-1)?.model, id);
+    assert.equal(app.payloads.at(-1)?.service_tier, "priority", id);
+  }
 });
 
 test("proxy policy survives runtime refresh and inherited child providers, then tears down", async (t) => {

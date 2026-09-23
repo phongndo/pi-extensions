@@ -25,6 +25,8 @@ const FALLBACK_MODELS = new Set([
   "gpt-5.6-terra",
   "gpt-5.6-luna",
   "gpt-6-astra",
+  "gpt-6-luna",
+  "gpt-6-sol",
 ]);
 const SEPARATE_MODELS = new Set(["gpt-5.4-mini", "gpt-5.3-codex-spark"]);
 const CACHE_MS = 15 * 60_000;

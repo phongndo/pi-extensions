@@ -2,7 +2,7 @@
 
 A global preference that requests `service_tier: "priority"` for eligible native Codex calls and explicitly opted-in Codex proxies. Requires Pi **0.85.1+**; compatibility tests target 0.85.1.
 
-Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It can increase charges; check [current Codex speed and pricing](https://developers.openai.com/codex/speed). A saved on preference also applies to newly supported models, including GPT-6 Astra.
+Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It can increase charges; check [current Codex speed and pricing](https://developers.openai.com/codex/speed). A saved on preference also applies to supported GPT-6 Astra, Luna, and Sol models.
 
 ## Use it
 

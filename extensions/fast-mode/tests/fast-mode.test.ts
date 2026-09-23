@@ -64,12 +64,16 @@ test("recognizes only supported Codex Fast models", () => {
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6-sol",
   ]) {
     assert.equal(supportsCodexFastMode(model(id)), true, id);
   }
   for (const candidate of [
     model("gpt-5.3-codex-spark"),
     model("gpt-5.4-mini"),
+    model("gpt-6-luna-mini"),
+    model("gpt-6-sol-preview"),
     model("gpt-5.5", "openai", "openai-responses"),
   ]) {
     assert.equal(supportsCodexFastMode(candidate), false, candidate.id);
