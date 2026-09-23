@@ -41,6 +41,10 @@ test("summarizes failed servers with the connection error", () => {
     serverDescription({ ...executor, status: "failed", error: "fetch failed" }),
     /^failed · fetch failed · 2 tools · ~/,
   );
+  assert.match(
+    serverDescription({ ...executor, status: "retrying", error: "Transport closed" }),
+    /^retrying · Transport closed · 2 tools · ~/,
+  );
   assert.equal(formatStatusText([]), "No MCP servers configured.");
   assert.match(formatStatusText([executor]), /executor: enabled \(connected\)/);
   assert.match(formatStatusText([executor]), /tokens enabled/);

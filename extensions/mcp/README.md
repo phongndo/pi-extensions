@@ -35,14 +35,16 @@ Run `/mcp`, select a server, and press Enter/Space to enable or disable it; Esc 
 
 - Enabling connects and registers `mcp__<server>__<tool>` tools immediately. Disabling disconnects and removes them. Names over 64 characters receive a stable shortened form.
 - The selected menu row shows connection state, tool count, and an approximate tool-definition token cost; multiple enabled servers also show a combined total.
-- The footer shows `mcp connected/total`, counting servers, including disabled or failed servers in the denominator. No servers means no label. This is transport state, not a health probe.
+- The footer shows `mcp connected/total`, counting servers, including disabled or failed servers in the denominator. No servers means no label. This is known client state, not a guarantee that the next call will succeed. `/mcp` shows `retrying` while a recovery timer is pending.
 - RPC uses select prompts and receives footer status. Print/JSON sessions connect tools without UI.
 - Tool results preserve model-facing content and images. The TUI shows compact previews; expand for arguments and full text. Text over **2,000 lines or 50 KiB** is saved to a private temporary file whose path remains visible.
 - Calls execute sequentially. Cancellation is forwarded to the SDK; tool errors remain errors. Stdio server logs are drained without printing over Pi's UI or protocol stream.
 
 ## Reconnect and troubleshoot
 
-Toggle a server off/on or run `/reload` to reconnect and refresh tool discovery. There is no automatic reconnect or heartbeat; a failure without a transport-close notification may appear connected until another operation detects it.
+Unexpected transport closes remove the server's tools and change the footer to `mcp 0/total`. Enabled servers reconnect with backoff (starting at 1 second, capped at 30 seconds); short-lived connections keep their increasing delay instead of restarting a crash loop. Transient initial HTTP/SSE and tool-discovery timeouts get up to three attempts. Authentication and other known permanent failures stop retrying. Tool discovery is refreshed after reconnection.
+
+An expired stateful HTTP session, failed HTTP notification-stream reconnect, interrupted tool-response stream, or detected network failure during a tool call also triggers a fresh connection. **A failed tool call is not replayed**: it might already have changed remote state. Once `/mcp` shows connected again, you can decide whether to repeat it. A one-off server response error does not discard a usable connection. Toggle a server off/on or run `/reload` to reconnect immediately. There is no heartbeat; a silent failure can still appear connected until an operation detects it.
 
 Tools are discovered on connection. Live tool-list-change notifications, prompts/resources browsing, OAuth login, sampling, and elicitation are not implemented.
 

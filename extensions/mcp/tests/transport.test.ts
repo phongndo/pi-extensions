@@ -26,7 +26,7 @@ test("actual MCP transport lists all pages, preserves images, and observes disco
     const image = await session.call("image", {}, undefined);
     assert.equal(image.images?.[0]?.mimeType, "image/png");
     assert.doesNotMatch(image.text, /iVBOR/);
-    const closed = new Promise<void>((resolve) => session.onClose!(resolve));
+    const closed = new Promise<void>((resolve) => session.onClose!(() => resolve()));
     await session.call("exit", {}, undefined);
     await Promise.race([
       closed,

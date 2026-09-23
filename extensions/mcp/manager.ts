@@ -7,7 +7,13 @@ import {
   type ResolvedMcpServer,
   setServerDisabled,
 } from "./config.ts";
-import { connectMcpServer, mcpPromptSnippet, type ConnectedMcpServer } from "./connect.ts";
+import {
+  connectMcpServer,
+  isPermanentMcpError,
+  isTransientMcpError,
+  mcpPromptSnippet,
+  type ConnectedMcpServer,
+} from "./connect.ts";
 import { limitMcpOutput } from "./output.ts";
 import { renderMcpCall, renderMcpResult } from "./render.ts";
 
@@ -20,7 +26,7 @@ export interface McpToolSummary {
 export interface McpServerStatus {
   name: string;
   enabled: boolean;
-  status: "connected" | "connecting" | "failed" | "disconnected";
+  status: "connected" | "connecting" | "retrying" | "failed" | "disconnected";
   error?: string;
   tools: McpToolSummary[];
   source: string;
@@ -35,6 +41,10 @@ export class McpManager {
   private lifetime = new AbortController();
   private readonly listeners = new Set<() => void>();
   private readonly closeListeners = new Map<string, () => void>();
+  private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly reconnectAttempts = new Map<string, number>();
+  private readonly retryOrigin = new Map<string, "startup" | "drop">();
+  private readonly connectedAt = new Map<string, number>();
   private readonly sessions = new Map<string, ConnectedMcpServer>();
   private readonly errors = new Map<string, string>();
   private readonly connecting = new Set<string>();
@@ -75,9 +85,11 @@ export class McpManager {
         ? "connecting"
         : session
           ? "connected"
-          : error
-            ? "failed"
-            : "disconnected";
+          : this.reconnectTimers.has(server.name)
+            ? "retrying"
+            : error
+              ? "failed"
+              : "disconnected";
       const tools = session
         ? session.tools.map((tool) => summarizeTool(tool))
         : (this.lastTools.get(server.name) ?? []);
@@ -123,6 +135,11 @@ export class McpManager {
     this.running = false;
     this.generation += 1;
     this.lifetime.abort();
+    for (const timer of this.reconnectTimers.values()) clearTimeout(timer);
+    this.reconnectTimers.clear();
+    this.reconnectAttempts.clear();
+    this.retryOrigin.clear();
+    this.connectedAt.clear();
     for (const unsubscribe of this.closeListeners.values()) unsubscribe();
     this.closeListeners.clear();
     for (const name of this.registered.keys()) this.deactivateTools(name);
@@ -151,7 +168,10 @@ export class McpManager {
         if (generation !== this.generation || !this.running) return;
         server.enabled = desired;
         if (desired) await this.connect(server, ctx, generation);
-        else await this.disconnect(server);
+        else {
+          this.cancelReconnect(name);
+          await this.disconnect(server);
+        }
         this.changed();
       } finally {
         if (this.desiredEnabled.get(name) === desired) this.desiredEnabled.delete(name);
@@ -168,6 +188,43 @@ export class McpManager {
       if (this.queues.get(name) === settled) this.queues.delete(name);
     });
     return next;
+  }
+
+  private cancelReconnect(name: string): void {
+    const timer = this.reconnectTimers.get(name);
+    if (timer) clearTimeout(timer);
+    this.reconnectTimers.delete(name);
+    this.reconnectAttempts.delete(name);
+    this.retryOrigin.delete(name);
+    this.connectedAt.delete(name);
+  }
+
+  private scheduleReconnect(
+    server: ResolvedMcpServer,
+    ctx: ExtensionContext,
+    generation: number,
+  ): void {
+    if (
+      !this.running ||
+      this.generation !== generation ||
+      !server.enabled ||
+      this.desiredEnabled.get(server.name) === false ||
+      this.reconnectTimers.has(server.name)
+    )
+      return;
+    const attempt = this.reconnectAttempts.get(server.name) ?? 0;
+    this.reconnectAttempts.set(server.name, attempt + 1);
+    const delay = Math.min(1000 * 2 ** Math.min(attempt, 5), 30_000);
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(server.name);
+      if (this.generation !== generation || !this.running) return;
+      void this.enqueue(server.name, () => this.connect(server, ctx, generation)).catch(
+        () => undefined,
+      );
+    }, delay);
+    timer.unref();
+    this.reconnectTimers.set(server.name, timer);
+    this.changed();
   }
 
   private async connect(
@@ -192,12 +249,20 @@ export class McpManager {
         return;
       }
       this.sessions.set(server.name, session);
-      const unsubscribe = session.onClose?.(() => {
+      const unsubscribe = session.onClose?.((reason) => {
         if (!current() || this.sessions.get(server.name) !== session) return;
         this.closeListeners.get(server.name)?.();
         this.closeListeners.delete(server.name);
         this.sessions.delete(server.name);
         this.deactivateTools(server.name);
+        const connectedAt = this.connectedAt.get(server.name);
+        if (connectedAt !== undefined && Date.now() - connectedAt >= 10_000) {
+          this.reconnectAttempts.delete(server.name);
+        }
+        this.connectedAt.delete(server.name);
+        this.retryOrigin.set(server.name, "drop");
+        this.errors.set(server.name, reason ?? "Transport closed");
+        this.scheduleReconnect(server, ctx, generation);
         this.changed();
       });
       if (this.sessions.get(server.name) !== session) {
@@ -207,12 +272,41 @@ export class McpManager {
       }
       if (unsubscribe) this.closeListeners.set(server.name, unsubscribe);
       this.registerTools(server.name, session);
+      if (this.sessions.get(server.name) === session) {
+        // Preserve backoff for a server that repeatedly connects then crashes.
+        const timer = this.reconnectTimers.get(server.name);
+        if (timer) clearTimeout(timer);
+        this.reconnectTimers.delete(server.name);
+        this.retryOrigin.delete(server.name);
+        this.connectedAt.set(server.name, Date.now());
+      }
     } catch (error) {
       if (!current()) return;
       await this.disconnect(server).catch(() => undefined);
       if (!wanted()) return;
       this.errors.set(server.name, error instanceof Error ? error.message : String(error));
-      ctx.ui.notify(`MCP ${server.name}: ${this.errors.get(server.name)}`, "error");
+      const origin = this.retryOrigin.get(server.name);
+      const transient = isTransientMcpError(error);
+      if (!origin && server.type !== "stdio" && transient) {
+        this.retryOrigin.set(server.name, "startup");
+      }
+      // Do not flood the UI during an outage; permanent failures remain visible.
+      if ((this.reconnectAttempts.get(server.name) ?? 0) <= 1) {
+        ctx.ui.notify(`MCP ${server.name}: ${this.errors.get(server.name)}`, "error");
+      }
+      if (
+        isPermanentMcpError(error) ||
+        (this.retryOrigin.get(server.name) === "startup" && !transient)
+      ) {
+        this.cancelReconnect(server.name);
+      } else if (
+        this.retryOrigin.get(server.name) === "startup" &&
+        (this.reconnectAttempts.get(server.name) ?? 0) >= 2
+      ) {
+        this.cancelReconnect(server.name);
+      } else if (this.retryOrigin.has(server.name)) {
+        this.scheduleReconnect(server, ctx, generation);
+      }
     } finally {
       if (current()) {
         this.connecting.delete(server.name);
@@ -226,6 +320,7 @@ export class McpManager {
     this.closeListeners.get(server.name)?.();
     this.closeListeners.delete(server.name);
     this.sessions.delete(server.name);
+    this.connectedAt.delete(server.name);
     this.errors.delete(server.name);
     this.deactivateTools(server.name);
     this.changed();

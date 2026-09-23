@@ -1,10 +1,13 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
 import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { Type, type TSchema } from "typebox";
 import type { ResolvedMcpServer } from "./config.ts";
@@ -14,6 +17,18 @@ export const CONNECT_TIMEOUT_MS = 10_000;
 export const LIST_TOOLS_TIMEOUT_MS = 8_000;
 const CLIENT_NAME = "pi-mcp";
 const CLIENT_VERSION = "0.1.0";
+
+export class McpTimeoutError extends Error {}
+
+// SSEClientTransport turns a failing POST into a plain Error, dropping its
+// status code. Preserve it at the HTTP boundary for retry classification.
+export class McpHttpStatusError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`MCP HTTP request failed (${status})`);
+    this.status = status;
+  }
+}
 
 export interface McpToolDefinition {
   name: string;
@@ -30,7 +45,50 @@ export interface ConnectedMcpServer {
     signal: AbortSignal | undefined,
   ): Promise<McpToolCallResult>;
   close(): Promise<void>;
-  onClose?(listener: () => void): () => void;
+  onClose?(listener: (reason?: string) => void): () => void;
+}
+
+export function isPermanentMcpError(error: unknown): boolean {
+  if (error instanceof McpHttpStatusError) {
+    return [400, 401, 403, 404, 405, 422].includes(error.status);
+  }
+  if (error instanceof StreamableHTTPError || error instanceof SseError) {
+    return [400, 401, 403, 404, 405, 422].includes(error.code ?? 0);
+  }
+  return (
+    error instanceof Error &&
+    ["ENOENT", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")
+  );
+}
+
+export function isTransientMcpError(error: unknown): boolean {
+  if (error instanceof McpTimeoutError) return true;
+  if (error instanceof McpHttpStatusError) {
+    return [408, 429, 500, 502, 503, 504].includes(error.status);
+  }
+  if (error instanceof StreamableHTTPError || error instanceof SseError) {
+    return [408, 429, 500, 502, 503, 504].includes(error.code ?? 0);
+  }
+  return error instanceof TypeError && hasNetworkCode(error);
+}
+
+function hasNetworkCode(error: Error): boolean {
+  if (
+    [
+      "ConnectionRefused",
+      "ConnectionReset",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "ENOTFOUND",
+      "ETIMEDOUT",
+      "EHOSTUNREACH",
+    ].includes((error as NodeJS.ErrnoException).code ?? "")
+  )
+    return true;
+  if (error.cause instanceof Error) return hasNetworkCode(error.cause);
+  if (error instanceof AggregateError)
+    return error.errors.some((item: unknown) => item instanceof Error && hasNetworkCode(item));
+  return false;
 }
 
 export interface McpToolCallResult {
@@ -94,19 +152,95 @@ export async function connectMcpServer(
   signal?: AbortSignal,
 ): Promise<ConnectedMcpServer> {
   signal?.throwIfAborted();
-  const transport = createTransport(server);
   const client = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION });
   let closed = false;
   let closing: Promise<void> | undefined;
-  const listeners = new Set<() => void>();
+  const awaitingStreamResponse = new Map<
+    string | number,
+    ReturnType<typeof setTimeout> | undefined
+  >();
+  let getFailures = 0;
+  let receivedGetStream = false;
+  let transport: ReturnType<typeof createTransport>;
+  const listeners = new Set<(reason?: string) => void>();
+  let closeReason: string | undefined;
   client.onclose = () => {
     if (closed) return;
     closed = true;
-    for (const listener of listeners) listener();
+    for (const timer of awaitingStreamResponse.values()) if (timer) clearTimeout(timer);
+    awaitingStreamResponse.clear();
+    for (const listener of listeners) listener(closeReason);
     listeners.clear();
   };
   const close = () =>
     (closing ??= Promise.allSettled([client.close(), transport.close()]).then(() => undefined));
+  const failedGet = () => {
+    if (closed) return;
+    if (++getFailures >= (receivedGetStream ? 2 : 1)) {
+      closeReason = "HTTP notification stream lost";
+      void close();
+    }
+  };
+  const httpFetch: typeof fetch = async (input, init) => {
+    if (closed) throw new Error("MCP transport closed");
+    let response: Response;
+    try {
+      response = await fetch(input, init);
+    } catch (error) {
+      // The SDK does not close after failed notification-stream GET retries.
+      // Track a network failure here, then preserve the original fetch error.
+      if (init?.method === "GET") failedGet();
+      throw error;
+    }
+    if (init?.method === "GET") {
+      if (response.ok) {
+        receivedGetStream = true;
+        getFailures = 0;
+      } else if (response.status !== 405) failedGet(); // POST-only servers need no GET stream.
+    }
+    if (
+      init?.method === "POST" &&
+      response.ok &&
+      response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") &&
+      response.body
+    ) {
+      // The SDK resolves tools/call only after parsing the JSON-RPC response.
+      // A POST stream may end before that response without rejecting the call.
+      if (typeof init.body !== "string") throw new Error("Unexpected MCP POST body");
+      const request: unknown = JSON.parse(init.body);
+      if (!isRecord(request)) throw new Error("Unexpected MCP POST message");
+      if (request.method !== "tools/call") return response;
+      const id = request.id;
+      if (typeof id !== "string" && typeof id !== "number") {
+        throw new Error("MCP tool request is missing its JSON-RPC id");
+      }
+      awaitingStreamResponse.set(id, undefined);
+      return watchResponseStream(response, () => {
+        if (!awaitingStreamResponse.has(id)) return;
+        // Give the SDK's stream parser time to deliver the final frame after EOF.
+        const timer = setTimeout(() => {
+          if (awaitingStreamResponse.has(id) && !closed) {
+            closeReason = "HTTP tool response interrupted";
+            void close(); // Reject the in-flight request; never replay it.
+          }
+        }, 150);
+        awaitingStreamResponse.set(id, timer);
+      });
+    }
+    return response;
+  };
+  transport = createTransport(server, httpFetch);
+  transport.onmessage = (message) => {
+    if (
+      "id" in message &&
+      (typeof message.id === "string" || typeof message.id === "number") &&
+      ("result" in message || "error" in message)
+    ) {
+      const timer = awaitingStreamResponse.get(message.id);
+      if (timer) clearTimeout(timer);
+      awaitingStreamResponse.delete(message.id);
+    }
+  };
   const onAbort = () => {
     void close();
   };
@@ -115,7 +249,7 @@ export async function connectMcpServer(
     await withTimeout(
       client.connect(transport as Transport),
       CONNECT_TIMEOUT_MS,
-      `Timed out connecting to ${server.name}`,
+      new McpTimeoutError(`Timed out connecting to ${server.name}`),
     );
     const tools = await withTimeout(
       (async () => {
@@ -142,7 +276,7 @@ export async function connectMcpServer(
         return tools;
       })(),
       LIST_TOOLS_TIMEOUT_MS,
-      `Timed out listing tools for ${server.name}`,
+      new McpTimeoutError(`Timed out listing tools for ${server.name}`),
     );
     signal?.throwIfAborted();
     if (closed) throw new Error(`MCP ${server.name} closed during initialization.`);
@@ -150,17 +284,47 @@ export async function connectMcpServer(
       name: server.name,
       tools,
       async call(toolName, args, signal) {
-        const result = await client.callTool(
-          { name: toolName, arguments: isRecord(args) ? args : {} },
-          undefined,
-          signal ? { signal } : undefined,
-        );
-        return toMcpToolResult(result);
+        try {
+          const result = await client.callTool(
+            { name: toolName, arguments: isRecord(args) ? args : {} },
+            undefined,
+            signal ? { signal } : undefined,
+          );
+          return toMcpToolResult(result);
+        } catch (error) {
+          if (
+            transport instanceof StreamableHTTPClientTransport &&
+            transport.sessionId &&
+            error instanceof StreamableHTTPError &&
+            error.code === 404
+          ) {
+            // A stateful server expired this session. Reinitialize on a fresh
+            // connection; never replay a possibly side-effecting tool call.
+            closeReason = "HTTP session expired";
+            await close();
+            throw new Error("MCP session expired; reconnecting. Tool call was not retried.", {
+              cause: error,
+            });
+          }
+          if (
+            (transport instanceof StreamableHTTPClientTransport ||
+              transport instanceof SSEClientTransport) &&
+            error instanceof TypeError &&
+            isTransientMcpError(error) &&
+            !signal?.aborted
+          ) {
+            closeReason = "HTTP transport unavailable";
+            await close();
+          }
+          // A request may have reached the server before the response failed.
+          // Reconnect for the next call, but never automatically replay this one.
+          throw error;
+        }
       },
       close,
       onClose(listener) {
         if (closed) {
-          listener();
+          listener(closeReason);
           return () => {};
         }
         listeners.add(listener);
@@ -177,7 +341,7 @@ export async function connectMcpServer(
   }
 }
 
-function createTransport(server: ResolvedMcpServer) {
+function createTransport(server: ResolvedMcpServer, httpFetch: typeof fetch) {
   if (server.type === "stdio") {
     if (!server.command) throw new Error(`MCP server ${server.name} is missing command.`);
     const transport = new StdioClientTransport({
@@ -196,18 +360,61 @@ function createTransport(server: ResolvedMcpServer) {
   const url = new URL(server.url);
   const requestInit = server.headers ? { headers: server.headers } : undefined;
   if (server.type === "sse") {
-    return new SSEClientTransport(url, requestInit ? { requestInit } : undefined);
+    return new SSEClientTransport(url, {
+      ...(requestInit ? { requestInit } : {}),
+      fetch: async (input, init) => {
+        const response = await fetch(input, init);
+        if (init?.method === "POST" && !response.ok) {
+          await response.body?.cancel();
+          throw new McpHttpStatusError(response.status);
+        }
+        return response;
+      },
+    });
   }
-  return new StreamableHTTPClientTransport(url, requestInit ? { requestInit } : undefined);
+  return new StreamableHTTPClientTransport(url, {
+    ...(requestInit ? { requestInit } : {}),
+    fetch: httpFetch,
+  });
 }
 
-export async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+function watchResponseStream(response: Response, onEnd: () => void): Response {
+  const reader = response.body!.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          controller.close();
+          onEnd();
+        } else controller.enqueue(value);
+      } catch (error) {
+        // Propagate a broken response body to the SDK and retire its session.
+        controller.error(error);
+        onEnd();
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, response);
+}
+
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string | Error,
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), ms);
+        timer = setTimeout(
+          () => reject(typeof message === "string" ? new Error(message) : message),
+          ms,
+        );
         timer.unref();
       }),
     ]);

@@ -10,9 +10,12 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpConfigPaths, ResolvedMcpServer } from "../config.ts";
 import type { ConnectedMcpServer } from "../connect.ts";
 import { McpManager } from "../manager.ts";
+import { installMcpStatus } from "../footer.ts";
+import { McpTimeoutError } from "../connect.ts";
 
 const tempRoots: string[] = [];
 after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
@@ -266,11 +269,251 @@ test("closed transports remove active tools and publish the new connection state
     assert.ok(closed, "manager must observe transport closure");
     assert.equal(app.manager.snapshot()[0]?.status, "connected");
     closed();
-    assert.equal(app.manager.snapshot()[0]?.status, "disconnected");
+    assert.equal(app.manager.snapshot()[0]?.status, "retrying");
     assert.deepEqual(app.getActive(), ["read", "bash"]);
-    assert.deepEqual(states.slice(-1), ["disconnected"]);
+    assert.deepEqual(states.slice(-1), ["retrying"]);
   } finally {
     unsubscribe();
+    await app.manager.stop();
+  }
+});
+
+test("an enabled server recovers its footer and tools after a transient transport close", async () => {
+  const paths = await fixturePaths();
+  let closeTransport: (() => void) | undefined;
+  let connections = 0;
+  const app = harness(async (server) => {
+    connections++;
+    return Object.assign(
+      fakeSession(server.name, () => {}),
+      {
+        onClose(listener: () => void) {
+          closeTransport = listener;
+          return () => {
+            if (closeTransport === listener) closeTransport = undefined;
+          };
+        },
+      },
+    );
+  });
+  const statuses = new Map<string, string>();
+  const ctx = Object.assign(app.ctx, {
+    hasUI: true,
+    ui: {
+      ...app.ctx.ui,
+      setStatus(key: string, value?: string) {
+        if (value === undefined) statuses.delete(key);
+        else statuses.set(key, value);
+      },
+    },
+  });
+  const removeStatus = installMcpStatus(ctx, app.manager);
+  try {
+    await app.manager.start(ctx, paths);
+    assert.equal(statuses.get("mcp"), "mcp 1/1");
+    closeTransport!();
+    assert.equal(statuses.get("mcp"), "mcp 0/1");
+    assert.deepEqual(app.getActive(), ["read", "bash"]);
+    for (let attempt = 0; attempt < 40 && statuses.get("mcp") !== "mcp 1/1"; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(statuses.get("mcp"), "mcp 1/1");
+    assert.equal(connections, 2);
+    assert.ok(app.getActive().includes("mcp__executor__execute"));
+    const result = await app.tools
+      .get("mcp__executor__execute")!
+      .execute("call", {}, undefined, undefined, ctx);
+    assert.deepEqual(result.content, [{ type: "text", text: "2" }]);
+  } finally {
+    removeStatus();
+    await app.manager.stop();
+  }
+});
+
+test(
+  "reconnect retries a failed attempt and stops after disable or shutdown",
+  { timeout: 8000 },
+  async () => {
+    const paths = await fixturePaths();
+    let closeTransport: (() => void) | undefined;
+    let connections = 0;
+    const app = harness(async (server) => {
+      connections++;
+      if (connections === 2) throw new Error("temporary outage");
+      return Object.assign(
+        fakeSession(server.name, () => {}),
+        {
+          onClose(listener: () => void) {
+            closeTransport = listener;
+            return () => {
+              if (closeTransport === listener) closeTransport = undefined;
+            };
+          },
+        },
+      );
+    });
+    try {
+      await app.manager.start(app.ctx, paths);
+      closeTransport!();
+      for (let attempt = 0; attempt < 80 && connections < 3; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.equal(connections, 3);
+      assert.equal(app.manager.snapshot()[0]?.status, "connected");
+      assert.ok(app.notifications.some((message) => message.includes("temporary outage")));
+
+      closeTransport!();
+      await app.manager.setEnabled("executor", false, app.ctx);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      assert.equal(connections, 3, "a disabled server must not reconnect");
+
+      await app.manager.setEnabled("executor", true, app.ctx);
+      assert.equal(connections, 4);
+      closeTransport!();
+      await app.manager.stop();
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      assert.equal(connections, 4, "shutdown must cancel pending reconnects");
+    } finally {
+      await app.manager.stop();
+    }
+  },
+);
+
+test(
+  "repeated short-lived connections retain backoff rather than retrying every second",
+  { timeout: 5000 },
+  async () => {
+    const paths = await fixturePaths();
+    const closers: Array<() => void> = [];
+    let connections = 0;
+    const app = harness(async (server) => {
+      connections++;
+      return Object.assign(
+        fakeSession(server.name, () => {}),
+        {
+          onClose(listener: () => void) {
+            closers.push(listener);
+            return () => {};
+          },
+        },
+      );
+    });
+    try {
+      await app.manager.start(app.ctx, paths);
+      closers[0]!();
+      for (let i = 0; i < 35 && connections < 2; i++)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(connections, 2);
+      closers[1]!();
+      await new Promise((resolve) => setTimeout(resolve, 1150));
+      assert.equal(connections, 2, "second short-lived connection must back off longer");
+      for (let i = 0; i < 30 && connections < 3; i++)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(connections, 3);
+    } finally {
+      await app.manager.stop();
+    }
+  },
+);
+
+test("authentication failures stop background reconnects", { timeout: 5000 }, async () => {
+  const paths = await fixturePaths();
+  let closeTransport!: () => void;
+  let connections = 0;
+  const app = harness(async (server) => {
+    if (++connections > 1) throw new StreamableHTTPError(401, "authorization required");
+    return Object.assign(
+      fakeSession(server.name, () => {}),
+      {
+        onClose(listener: () => void) {
+          closeTransport = listener;
+          return () => {};
+        },
+      },
+    );
+  });
+  try {
+    await app.manager.start(app.ctx, paths);
+    closeTransport();
+    for (let i = 0; i < 35 && connections < 2; i++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(app.manager.snapshot()[0]?.status, "failed");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal(connections, 2);
+  } finally {
+    await app.manager.stop();
+  }
+});
+
+test("initial transient HTTP failure retries, while permanent configuration failure does not", async () => {
+  const paths = await fixturePaths();
+  let attempts = 0;
+  const app = harness(async (server) => {
+    if (++attempts === 1)
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("refused"), { code: "ECONNREFUSED" }),
+      });
+    return fakeSession(server.name, () => {});
+  });
+  try {
+    await app.manager.start(app.ctx, paths);
+    assert.equal(app.manager.snapshot()[0]?.status, "retrying");
+    for (let i = 0; i < 40 && attempts < 2; i++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(attempts, 2);
+    assert.equal(app.manager.snapshot()[0]?.status, "connected");
+  } finally {
+    await app.manager.stop();
+  }
+
+  let permanentAttempts = 0;
+  const invalid = harness(async () => {
+    permanentAttempts++;
+    throw new Error("invalid credentials");
+  });
+  try {
+    await invalid.manager.start(invalid.ctx, paths);
+    assert.equal(invalid.manager.snapshot()[0]?.status, "failed");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal(permanentAttempts, 1);
+  } finally {
+    await invalid.manager.stop();
+  }
+});
+
+test("a tool-discovery timeout gets a transient startup retry", async () => {
+  const paths = await fixturePaths();
+  let attempts = 0;
+  const app = harness(async (server) => {
+    if (++attempts === 1) throw new McpTimeoutError(`Timed out listing tools for ${server.name}`);
+    return fakeSession(server.name, () => {});
+  });
+  try {
+    await app.manager.start(app.ctx, paths);
+    assert.equal(app.manager.snapshot()[0]?.status, "retrying");
+    for (let i = 0; i < 35 && attempts < 2; i++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(attempts, 2);
+    assert.equal(app.manager.snapshot()[0]?.status, "connected");
+  } finally {
+    await app.manager.stop();
+  }
+});
+
+test("initial transient retries stop after three attempts", { timeout: 5000 }, async () => {
+  const paths = await fixturePaths();
+  let attempts = 0;
+  const app = harness(async () => {
+    attempts++;
+    throw new StreamableHTTPError(503, "temporarily unavailable");
+  });
+  try {
+    await app.manager.start(app.ctx, paths);
+    for (let i = 0; i < 75 && app.manager.snapshot()[0]?.status !== "failed"; i++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(attempts, 3);
+    assert.equal(app.manager.snapshot()[0]?.status, "failed");
+  } finally {
     await app.manager.stop();
   }
 });

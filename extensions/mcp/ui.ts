@@ -40,6 +40,8 @@ export function statusLabel(status: McpServerStatus["status"]): string {
       return "connected";
     case "connecting":
       return "connecting";
+    case "retrying":
+      return "retrying";
     case "failed":
       return "failed";
     default:
@@ -53,7 +55,8 @@ export function serverDescription(
 ): string {
   const status = statusLabel(server.status);
   const parts = [status];
-  if (server.status === "failed" && server.error) parts.push(server.error);
+  if ((server.status === "failed" || server.status === "retrying") && server.error)
+    parts.push(server.error);
   if (server.tools.length > 0) {
     parts.push(`${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`);
     const serverTokens = estimateServerTokens(server);
