@@ -322,6 +322,8 @@ export default function questionExtension(pi: ExtensionAPI): void {
       "With the question tool, prefer one brief clarification over guessing at a consequential assumption, and batch related questions in one call. Do not use question for information discoverable with available tools or for trivial, low-impact choices.",
     ],
     parameters: QuestionParameters,
+    // Pi 0.99+: tools that ask the user are declared to the model but not callable from codemode.
+    exposure: "model-only",
     executionMode: "sequential",
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

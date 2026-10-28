@@ -17,6 +17,10 @@ function createHarness() {
   return { tool: tools.get("question") };
 }
 
+test("question is model-only so codemode scripts cannot block on the UI", () => {
+  assert.equal(createHarness().tool.exposure, "model-only");
+});
+
 function createContext(input: {
   mode?: ExtensionContext["mode"];
   hasUI?: boolean;
