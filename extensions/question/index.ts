@@ -6,6 +6,8 @@ import {
   selectQuestionChoice,
   showQuestionDialog,
   showQuestionEditor,
+  type DialogAnswers,
+  type DialogQuestion,
   type QuestionChoice,
 } from "./ui.ts";
 
@@ -56,19 +58,9 @@ export const QuestionParameters = Type.Object(
 
 export type QuestionInput = Static<typeof QuestionParameters>;
 
-export interface QuestionOption {
-  label: string;
-  description?: string;
-}
-
-export interface Question {
-  id: string;
-  question: string;
-  options: QuestionOption[];
-  multiple: boolean;
-}
-
-export type QuestionAnswers = Record<string, string[]>;
+export type QuestionOption = QuestionChoice;
+export type Question = DialogQuestion;
+export type QuestionAnswers = DialogAnswers;
 
 export type QuestionDetails =
   | {
@@ -93,12 +85,8 @@ interface PromptResult {
 }
 
 function replaceControlCharacters(value: string): string {
-  return [...value]
-    .map((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 31 || (code >= 127 && code <= 159) ? " " : character;
-    })
-    .join("");
+  // oxlint-disable-next-line no-control-regex -- Intentionally remove terminal controls.
+  return value.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
 }
 
 function cleanModelText(value: string): string {

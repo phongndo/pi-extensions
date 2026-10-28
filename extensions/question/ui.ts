@@ -365,12 +365,14 @@ export class QuestionDialog extends Container implements Focusable {
   private submitEditor(index: number, value: string): void {
     if (index !== this.currentIndex || this.focus !== "editor") return;
     const answer = value.trim();
+    const state = this.states[index]!;
     if (answer.length > MAX_CUSTOM_ANSWER_LENGTH) {
+      // Native Editor clears its buffer before onSubmit; restore the text so it can be trimmed.
+      state.editor.setText(value);
       this.notify(`Keep the answer under ${MAX_CUSTOM_ANSWER_LENGTH.toLocaleString()} characters.`);
       return;
     }
 
-    const state = this.states[index]!;
     if (state.selection.kind === "text") {
       if (!answer) {
         this.notify("Enter an answer or press Escape to cancel.");
@@ -418,11 +420,14 @@ export class QuestionDialog extends Container implements Focusable {
     state.submission = values ? { status: "submitted", values } : { status: "draft" };
   }
 
+  /** Step forward, skipping ahead to a later unanswered question; submit from the last one.
+   * Revising an earlier answer still walks the later questions for review. */
   private advanceOrFinish(): void {
-    if (this.currentIndex < this.questions.length - 1) {
-      this.goToQuestion(this.currentIndex + 1);
-      return;
+    const total = this.questions.length;
+    for (let index = this.currentIndex + 1; index < total; index++) {
+      if (!this.isAnswered(index)) return this.goToQuestion(index);
     }
+    if (this.currentIndex < total - 1) return this.goToQuestion(this.currentIndex + 1);
     const firstUnanswered = this.questions.findIndex((_question, index) => !this.isAnswered(index));
     if (firstUnanswered >= 0) {
       this.notify("Answer the remaining question before submitting.");
@@ -499,11 +504,13 @@ export class QuestionDialog extends Container implements Focusable {
 
     const questionNavigation = this.questions.length > 1 ? " · h/l or ←/→ questions" : "";
     const editorQuestionNavigation = this.questions.length > 1 ? " · ctrl+p/n questions" : "";
+    // Options plus the trailing "None of the above" choice.
+    const choiceCount = question.options.length + 1;
     const footer =
       this.focus === "options"
         ? question.multiple
-          ? `1-${this.listChoices(this.currentIndex).length} or space toggle · j/k navigate · tab add notes · enter submit${questionNavigation} · esc cancel`
-          : `1-${this.listChoices(this.currentIndex).length} select · j/k navigate · tab add notes · enter submit${questionNavigation} · esc cancel`
+          ? `1-${choiceCount} or space toggle · j/k navigate · tab add notes · enter submit${questionNavigation} · esc cancel`
+          : `1-${choiceCount} select · j/k navigate · tab add notes · enter submit${questionNavigation} · esc cancel`
         : question.options.length > 0
           ? `enter submit answer · tab or esc clear notes${editorQuestionNavigation}`
           : `enter submit answer${editorQuestionNavigation} · esc cancel`;

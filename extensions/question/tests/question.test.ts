@@ -563,3 +563,98 @@ test("cancels a pending RPC free-text prompt when the tool signal aborts", async
   assert.equal(result.content[0].text, '{"cancelled":true}');
   assert.equal(result.details.status, "cancelled");
 });
+
+function dialogHarness(questions: ConstructorParameters<typeof QuestionDialog>[3]) {
+  const state: { result?: DialogAnswers | undefined; notices: string[] } = { notices: [] };
+  const keybindings = {
+    matches: (data: string, binding: string) =>
+      binding === "tui.select.cancel" && matchesKey(data, Key.escape),
+  };
+  const theme = { fg: (_role: string, text: string) => text, bold: (text: string) => text };
+  const dialog = new QuestionDialog(
+    { terminal: { rows: 40 }, requestRender() {} } as any,
+    keybindings as any,
+    theme as any,
+    questions,
+    undefined,
+    (message) => state.notices.push(message),
+    (answers) => {
+      state.result = answers;
+    },
+  );
+  dialog.focused = true;
+  return { dialog, state };
+}
+
+test("answering out of order reviews the later answer, then submits", () => {
+  const { dialog, state } = dialogHarness([
+    { id: "first", question: "First?", options: [{ label: "A" }, { label: "B" }], multiple: false },
+    {
+      id: "second",
+      question: "Second?",
+      options: [{ label: "C" }, { label: "D" }],
+      multiple: false,
+    },
+  ]);
+  dialog.handleInput("l");
+  dialog.handleInput("2");
+  assert.equal(state.result, undefined);
+  assert.match(dialog.render(80).join("\n"), /Question 1\/2/);
+  dialog.handleInput("1");
+  assert.match(dialog.render(80).join("\n"), /Question 2\/2/);
+  dialog.handleInput("\r");
+  assert.deepEqual(state.result, { first: ["A"], second: ["D"] });
+});
+
+test("revising an earlier answer walks the later questions before submitting", () => {
+  const { dialog, state } = dialogHarness(
+    ["one", "two", "three"].map((id) => ({
+      id,
+      question: `${id}?`,
+      options: [{ label: "Yes" }, { label: "No" }],
+      multiple: false,
+    })),
+  );
+  // Answer Q3 first (returns to Q1), then Q1 and Q2; Q2 steps to Q3 for review.
+  for (const key of ["l", "l", "1", "1", "1"]) dialog.handleInput(key);
+  assert.equal(state.result, undefined);
+  assert.match(dialog.render(80).join("\n"), /Question 3\/3/);
+  dialog.handleInput("h");
+  dialog.handleInput("h");
+  dialog.handleInput("2");
+  assert.equal(state.result, undefined, "a revision must not submit immediately");
+  assert.match(dialog.render(80).join("\n"), /Question 2\/3/);
+  dialog.handleInput("\r");
+  dialog.handleInput("\r");
+  assert.deepEqual(state.result, { one: ["No"], two: ["Yes"], three: ["Yes"] });
+});
+
+test("skips ahead past answered questions to the next unanswered one", () => {
+  const { dialog } = dialogHarness(
+    ["one", "two", "three"].map((id) => ({
+      id,
+      question: `${id}?`,
+      options: [{ label: "Yes" }, { label: "No" }],
+      multiple: false,
+    })),
+  );
+  dialog.handleInput("l");
+  dialog.handleInput("1");
+  assert.match(dialog.render(80).join("\n"), /Question 3\/3/);
+  dialog.handleInput("h");
+  dialog.handleInput("h");
+  dialog.handleInput("1");
+  assert.match(dialog.render(80).join("\n"), /Question 3\/3/, "Q2 is answered; go to Q3");
+});
+
+test("an oversized answer stays in the editor so it can be trimmed", () => {
+  const { dialog, state } = dialogHarness([
+    { id: "notes", question: "Details?", options: [], multiple: false },
+  ]);
+  const long = "x".repeat(4_100);
+  dialog.handleInput(long);
+  dialog.handleInput("\r");
+  assert.equal(state.result, undefined);
+  assert.match(state.notices.join("\n"), /Keep the answer under/);
+  assert.equal((dialog as any).states[0].editor.getText(), long);
+});
