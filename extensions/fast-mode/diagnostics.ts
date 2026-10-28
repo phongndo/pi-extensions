@@ -80,11 +80,28 @@ export class FastRequestJournal {
 }
 
 const MAX_FRAME_CHARS = 64 * 1024;
+const TERMINAL_TYPES = [
+  "response.completed",
+  "response.done",
+  "response.incomplete",
+  "response.failed",
+  "error",
+];
+const TERMINAL_EVENT = /response\.(?:completed|done|incomplete|failed)|"type"\s*:\s*"error"/;
+// Oversized frames keep their head (event type) and a scan for service_tier, not their body.
+const HEAD_CHARS = 512;
+const TAIL_CHARS = 4096;
+const TERMINAL_HEAD =
+  /(?:^|\n)event:\s*(?:response\.(?:completed|done|incomplete|failed)|error)\b|"type"\s*:\s*"(?:response\.(?:completed|done|incomplete|failed)|error)"/;
+const SERVICE_TIER = /"service_tier"\s*:\s*"([^"]*)"/g;
 
 /** An SSE tap, not a tee: reads at the consumer's pace, with cancellation and bounded buffering. */
 export class FastRequestObservation {
   private buffer = "";
-  private discarding = false;
+  /** Head of an oversized frame whose middle is being skipped. */
+  private head?: string;
+  /** Last unescaped service_tier seen in the current oversized frame. */
+  private skippedTier?: string;
   private readonly record: FastRequestRecord;
   private readonly changed: () => void;
   private readonly now: () => number;
@@ -96,6 +113,8 @@ export class FastRequestObservation {
   }
 
   private frame(frame: string): void {
+    // After first output only terminal events matter; skip re-parsing every streamed delta.
+    if (this.record.firstOutputMs !== undefined && !TERMINAL_EVENT.test(frame)) return;
     const data = frame
       .split("\n")
       .filter((line) => line.startsWith("data:"))
@@ -119,12 +138,7 @@ export class FastRequestObservation {
       this.record.firstOutputMs = this.now() - this.record.startedAt;
       this.changed();
     }
-    if (
-      !["response.completed", "response.done", "response.incomplete", "response.failed"].includes(
-        String(event.type),
-      )
-    )
-      return;
+    if (!TERMINAL_TYPES.includes(String(event.type))) return;
     this.record.completedMs = this.now() - this.record.startedAt;
     this.record.responseTier = isRecord(event.response)
       ? observedTier(event.response.service_tier)
@@ -132,20 +146,50 @@ export class FastRequestObservation {
     this.changed();
   }
 
+  /** Terminal events carry the whole response, which can exceed the frame limit on long turns. */
+  private oversized(head: string): void {
+    if (!TERMINAL_HEAD.test(head)) return;
+    this.record.completedMs = this.now() - this.record.startedAt;
+    // service_tier follows the (large) output array but precedes echoed request fields.
+    this.record.responseTier = observedTier(this.skippedTier);
+    this.changed();
+  }
+
+  private finishFrame(frame: string): void {
+    const head = this.head;
+    this.head = undefined;
+    if (head === undefined && frame.length <= MAX_FRAME_CHARS) this.frame(frame);
+    else {
+      this.skip(frame);
+      this.oversized(head ?? frame.slice(0, HEAD_CHARS));
+    }
+    this.skippedTier = undefined;
+  }
+
+  /** Remember the tier in text about to be dropped; JSON-escaped occurrences cannot match. */
+  private skip(text: string): void {
+    const tier = [...text.matchAll(SERVICE_TIER)].at(-1)?.[1];
+    if (tier !== undefined) this.skippedTier = tier;
+  }
+
   private feed(text: string): void {
     // Iterate bounded slices even when a transport returns one enormous chunk.
     for (let offset = 0; offset < text.length; offset += 4096) {
       this.buffer += text.slice(offset, offset + 4096);
+      const delimiter = /\r?\n\r?\n/g;
+      let start = 0;
       let match: RegExpExecArray | null;
-      while ((match = /\r?\n\r?\n/.exec(this.buffer))) {
-        const frame = this.buffer.slice(0, match.index);
-        this.buffer = this.buffer.slice(match.index + match[0].length);
-        if (!this.discarding && frame.length <= MAX_FRAME_CHARS) this.frame(frame);
-        this.discarding = false;
+      while ((match = delimiter.exec(this.buffer))) {
+        const frame = this.buffer.slice(start, match.index);
+        start = delimiter.lastIndex;
+        this.finishFrame(frame);
       }
+      if (start) this.buffer = this.buffer.slice(start);
       if (this.buffer.length > MAX_FRAME_CHARS) {
-        this.discarding = true;
-        this.buffer = this.buffer.slice(-3); // Preserve a split CRLF frame delimiter.
+        this.head ??= this.buffer.slice(0, HEAD_CHARS);
+        this.skip(this.buffer);
+        // The kept tail preserves a split delimiter or service_tier match; it is rescanned later.
+        this.buffer = this.buffer.slice(-TAIL_CHARS);
       }
     }
   }
@@ -167,7 +211,7 @@ export class FastRequestObservation {
           const { done, value } = await reader.read();
           if (done) {
             this.feed(decoder.decode());
-            if (!this.discarding && this.buffer.trim()) this.frame(this.buffer);
+            if (this.head !== undefined || this.buffer.trim()) this.finishFrame(this.buffer);
             this.buffer = "";
             reader.releaseLock();
             controller.close();

@@ -58,10 +58,7 @@ test("real Codex stream and streamSimple send Astra priority and expose raw SSE 
       async () => true,
       { journal },
     );
-    const context = normalizeContext({
-      systemPrompt: "DO NOT RETAIN THIS PROMPT",
-      messages: [],
-    });
+    const context = normalizeContext({ systemPrompt: "DO NOT RETAIN THIS PROMPT", messages: [] });
     const response = await (
       simple
         ? streamSimple(model(), context, { ...options, reasoning: "xhigh" })
@@ -267,4 +264,78 @@ test("off preserves caller tier and diagnostics; teardown during a state read ca
   release(true);
   assert.deepEqual(await pending, { model: model().id });
   assert.equal(journal.last?.id, 1);
+});
+
+test("SSE tap reads the tier from an oversized terminal event", async () => {
+  for (const eventLine of ["event: response.completed\r\n", ""]) {
+    let now = 0;
+    const journal = new FastRequestJournal(
+      () => {},
+      () => now,
+    );
+    const observation = journal.begin(model(), {}, {}, true, resolveFastCapability(model()));
+    now = 40;
+    const completed = {
+      type: "response.completed",
+      response: {
+        // A nested tier inside output must not win over the response's own field.
+        output: [{ type: "message", text: `"service_tier":"default"`, pad: "x".repeat(70_000) }],
+        service_tier: "priority",
+        // Echoed request fields follow the tier and can exceed any fixed tail.
+        tools: Array.from({ length: 200 }, (_, index) => ({
+          name: `tool_${index}`,
+          pad: "z".repeat(60),
+        })),
+        usage: { output_tokens: 1 },
+      },
+    };
+    const text =
+      'data: {"type":"response.output_text.delta","delta":"hi"}\r\n\r\n' +
+      `${eventLine}data: ${JSON.stringify(completed)}\r\n\r\n`;
+    const bytes = new TextEncoder().encode(text);
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let offset = 0; offset < bytes.length; offset += 1001)
+            controller.enqueue(bytes.slice(offset, offset + 1001));
+          controller.close();
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+    assert.deepEqual(new Uint8Array(await observation.response(response).arrayBuffer()), bytes);
+    assert.equal(journal.last?.responseTier, "priority", eventLine || "data-only frame");
+    assert.equal(journal.last?.completedMs, 40);
+  }
+});
+
+test("an oversized delta that mentions a terminal event is not treated as completion", async () => {
+  const journal = new FastRequestJournal();
+  const observation = journal.begin(model(), {}, {}, true, resolveFastCapability(model()));
+  const delta = {
+    type: "response.output_text.delta",
+    delta: `"type":"response.completed" ${"y".repeat(70_000)}`,
+  };
+  const response = new Response(`data: ${JSON.stringify(delta)}\n\n`, {
+    headers: { "content-type": "text/event-stream" },
+  });
+  await observation.response(response).arrayBuffer();
+  assert.equal(journal.last?.completedMs, undefined);
+});
+
+test("an error event after output completes the request record", async () => {
+  let now = 0;
+  const journal = new FastRequestJournal(
+    () => {},
+    () => now,
+  );
+  const observation = journal.begin(model(), {}, {}, true, resolveFastCapability(model()));
+  now = 30;
+  const text =
+    'data: {"type":"response.output_text.delta","delta":"hi"}\n\n' +
+    'event: error\ndata: {"type":"error","code":"server_error","message":"boom"}\n\n';
+  const response = new Response(text, { headers: { "content-type": "text/event-stream" } });
+  await observation.response(response).arrayBuffer();
+  assert.equal(journal.last?.completedMs, 30);
+  assert.equal(journal.last?.responseTier, "unknown");
 });
