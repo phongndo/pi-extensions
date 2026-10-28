@@ -31,6 +31,25 @@ export function isCodexModel(
   return model?.provider === "openai-codex" && model.api === "openai-codex-responses";
 }
 
+const OPENAI_API_URL = "https://api.openai.com/v1";
+
+/** Pi 0.99+ routes Sign in with ChatGPT through the OpenAI provider's Responses API. */
+export function isChatGPTRouteModel(
+  model: Model<Api> | undefined,
+  baseUrl = model?.baseUrl,
+): model is Model<"openai-responses"> & { provider: "openai" } {
+  return (
+    model?.provider === "openai" &&
+    model.api === "openai-responses" &&
+    endpoint(baseUrl) === OPENAI_API_URL
+  );
+}
+
+/** Pi's own test: an OpenAI credential other than an `sk-` API key is a ChatGPT sign-in token. */
+export function isChatGPTCredential(apiKey: string | undefined): boolean | undefined {
+  return apiKey === undefined ? undefined : !apiKey.startsWith("sk-");
+}
+
 /** Immutable session scope shared by capability, runtime and payload decisions. */
 export class FastModeRoutes {
   private readonly proxies = new Map<string, Set<string>>();
@@ -51,11 +70,17 @@ export class FastModeRoutes {
   }
 
   hasProvider(provider: string): boolean {
-    return provider === "openai-codex" || this.proxies.has(provider);
+    return provider === "openai-codex" || provider === "openai" || this.proxies.has(provider);
   }
 
-  includes(model: Model<Api> | undefined, baseUrl = model?.baseUrl): model is Model<Api> {
+  /** API-key OpenAI requests are excluded: Fast is a ChatGPT-subscription feature. */
+  includes(
+    model: Model<Api> | undefined,
+    baseUrl = model?.baseUrl,
+    chatgpt = false,
+  ): model is Model<Api> {
     if (isCodexModel(model)) return true;
+    if (isChatGPTRouteModel(model, baseUrl)) return chatgpt;
     if (!model || model.api !== "openai-responses") return false;
     const url = endpoint(baseUrl);
     return url !== undefined && this.proxies.get(model.provider)?.has(url) === true;

@@ -3,11 +3,19 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  InMemoryCredentialStore,
+  InMemoryModelsStore,
+  type Api,
+  type Model,
+} from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { installFastModeProviderLookup } from "../runtime.ts";
 import { CodexCapabilities, resolveFastCapability } from "../capabilities.ts";
 import { withFastPayload } from "../policy.ts";
 import { FastModeRoutes, NATIVE_FAST_ROUTES, loadFastProxyRoutes } from "../routes.ts";
-import { catalog, model } from "./helpers.ts";
+import { catalog, model, token } from "./helpers.ts";
 
 const route = { provider: "local-codex", baseUrl: "http://127.0.0.1:8317/v1" };
 const proxy: Model<Api> = { ...model(), ...route, api: "openai-responses" };
@@ -135,5 +143,84 @@ test("route configuration is optional, validated without leaking values, and sna
       assert.doesNotMatch(error.message, /secret/);
       return true;
     });
+  }
+});
+
+const chatgpt: Model<Api> = {
+  ...model("gpt-6.1-sol"),
+  provider: "openai",
+  api: "openai-responses",
+  baseUrl: "https://api.openai.com/v1",
+};
+
+test("Sign in with ChatGPT on the OpenAI provider is native; API keys and other endpoints are not", () => {
+  assert.equal(NATIVE_FAST_ROUTES.hasProvider("openai"), true);
+  assert.equal(NATIVE_FAST_ROUTES.includes(chatgpt, chatgpt.baseUrl, true), true);
+  assert.equal(NATIVE_FAST_ROUTES.includes(chatgpt, `${chatgpt.baseUrl}/`, true), true);
+  assert.equal(NATIVE_FAST_ROUTES.includes(chatgpt, chatgpt.baseUrl, false), false);
+  assert.equal(
+    NATIVE_FAST_ROUTES.includes(chatgpt),
+    false,
+    "API-key/unknown credentials are excluded",
+  );
+  assert.equal(NATIVE_FAST_ROUTES.includes(chatgpt, "https://proxy.example/v1", true), false);
+  assert.equal(
+    resolveFastCapability(chatgpt, NATIVE_FAST_ROUTES, { apiKey: token() }).status,
+    "supported",
+  );
+  assert.equal(
+    resolveFastCapability(chatgpt, NATIVE_FAST_ROUTES, { apiKey: "sk-test" }).status,
+    "unsupported",
+  );
+  assert.equal(resolveFastCapability(chatgpt).status, "unknown");
+  assert.equal(
+    resolveFastCapability(chatgpt, NATIVE_FAST_ROUTES, { chatgpt: true }).status,
+    "supported",
+  );
+  assert.equal(
+    resolveFastCapability(chatgpt, NATIVE_FAST_ROUTES, { apiKey: "sk-test", chatgpt: true }).status,
+    "unsupported",
+    "a resolved key overrides the display hint",
+  );
+  assert.equal(
+    resolveFastCapability({ ...chatgpt, id: "gpt-6.1-unreleased" }, NATIVE_FAST_ROUTES, {
+      apiKey: token(),
+    }).status,
+    "unknown",
+  );
+});
+
+test("real OpenAI provider requests priority only for Sign in with ChatGPT", async () => {
+  for (const [credential, expected] of [
+    [
+      { type: "oauth", access: token(), refresh: "test-refresh", expires: Date.now() + 3_600_000 },
+      "priority",
+    ],
+    [{ type: "api_key", key: "sk-test" }, undefined],
+  ] as const) {
+    const credentials = new InMemoryCredentialStore();
+    await credentials.modify("openai", async () => credential);
+    const runtime = await ModelRuntime.create({
+      credentials,
+      modelsPath: null,
+      modelsStore: new InMemoryModelsStore(),
+      allowModelNetwork: false,
+    });
+    const registry = new ModelRegistry(runtime);
+    const remove = installFastModeProviderLookup(registry, async () => true);
+    const selected = runtime.getModel("openai", "gpt-6.1-sol");
+    assert.ok(selected);
+    let body: Record<string, unknown> | undefined;
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response("unavailable", { status: 503 });
+    };
+    await runtime
+      .streamSimple(selected, normalizeContext({ messages: [] }), { fetch, maxRetries: 0 })
+      .result();
+    remove();
+    assert.ok(body, "request was sent");
+    assert.equal(body.model, "gpt-6.1-sol");
+    assert.equal(body.service_tier, expected, credential.type);
   }
 });

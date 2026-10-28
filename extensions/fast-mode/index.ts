@@ -4,6 +4,7 @@ import { setFooterStatus } from "../../src/footer-status.ts";
 import {
   CodexCapabilities,
   codexModelsUrl,
+  isChatGPTRouteModel,
   isCodexModel,
   type CapabilityAuth,
 } from "./capabilities.ts";
@@ -156,7 +157,7 @@ class FastModeSession {
     try {
       const status = formatFastFooterStatus(
         this.snapshot(),
-        this.capabilities.resolve(this.ctx.model, this.uiAuth),
+        this.capabilities.resolve(this.ctx.model, this.displayAuth()),
       );
       if (status === this.renderedStatus) return;
       setFooterStatus(this.ctx, FAST_MODE_STATUS_KEY, status);
@@ -177,10 +178,21 @@ class FastModeSession {
     return formatFastDetails(
       this.snapshot(),
       this.ctx.model,
-      this.capabilities.resolve(this.ctx.model, this.uiAuth),
+      this.capabilities.resolve(this.ctx.model, this.displayAuth()),
       this.journal.last,
       this.discoveryError ?? this.capabilities.error,
     );
+  }
+
+  /** Display-only credential hint; each request is still decided from its resolved key. */
+  private displayAuth(): CapabilityAuth | undefined {
+    const model = this.ctx.model;
+    if (!isChatGPTRouteModel(model)) return this.uiAuth;
+    try {
+      return { chatgpt: this.ctx.modelRegistry.isUsingOAuth(model) };
+    } catch {
+      return undefined;
+    }
   }
 
   private keyForContext(ctx: ExtensionContext): string {
@@ -239,6 +251,11 @@ class FastModeSession {
     if (!this.active || this.policyError) return;
     if (this.discovery && !force) return this.discovery.promise;
     const model = this.ctx.model;
+    if (isChatGPTRouteModel(model)) {
+      // Its token is scoped to api.openai.com; never send it to the ChatGPT model catalog.
+      this.discoveryError = "Sign in with ChatGPT is not catalog-probed; using local capabilities.";
+      return;
+    }
     if (!isCodexModel(model)) {
       if (this.routes.includes(model))
         this.discoveryError =

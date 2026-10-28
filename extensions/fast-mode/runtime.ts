@@ -114,7 +114,7 @@ export function installFastModeProviderLookup(
     typeof registry.getRegisteredNativeProvider !== "function"
   ) {
     throw new Error(
-      "Fast mode requires the Pi 0.85.1-compatible model runtime interface (including child streams). No decorators were installed.",
+      "Fast mode requires the Pi 1.4-compatible model runtime interface (including child streams). No decorators were installed.",
     );
   }
   let active = true;
@@ -162,8 +162,10 @@ export function installFastModeProviderLookup(
     try {
       registry.getProvider = getProvider;
       registry.getRegisteredNativeProvider = getNativeProvider;
-      registry.getProvider("openai-codex");
-      registry.getRegisteredNativeProvider("openai-codex");
+      for (const id of ["openai", "openai-codex"]) {
+        registry.getProvider(id);
+        registry.getRegisteredNativeProvider(id);
+      }
     } catch (error) {
       active = false;
       registrations.clear();

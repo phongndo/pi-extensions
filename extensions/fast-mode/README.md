@@ -1,8 +1,10 @@
 # Pi Fast Mode
 
-A global preference that requests `service_tier: "priority"` for eligible native Codex calls and explicitly opted-in Codex proxies. Requires Pi **0.85.1+**; compatibility tests target 0.85.1.
+A global preference that requests `service_tier: "priority"` for eligible ChatGPT-subscription calls: the OpenAI provider with Sign in with ChatGPT (`/login openai`), the legacy `openai-codex` provider, and explicitly opted-in Codex proxies. Requires Pi **1.4.0+**; compatibility tests target 1.4.0.
 
-Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It can increase charges; check [current Codex speed and pricing](https://developers.openai.com/codex/speed). A saved on preference also applies to supported GPT-6 Astra, Luna, and Sol models.
+Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It can increase charges; check [current Codex speed and pricing](https://learn.chatgpt.com/docs/agent-configuration/speed). A saved on preference also applies to supported GPT-6.1 Sol/Terra and GPT-6 Astra/Luna/Sol models.
+
+OpenAI requests made with an `sk-` API key are left unchanged (`speed unavailable`): Fast is a ChatGPT-subscription feature, and API priority processing is billed differently.
 
 ## Use it
 
@@ -23,6 +25,8 @@ The native footer shows `speed fast` when enabled and supported, `speed ?` for u
 ## Model support and discovery
 
 Support is resolved from explicit model metadata, then a fresh account/endpoint catalog, then an exact-model fallback. Metadata can exclude fallback models; malformed metadata means unknown support. Unknown future names and aliases are not enabled by a broad name match. The maintained fallback IDs live in [`capabilities.ts`](capabilities.ts).
+
+Discovery applies only to the legacy `openai-codex` provider. Sign in with ChatGPT tokens are scoped to `api.openai.com`, so they are never sent to the Codex catalog; those models use metadata and the fallback. The footer reads the credential type from Pi without refreshing tokens; each request is decided from its resolved credential.
 
 Discovery uses Pi's model-registry credentials and probes **only official Codex endpoints**. It rejects credentialed redirects and forwards only authorization/account-routing headers. Custom proxy credentials are never used for discovery.
 
@@ -76,7 +80,7 @@ Run `/reload`, then `/fast on` and `/fast status`. If the preference was already
 - The provider, `openai-responses` API, and normalized endpoint must match. Trailing slashes are ignored; hosts, ports, schemes, and paths remain distinct, including `localhost` versus `127.0.0.1`.
 - The same metadata and exact-model fallback rules apply. Opt-in does not enable unknown aliases, probe upstream accounts, or alter account-pool selection.
 - Routes load at session start/reload. After editing or removing this file, reload every affected session; `/fast refresh` does not reload routes.
-- Without the file, only native Codex is eligible. Invalid route configuration shows `speed !` and installs no policy decorators.
+- Without the file, only Sign in with ChatGPT and native Codex are eligible. Invalid route configuration shows `speed !` and installs no policy decorators.
 - The file contains no credentials and lives beside `fast-mode.json`. SDK embeddings may pass `proxyRoutes` to `createFastModeExtension`; an explicit empty array disables opt-in for that instance.
 
 ## Interpret diagnostics

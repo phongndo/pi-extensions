@@ -11,7 +11,7 @@ import type { OpenAICodexResponsesOptions } from "@earendil-works/pi-ai/api/open
 
 import { isRecord, resolveFastCapability, type FastCapabilityResolver } from "./capabilities.ts";
 import type { FastRequestJournal, FastRequestObservation } from "./diagnostics.ts";
-import { NATIVE_FAST_ROUTES, type FastModeRoutes } from "./routes.ts";
+import { NATIVE_FAST_ROUTES, isChatGPTCredential, type FastModeRoutes } from "./routes.ts";
 
 const FAST_PROVIDER_MARKER = Symbol("pi-fast-mode.provider");
 
@@ -71,7 +71,11 @@ export function withFastPayload<TOptions extends StreamOptions>(
     const requestOptions = isRecord(this) ? (this as StreamOptions) : effective;
     if (
       hooks?.isActive?.() === false ||
-      !(hooks?.routes ?? NATIVE_FAST_ROUTES).includes(requestModel) ||
+      !(hooks?.routes ?? NATIVE_FAST_ROUTES).includes(
+        requestModel,
+        requestModel.baseUrl,
+        isChatGPTCredential(requestOptions.apiKey) === true,
+      ) ||
       !isRecord(transformed) ||
       transformed.model !== requestModel.id
     )

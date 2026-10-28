@@ -52,7 +52,7 @@ test("incompatible private runtime fails before modifying registry methods", () 
   };
   assert.throws(
     () => installFastModeProviderLookup(registry as unknown as ModelRegistry, async () => true),
-    /0\.85\.1-compatible/,
+    /1\.4-compatible/,
   );
   assert.equal(registry.getProvider, getProvider);
   assert.equal(registry.getRegisteredNativeProvider, getProvider);
@@ -69,6 +69,8 @@ test("recognizes only supported Codex Fast models", () => {
     "gpt-6-astra",
     "gpt-6-luna",
     "gpt-6-sol",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
   ]) {
     assert.equal(supportsCodexFastMode(model(id)), true, id);
   }
@@ -289,7 +291,7 @@ test("direct runtime streams stay Fast after a built-in provider refresh", async
 
   await runtime.refresh({ allowNetwork: false });
   assert.equal(runtime.getRegisteredNativeProvider("openai-codex"), undefined);
-  const selected = runtime.getModel("openai-codex", "gpt-6-sol");
+  const selected = runtime.getModel("openai-codex", "gpt-6.1-sol");
   const refreshedProvider = runtime.getProvider("openai-codex");
   assert.ok(selected);
   assert.ok(refreshedProvider);
@@ -391,7 +393,7 @@ test("a retained outer runtime wrapper stays safe after Fast teardown", async ()
   removeLookup();
 
   assert.equal(runtime.stream, outerStream);
-  const selected = runtime.getModel("openai-codex", "gpt-6-sol");
+  const selected = runtime.getModel("openai-codex", "gpt-6.1-sol");
   assert.ok(selected);
   assert.doesNotThrow(() => runtime.stream(selected, EMPTY_CONTEXT));
 });

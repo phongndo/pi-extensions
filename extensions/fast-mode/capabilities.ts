@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 import type { Api, Model, ProviderHeaders, StreamOptions } from "@earendil-works/pi-ai";
-import { FastModeRoutes, NATIVE_FAST_ROUTES, isCodexModel } from "./routes.ts";
+import {
+  FastModeRoutes,
+  NATIVE_FAST_ROUTES,
+  isChatGPTCredential,
+  isChatGPTRouteModel,
+  isCodexModel,
+} from "./routes.ts";
 
-export { isCodexModel } from "./routes.ts";
+export { isChatGPTRouteModel, isCodexModel } from "./routes.ts";
 
 export interface FastCapability {
   status: "supported" | "unsupported" | "unknown";
@@ -12,6 +18,8 @@ export interface FastCapability {
 
 export interface CapabilityAuth {
   apiKey?: string;
+  /** Credential-type hint when no key is resolved; a resolved apiKey takes precedence. */
+  chatgpt?: boolean;
   headers?: ProviderHeaders;
   baseUrl?: string;
 }
@@ -27,6 +35,8 @@ const FALLBACK_MODELS = new Set([
   "gpt-6-astra",
   "gpt-6-luna",
   "gpt-6-sol",
+  "gpt-6.1-sol",
+  "gpt-6.1-terra",
 ]);
 const SEPARATE_MODELS = new Set(["gpt-5.4-mini", "gpt-5.3-codex-spark"]);
 const CACHE_MS = 15 * 60_000;
@@ -73,11 +83,29 @@ export function resolveFastCapability(
   routes: FastModeRoutes = NATIVE_FAST_ROUTES,
   auth?: CapabilityAuth,
 ): FastCapability {
-  if (!routes.includes(model, auth?.baseUrl)) {
+  const baseUrl = auth?.baseUrl ?? model?.baseUrl;
+  const chatgptRoute = isChatGPTRouteModel(model, baseUrl);
+  if (chatgptRoute) {
+    const chatgpt = isChatGPTCredential(auth?.apiKey) ?? auth?.chatgpt;
+    if (chatgpt === undefined)
+      return {
+        status: "unknown",
+        source: "none",
+        reason: "OpenAI credential type not resolved yet; Fast requires Sign in with ChatGPT.",
+      };
+    if (!chatgpt)
+      return {
+        status: "unsupported",
+        source: "none",
+        reason: "OpenAI API-key requests are not eligible; Fast requires Sign in with ChatGPT.",
+      };
+  }
+  if (!model || !(chatgptRoute || routes.includes(model, baseUrl))) {
     return {
       status: "unsupported",
       source: "none",
-      reason: "Requires native Codex or an explicitly opted-in Responses proxy route.",
+      reason:
+        "Requires Sign in with ChatGPT on OpenAI, native Codex, or an explicitly opted-in Responses proxy route.",
     };
   }
   const metadata = capabilityFromMetadata(model, "model");
@@ -86,9 +114,10 @@ export function resolveFastCapability(
     return {
       status: "supported",
       source: "fallback",
-      reason: isCodexModel(model)
-        ? "Documented model fallback; account availability is unverified."
-        : "Documented model fallback on an opted-in proxy route; upstream account availability is unverified.",
+      reason:
+        isCodexModel(model) || chatgptRoute
+          ? "Documented model fallback; account availability is unverified."
+          : "Documented model fallback on an opted-in proxy route; upstream account availability is unverified.",
     };
   }
   if (SEPARATE_MODELS.has(model.id)) {
