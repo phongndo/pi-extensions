@@ -16,16 +16,21 @@ import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { formatFastDetails, formatFastStatus } from "../footer.ts";
 import { resolveFastCapability } from "../capabilities.ts";
 import { installFastModeProviderLookup } from "../index.ts";
-import {
-  applyCodexFastMode,
-  decorateCodexProvider,
-  isFastModeProvider,
-  supportsCodexFastMode,
-} from "../policy.ts";
+import { decorateCodexProvider, isFastModeProvider, withFastPayload } from "../policy.ts";
 import { preferenceLockPath } from "../../../src/preference-file.ts";
+import { FastModeRoutes } from "../routes.ts";
 import { loadFastMode, saveFastMode, toggleFastMode } from "../state.ts";
 
 const EMPTY_CONTEXT = normalizeContext({ messages: [] });
+
+/** Run the production payload hook, as Pi does for each request. */
+async function applyFast(payload: Record<string, unknown>, selected: Model<Api>, enabled: boolean) {
+  const options = withFastPayload(undefined, async () => enabled);
+  return options.onPayload!.call(options, payload, selected);
+}
+
+const supportsFast = (selected: Model<Api>) =>
+  resolveFastCapability(selected).status === "supported";
 
 function model(id: string, provider = "openai-codex", api: Api = "openai-codex-responses") {
   return {
@@ -71,7 +76,7 @@ test("recognizes only supported Codex Fast models", () => {
     "gpt-6.1-sol",
     "gpt-6.1-terra",
   ]) {
-    assert.equal(supportsCodexFastMode(model(id)), true, id);
+    assert.equal(supportsFast(model(id)), true, id);
   }
   for (const candidate of [
     model("gpt-5.3-codex-spark"),
@@ -80,15 +85,15 @@ test("recognizes only supported Codex Fast models", () => {
     model("gpt-6-sol-preview"),
     model("gpt-5.5", "openai", "openai-responses"),
   ]) {
-    assert.equal(supportsCodexFastMode(candidate), false, candidate.id);
+    assert.equal(supportsFast(candidate), false, candidate.id);
   }
 });
 
-test("adds priority without changing any reasoning level", () => {
+test("adds priority without changing any reasoning level", async () => {
   const selected = model("gpt-5.6-sol");
   for (const effort of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
     const payload = { model: selected.id, reasoning: { effort }, service_tier: "default" };
-    assert.deepEqual(applyCodexFastMode(payload, selected, true), {
+    assert.deepEqual(await applyFast(payload, selected, true), {
       model: selected.id,
       reasoning: { effort },
       service_tier: "priority",
@@ -96,13 +101,13 @@ test("adds priority without changing any reasoning level", () => {
   }
 });
 
-test("leaves disabled, unsupported, and mismatched requests unchanged", () => {
+test("leaves disabled, unsupported, and mismatched requests unchanged", async () => {
   const selected = model("gpt-5.5");
   const payload = { model: selected.id };
-  assert.equal(applyCodexFastMode(payload, selected, false), payload);
-  assert.equal(applyCodexFastMode(payload, model("gpt-5.4-mini"), true), payload);
+  assert.equal(await applyFast(payload, selected, false), payload);
+  assert.equal(await applyFast(payload, model("gpt-5.4-mini"), true), payload);
   const mismatched = { model: "other" };
-  assert.equal(applyCodexFastMode(mismatched, selected, true), mismatched);
+  assert.equal(await applyFast(mismatched, selected, true), mismatched);
 });
 
 test("provider decoration composes payload hooks for child runtimes", async () => {
@@ -444,7 +449,7 @@ test("Fast provider lookup supports immutable native providers", async () => {
   assert.equal(await captured.onPayload(payload, selected), payload);
 });
 
-test("Astra and unavailable models have explicit, distinct status text", () => {
+test("Astra and unavailable models have explicit, distinct status text", async () => {
   const astra = model("gpt-6-astra");
   const supported = resolveFastCapability(astra);
   assert.equal(formatFastStatus({ enabled: true }, supported), "fast on");
@@ -461,7 +466,7 @@ test("Astra and unavailable models have explicit, distinct status text", () => {
   );
   assert.match(formatFastDetails({ enabled: true }, astra, supported), /2.5×/);
   assert.deepEqual(
-    applyCodexFastMode({ model: astra.id, reasoning: { effort: "xhigh" } }, astra, true),
+    await applyFast({ model: astra.id, reasoning: { effort: "xhigh" } }, astra, true),
     {
       model: astra.id,
       reasoning: { effort: "xhigh" },
@@ -514,4 +519,57 @@ test("a lock left by the pre-1.4 extension never blocks toggles", async () => {
 
   assert.equal(await toggleFastMode(path), true);
   assert.equal(await toggleFastMode(path), false);
+});
+
+test("re-entrant decoration (virtual models) applies the policy once", async () => {
+  let reads = 0;
+  const read = async () => (reads++, true);
+  const once = withFastPayload(undefined, read);
+  assert.equal(withFastPayload(once, read), once);
+  const selected = model("gpt-6.1-sol");
+  assert.deepEqual(await once.onPayload!.call(once, { model: selected.id }, selected), {
+    model: selected.id,
+    service_tier: "priority",
+  });
+  assert.equal(reads, 1);
+});
+
+test("reused options are priced per request, restoring the caller's tier", async () => {
+  let enabled = true;
+  const read = async () => enabled;
+  const selected = model("gpt-6.1-sol");
+  for (const callerTier of [undefined, "flex"] as const) {
+    enabled = true;
+    const options = withFastPayload(
+      callerTier ? ({ serviceTier: callerTier } as StreamOptions) : undefined,
+      read,
+    ) as StreamOptions & { serviceTier?: string };
+    await options.onPayload!.call(options, { model: selected.id }, selected);
+    assert.equal(options.serviceTier, "priority");
+    enabled = false;
+    // Same policy re-entering (virtual models) and a different policy wrapping the copy.
+    for (const reused of [
+      withFastPayload(options, read),
+      withFastPayload(options, async () => false),
+    ]) {
+      const typed = reused as typeof options;
+      const payload = await typed.onPayload!.call(typed, { model: selected.id }, selected);
+      assert.equal((payload as { service_tier?: string }).service_tier, undefined);
+      assert.equal(typed.serviceTier, callerTier);
+    }
+  }
+});
+
+test("the re-entry guard only skips the identical policy", async () => {
+  const route = { provider: "local", baseUrl: "http://127.0.0.1:1/v1" };
+  const proxy = { ...model("gpt-6.1-sol", "local", "openai-responses"), baseUrl: route.baseUrl };
+  const parent = withFastPayload(undefined, async () => true);
+  const child = withFastPayload(parent, async () => true, {
+    routes: new FastModeRoutes([route]),
+  });
+  assert.notEqual(child, parent);
+  assert.deepEqual(await child.onPayload!.call(child, { model: proxy.id }, proxy), {
+    model: proxy.id,
+    service_tier: "priority",
+  });
 });

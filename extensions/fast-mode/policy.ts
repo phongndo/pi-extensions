@@ -14,10 +14,33 @@ import type { FastRequestJournal, FastRequestObservation } from "./diagnostics.t
 import { NATIVE_FAST_ROUTES, isChatGPTCredential, type FastModeRoutes } from "./routes.ts";
 
 const FAST_PROVIDER_MARKER = Symbol("pi-fast-mode.provider");
+type PayloadHook = NonNullable<StreamOptions["onPayload"]>;
+/** Which policy installed each hook, so only an identical policy is skipped on re-entry. */
+const FAST_PAYLOAD_HOOKS = new WeakMap<
+  PayloadHook,
+  { readEnabled: FastModeReader; hooks?: FastModeHooks }
+>();
 
 type CodexTierOptions = Pick<OpenAICodexResponsesOptions, "serviceTier">;
 
 export type FastModeReader = () => Promise<boolean>;
+
+/** Options this extension priced as priority, mapped to the caller's own tier. */
+const PRICED = new WeakMap<object, CodexTierOptions["serviceTier"]>();
+
+/** Pi prices from the options' tier, so it must track each request; reused options would
+ * otherwise keep priority pricing after /fast off. */
+function priceAs(target: CodexTierOptions, priority: boolean): void {
+  if (priority) {
+    if (!PRICED.has(target)) PRICED.set(target, target.serviceTier);
+    target.serviceTier = "priority";
+  } else if (PRICED.has(target)) {
+    const callerTier = PRICED.get(target);
+    PRICED.delete(target);
+    if (callerTier === undefined) delete target.serviceTier;
+    else target.serviceTier = callerTier;
+  }
+}
 
 export interface FastModeHooks {
   routes?: FastModeRoutes;
@@ -26,33 +49,19 @@ export interface FastModeHooks {
   isActive?: () => boolean;
 }
 
-export function supportsCodexFastMode(model: Model<Api> | undefined): model is Model<Api> {
-  return model !== undefined && resolveFastCapability(model).status === "supported";
-}
-
-function isEligibleCodexFastPayload(
-  payload: unknown,
-  model: Model<Api> | undefined,
-): payload is Record<string, unknown> {
-  return supportsCodexFastMode(model) && isRecord(payload) && payload.model === model.id;
-}
-
-export function applyCodexFastMode(
-  payload: unknown,
-  model: Model<Api> | undefined,
-  enabled: boolean,
-): unknown {
-  if (!enabled || !isEligibleCodexFastPayload(payload, model)) return payload;
-  return { ...payload, service_tier: "priority" };
-}
-
 export function withFastPayload<TOptions extends StreamOptions>(
   options: TOptions | undefined,
   readEnabled: FastModeReader,
   hooks?: FastModeHooks,
 ): TOptions {
+  // Virtual models re-enter the patched runtime with options this same policy decorated.
+  const installed = options?.onPayload && FAST_PAYLOAD_HOOKS.get(options.onPayload);
+  if (installed && installed.readEnabled === readEnabled && installed.hooks === hooks)
+    return options;
   const previous = options?.onPayload;
   const effective = { ...options } as TOptions & CodexTierOptions;
+  // A copy of options this extension priced must still be restorable to the caller's tier.
+  if (options && PRICED.has(options)) PRICED.set(effective, PRICED.get(options));
   let observation: FastRequestObservation | undefined;
   if (hooks?.journal) {
     const fetchRequest = options?.fetch ?? globalThis.fetch;
@@ -87,11 +96,10 @@ export function withFastPayload<TOptions extends StreamOptions>(
     const applied = capability.status === "supported" && (await readEnabled());
     if (hooks?.isActive?.() === false) return transformed;
     const fastPayload = applied ? { ...transformed, service_tier: "priority" } : transformed;
-    if (fastPayload.service_tier === "priority") {
-      effective.serviceTier = "priority";
-      // Keep Pi's existing request-tier pricing behavior; it is not admission confirmation.
-      if (isRecord(this)) this.serviceTier = "priority";
-    }
+    // Pi prices from the request tier; that is not admission confirmation.
+    const priority = fastPayload.service_tier === "priority";
+    priceAs(effective, priority);
+    if (isRecord(this)) priceAs(this as CodexTierOptions, priority);
     observation = hooks?.journal?.begin(
       requestModel,
       fastPayload,
@@ -101,6 +109,7 @@ export function withFastPayload<TOptions extends StreamOptions>(
     );
     return fastPayload;
   };
+  FAST_PAYLOAD_HOOKS.set(effective.onPayload, { readEnabled, hooks });
   return effective;
 }
 
