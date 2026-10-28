@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { stream, streamSimple } from "@earendil-works/pi-ai/api/openai-codex-responses";
+import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { FastRequestJournal } from "../diagnostics.ts";
 import { CodexCapabilities, resolveFastCapability } from "../capabilities.ts";
 import { installFastModeProviderLookup } from "../runtime.ts";
@@ -57,7 +58,10 @@ test("real Codex stream and streamSimple send Astra priority and expose raw SSE 
       async () => true,
       { journal },
     );
-    const context = { systemPrompt: "DO NOT RETAIN THIS PROMPT", messages: [] };
+    const context = normalizeContext({
+      systemPrompt: "DO NOT RETAIN THIS PROMPT",
+      messages: [],
+    });
     const response = await (
       simple
         ? streamSimple(model(), context, { ...options, reasoning: "xhigh" })

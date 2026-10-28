@@ -1,11 +1,11 @@
 import type {
   Api,
   ApiStreamOptions,
-  Context,
   Model,
   Provider,
   SimpleStreamOptions,
   StreamOptions,
+  TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { OpenAICodexResponsesOptions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 
@@ -129,7 +129,7 @@ export function decorateCodexProvider(
       : {}),
     stream<TApi extends Api>(
       model: Model<TApi>,
-      context: Context,
+      context: TranscriptContext,
       options?: ApiStreamOptions<TApi>,
     ) {
       return provider.stream(

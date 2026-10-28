@@ -14,17 +14,17 @@
     "test": "bun test ./tests"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.85.1",
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-tui": "0.85.1",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
     "@types/node": "^24.12.4",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "typescript": "5.9.3"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.85.1",
-    "@earendil-works/pi-coding-agent": ">=0.85.1"
+    "@earendil-works/pi-ai": ">=1.4.0",
+    "@earendil-works/pi-coding-agent": ">=1.4.0"
   },
   "engines": {
     "node": ">=22.19.0"
