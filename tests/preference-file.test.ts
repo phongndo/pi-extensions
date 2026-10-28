@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { withPreferenceLock, writePreferenceJson } from "../src/preference-file.ts";
+import {
+  preferenceLockPath,
+  withPreferenceLock,
+  writePreferenceJson,
+} from "../src/preference-file.ts";
 
 async function fixture(run: (path: string, root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "pi-preference-"));
@@ -16,9 +21,9 @@ async function fixture(run: (path: string, root: string) => Promise<void>) {
 
 test("preference lease recovers a stale empty lock", () =>
   fixture(async (path) => {
-    await mkdir(`${path}.lock`);
+    await mkdir(preferenceLockPath(path));
     const past = new Date(Date.now() - 600_000);
-    await utimes(`${path}.lock`, past, past);
+    await utimes(preferenceLockPath(path), past, past);
     await withPreferenceLock(path, (path, owned) => writePreferenceJson(path, { ok: true }, owned));
     assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { ok: true });
   }));
@@ -57,4 +62,14 @@ test("parent aliases share a queue and never overlap active transactions", () =>
         }),
       ),
     );
+  }));
+
+test("locking never caches state on the shared fs module (a Proxy inside Pi)", () =>
+  fixture(async (path) => {
+    // proper-lockfile's default fs: the instance it would cache on without its own fs.
+    const require = createRequire(import.meta.url);
+    const shared: object = createRequire(require.resolve("proper-lockfile"))("graceful-fs");
+    await withPreferenceLock(path, async () => {});
+    // proper-lockfile caches once per fs object, so any earlier lock would have left it here.
+    assert.deepEqual(Object.getOwnPropertySymbols(shared), []);
   }));

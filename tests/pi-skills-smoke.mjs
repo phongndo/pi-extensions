@@ -1,7 +1,7 @@
 // Installed Pi, no credentials, no network requests, no model-driven side effects.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 
@@ -37,7 +37,8 @@ export default function(pi) {
   pi.on("before_agent_start", event => {
     writeFileSync(${JSON.stringify(join(home, "expanded.json"))}, JSON.stringify({
       prompt: event.prompt, skills: event.systemPromptOptions.skills,
-      tools: pi.getAllTools().map(tool => tool.name)
+      tools: pi.getAllTools().map(tool => tool.name),
+      exposures: Object.fromEntries(pi.getAllTools().map(tool => [tool.name, tool.exposure]))
     }));
   });
 }
@@ -102,6 +103,19 @@ async function expand(message) {
   return JSON.parse(readFileSync(join(home, "expanded.json"), "utf8"));
 }
 try {
+  // Before any agent run, as in a fresh session. Repeated toggles take the preference lock several times in one real Pi process.
+  for (const expected of ["on", "off", "on"]) {
+    await request("prompt", { message: "/fast" });
+    const notice = await waitFor(
+      (event) => event.method === "notify" && /^Fast mode (on|off)$/.test(event.message),
+    );
+    assert.equal(notice.message, `Fast mode ${expected}`);
+  }
+  assert.deepEqual(JSON.parse(readFileSync(join(agentDir, "fast-mode.json"), "utf8")), {
+    version: 1,
+    enabled: true,
+  });
+  assert.equal(existsSync(join(agentDir, "fast-mode.json.v2.lock")), false, "lock released");
   const { commands } = await request("get_commands");
   const skills = commands.filter((command) => command.source === "skill");
   assert.deepEqual(
@@ -130,9 +144,10 @@ try {
       assert.ok(!canonical.tools.includes(removed), `Unexpected removed native tool: ${removed}`);
     }
   }
+  assert.equal((await expand("exposure probe")).exposures.question, "model-only");
   assert.equal(events.filter((event) => event.type === "extension_error").length, 0);
   console.log(
-    `PASS: Pi ${execFileSync(process.env.PI_BIN || "pi", ["--version"], { encoding: "utf8" }).trim()}; ${(await names).length} skills once; native skill commands expand; no shorthand aliases. ${expected.extensions.length} packaged extension entry points.`,
+    `PASS: Pi ${execFileSync(process.env.PI_BIN || "pi", ["--version"], { encoding: "utf8" }).trim()}; ${(await names).length} skills once; native skill commands expand; no shorthand aliases; /fast toggles; question is model-only. ${expected.extensions.length} packaged extension entry points.`,
   );
 } finally {
   child.kill("SIGTERM");

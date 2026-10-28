@@ -1,14 +1,30 @@
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
 import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import lockfile from "proper-lockfile";
 
 /** Serialize cooperating writers across processes, including before first creation.
  * Callers must use the supplied canonical path for both reads and writes.
  * External editors do not participate. Keep transactions short: leases cannot
  * fence a process suspended beyond the stale interval.
  */
+// proper-lockfile caches a non-writable symbol on its fs object; Pi's runtime exposes fs
+// as a Proxy that rejects re-reading it, which crashes the process on the second lock.
+const lockFs = {
+  mkdir: fs.mkdir,
+  realpath: fs.realpath,
+  rmdir: fs.rmdir,
+  rmdirSync: fs.rmdirSync,
+  stat: fs.stat,
+  utimes: fs.utimes,
+};
+
+/** proper-lockfile's directory; distinct from the pre-1.4 custom lock's `.lock`, whose marker
+ * files proper-lockfile cannot remove and whose reclaim rules would treat this lock as abandoned.
+ */
+export const preferenceLockPath = (path: string): string => `${path}.v2.lock`;
+
 export async function withPreferenceLock<T>(
   path: string,
   mutate: (path: string, assertOwned: () => void) => Promise<T>,
@@ -17,8 +33,12 @@ export async function withPreferenceLock<T>(
   const canonical = join(await realpath(dirname(path)), basename(path));
   return withFileMutationQueue(canonical, async () => {
     let compromised: Error | undefined;
+    // Loaded on first write so status-only sessions do not pay for it at startup.
+    const { default: lockfile } = await import("proper-lockfile");
     const release = await lockfile.lock(canonical, {
       realpath: false,
+      lockfilePath: preferenceLockPath(canonical),
+      fs: lockFs,
       stale: 300_000,
       update: 10_000,
       retries: { retries: 100, factor: 1, minTimeout: 50, maxTimeout: 50 },

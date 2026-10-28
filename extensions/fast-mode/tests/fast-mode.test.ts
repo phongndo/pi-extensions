@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +22,7 @@ import {
   isFastModeProvider,
   supportsCodexFastMode,
 } from "../policy.ts";
+import { preferenceLockPath } from "../../../src/preference-file.ts";
 import { loadFastMode, saveFastMode, toggleFastMode } from "../state.ts";
 
 const EMPTY_CONTEXT = normalizeContext({ messages: [] });
@@ -490,99 +489,29 @@ test("persists the global toggle atomically", async () => {
   await assert.rejects(loadFastMode(path), /Invalid fast-mode state/);
 });
 
-test("reclaims an abandoned lock after its PID is recycled", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-fast-mode-recycled-pid-"));
-  const path = join(root, "fast-mode.json");
-  const abandonedLockPath = `${path}.lock`;
-  await mkdir(abandonedLockPath);
-  await writeFile(
-    join(abandonedLockPath, "owner.json"),
-    JSON.stringify({
-      version: 2,
-      pid: process.pid,
-      createdAt: Date.now(),
-      token: "abandoned",
-      processStartId: "a-different-process-instance",
-    }),
-  );
-
-  assert.equal(await toggleFastMode(path), true);
-  assert.equal(await loadFastMode(path), true);
-});
-
-test("reclaims an expired lock from a foreign host", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-fast-mode-foreign-host-"));
-  const path = join(root, "fast-mode.json");
-  const abandonedLockPath = `${path}.lock`;
-  const token = "foreign-owner";
-  const markerPath = join(abandonedLockPath, `owner.${token}.json`);
-  await mkdir(abandonedLockPath);
-  await writeFile(
-    markerPath,
-    JSON.stringify({
-      version: 3,
-      pid: process.pid,
-      createdAt: Date.now() - 10 * 60_000,
-      token,
-      processStartId: "foreign-process-instance",
-      hostId: "a-different-host",
-    }),
-  );
-  const expired = new Date(Date.now() - 10 * 60_000);
-  await utimes(markerPath, expired, expired);
-  await utimes(abandonedLockPath, expired, expired);
-
-  assert.equal(await toggleFastMode(path), true);
-  assert.equal(await loadFastMode(path), true);
-});
-
-test("reclaims abandoned lock directories with multiple markers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-fast-mode-multiple-markers-"));
-  const path = join(root, "fast-mode.json");
-  const abandonedLockPath = `${path}.lock`;
-  await mkdir(abandonedLockPath);
-  await Promise.all(
-    ["abandoned-a", "abandoned-b"].map((token) =>
-      writeFile(
-        join(abandonedLockPath, `owner.${token}.json`),
-        JSON.stringify({
-          version: 2,
-          pid: process.pid,
-          createdAt: Date.now(),
-          token,
-          processStartId: "a-different-process-instance",
-        }),
-      ),
-    ),
-  );
-
-  assert.equal(await toggleFastMode(path), true);
-  assert.equal(await loadFastMode(path), true);
-});
-
-test("serializes contenders racing to reclaim an abandoned lock", async () => {
+test("reclaims a stale lock left by a crashed writer", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-fast-mode-stale-lock-"));
   const path = join(root, "fast-mode.json");
-  const abandonedLockPath = `${path}.lock`;
-  const exitedOwner = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
-  const exitedOwnerPid = exitedOwner.pid;
-  assert.ok(exitedOwnerPid);
-  await once(exitedOwner, "exit");
-
-  await mkdir(abandonedLockPath);
-  await writeFile(
-    join(abandonedLockPath, "owner.json"),
-    JSON.stringify({
-      version: 1,
-      pid: exitedOwnerPid,
-      createdAt: Date.now(),
-      token: "abandoned",
-    }),
-  );
+  await mkdir(preferenceLockPath(path));
+  const expired = new Date(Date.now() - 10 * 60_000);
+  await utimes(preferenceLockPath(path), expired, expired);
 
   assert.deepEqual((await Promise.all([toggleFastMode(path), toggleFastMode(path)])).sort(), [
     false,
     true,
   ]);
   assert.equal(await loadFastMode(path), false);
+});
+
+test("a lock left by the pre-1.4 extension never blocks toggles", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-fast-mode-legacy-lock-"));
+  const path = join(root, "fast-mode.json");
+  // The old custom lock kept owner markers inside `<state>.lock`.
+  await mkdir(`${path}.lock`);
+  await writeFile(join(`${path}.lock`, "owner.abandoned.json"), "{}");
+  const expired = new Date(Date.now() - 10 * 60_000);
+  await utimes(`${path}.lock`, expired, expired);
+
+  assert.equal(await toggleFastMode(path), true);
+  assert.equal(await toggleFastMode(path), false);
 });

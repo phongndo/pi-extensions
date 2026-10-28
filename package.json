@@ -10,7 +10,7 @@
     "check": "bun run check:root && bun run --workspaces check",
     "check:root": "bun run format:check && bun run lint && bun run typecheck && bun run test:skills",
     "test": "bun test",
-    "test:skills": "bun test ./tests/skills.test.mjs",
+    "test:skills": "bun test ./tests/skills.test.mjs ./tests/preference-file.test.ts",
     "test:pi-skills": "bun run ./tests/pi-skills-smoke.mjs",
     "format": "bun run --bun oxfmt .",
     "format:check": "bun run --bun oxfmt --check .",
