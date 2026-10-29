@@ -50,7 +50,7 @@ jobs:
         id: install
         run: bun install --frozen-lockfile
 
-      # Includes skill tests and each workspace's tests; no second bun test pass.
+      # Includes root and workspace tests; no second bun test pass.
       - name: Check formatting, lint, types, and tests
         run: bun run check
 
@@ -58,4 +58,4 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           PI_BIN: ${{ github.workspace }}/node_modules/.bin/pi
-        run: bun run test:pi-skills
+        run: bun run test:pi

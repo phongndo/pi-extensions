@@ -8,10 +8,10 @@
   "type": "module",
   "scripts": {
     "check": "bun run check:root && bun run --workspaces check",
-    "check:root": "bun run format:check && bun run lint && bun run typecheck && bun run test:skills",
+    "check:root": "bun run format:check && bun run lint && bun run typecheck && bun run test:root",
     "test": "bun test",
-    "test:skills": "bun test ./tests/skills.test.mjs ./tests/preference-file.test.ts",
-    "test:pi-skills": "bun run ./tests/pi-skills-smoke.mjs",
+    "test:root": "bun test ./tests/preference-file.test.ts",
+    "test:pi": "bun run ./tests/pi-smoke.mjs",
     "format": "bun run --bun oxfmt .",
     "format:check": "bun run --bun oxfmt --check .",
     "lint": "bun run --bun oxlint .",
@@ -49,9 +49,6 @@
     "extensions": [
       "./extensions/question/index.ts",
       "./extensions/fast-mode/index.ts"
-    ],
-    "skills": [
-      "./skills"
     ],
     "themes": [
       "./themes"

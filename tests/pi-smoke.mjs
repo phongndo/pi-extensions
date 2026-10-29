@@ -7,15 +7,13 @@ import { resolve, join } from "node:path";
 
 const root = resolve(".");
 const expected = JSON.parse(readFileSync(join(root, "package.json"))).pi;
-const names = (await import("node:fs/promises")).readdir(join(root, "skills"));
-const home = mkdtempSync(join(tmpdir(), "pi-skill-smoke-"));
+const home = mkdtempSync(join(tmpdir(), "pi-smoke-"));
 const agentDir = join(home, ".pi/agent");
 mkdirSync(agentDir, { recursive: true });
 writeFileSync(
   join(agentDir, "settings.json"),
   JSON.stringify({
     packages: [root],
-    enableSkillCommands: true,
     enableInstallTelemetry: false,
     retry: { enabled: false },
     defaultProvider: "skill-smoke",
@@ -36,7 +34,6 @@ export default function(pi) {
   });
   pi.on("before_agent_start", event => {
     writeFileSync(${JSON.stringify(join(home, "expanded.json"))}, JSON.stringify({
-      prompt: event.prompt, skills: event.systemPromptOptions.skills,
       tools: pi.getAllTools().map(tool => tool.name),
       exposures: Object.fromEntries(pi.getAllTools().map(tool => [tool.name, tool.exposure]))
     }));
@@ -117,37 +114,20 @@ try {
   });
   assert.equal(existsSync(join(agentDir, "fast-mode.json.v2.lock")), false, "lock released");
   const { commands } = await request("get_commands");
-  const skills = commands.filter((command) => command.source === "skill");
-  assert.deepEqual(
-    skills.map((skill) => skill.name).sort(),
-    (await names).map((name) => `skill:${name}`).sort(),
-  );
-  for (const name of new Set([...(await names), "wayfinder", "autopilot", "yeet", "cmd"])) {
-    assert.equal(
-      commands.filter((command) => command.source === "extension" && command.name === name).length,
-      0,
-      `Unexpected shorthand skill command: /${name}`,
-    );
-  }
   assert.equal(
     commands.filter((command) => command.source === "extension" && command.name === "commit")
       .length,
     0,
     "Unexpected removed extension command: /commit",
   );
-  for (const name of await names) {
-    const canonical = await expand(`/skill:${name} smoke argument`);
-    assert.ok(canonical.prompt.includes(join(root, "skills", name)));
-    assert.ok(canonical.prompt.includes("smoke argument"));
-    assert.equal(canonical.skills.length, (await names).length);
-    for (const removed of ["search", "map", "fetch", "crawl", "extract"]) {
-      assert.ok(!canonical.tools.includes(removed), `Unexpected removed native tool: ${removed}`);
-    }
+  const probe = await expand("exposure probe");
+  for (const removed of ["search", "map", "fetch", "crawl", "extract"]) {
+    assert.ok(!probe.tools.includes(removed), `Unexpected removed native tool: ${removed}`);
   }
-  assert.equal((await expand("exposure probe")).exposures.question, "model-only");
+  assert.equal(probe.exposures.question, "model-only");
   assert.equal(events.filter((event) => event.type === "extension_error").length, 0);
   console.log(
-    `PASS: Pi ${execFileSync(process.env.PI_BIN || "pi", ["--version"], { encoding: "utf8" }).trim()}; ${(await names).length} skills once; native skill commands expand; no shorthand aliases; /fast toggles; question is model-only. ${expected.extensions.length} packaged extension entry points.`,
+    `PASS: Pi ${execFileSync(process.env.PI_BIN || "pi", ["--version"], { encoding: "utf8" }).trim()}; /fast toggles; question is model-only; removed commands and tools stay gone. ${expected.extensions.length} packaged extension entry points.`,
   );
 } finally {
   child.kill("SIGTERM");
