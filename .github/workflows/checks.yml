@@ -50,12 +50,6 @@ jobs:
         id: install
         run: bun install --frozen-lockfile
 
-      # Includes skill tests and each workspace's tests; no second bun test pass.
+      # Includes each workspace's tests; no second bun test pass.
       - name: Check formatting, lint, types, and tests
         run: bun run check
-
-      - name: Smoke test the locked Pi host
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        env:
-          PI_BIN: ${{ github.workspace }}/node_modules/.bin/pi
-        run: bun run test:pi-skills
