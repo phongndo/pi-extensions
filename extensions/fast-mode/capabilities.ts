@@ -4,8 +4,15 @@ import { FastModeRoutes, NATIVE_FAST_ROUTES, isCodexModel } from "./routes.ts";
 
 export { isCodexModel } from "./routes.ts";
 
+export type FastSupport = "supported" | "unsupported" | "unknown";
+
 export interface FastCapability {
-  status: "supported" | "unsupported" | "unknown";
+  /** Fast support. */
+  status: FastSupport;
+  /** Ultrafast support; never "supported" without a verifiable source. */
+  ultrafast: FastSupport;
+  /** The catalog's Ultrafast tier id, sent verbatim (as Codex does). */
+  ultrafastTier?: string;
   source: "model" | "catalog" | "fallback" | "none";
   reason: string;
 }
@@ -16,8 +23,12 @@ export interface CapabilityAuth {
   baseUrl?: string;
 }
 
-// Documented fallback, not an entitlement check. Unknown future names are never enabled by regex.
-const FALLBACK_MODELS = new Set([
+/** Looks up another model in the registry, e.g. an AI Gateway `-fast` variant. */
+export type ModelLookup = (provider: string, id: string) => boolean;
+
+// Documented fallbacks, not entitlement checks. Unknown future names are never enabled by regex.
+// OpenAI Fast: https://learn.chatgpt.com/docs/agent-configuration/speed
+const OPENAI_FAST_MODELS = new Set([
   "gpt-5.4",
   "gpt-5.5",
   "gpt-5.6",
@@ -27,14 +38,54 @@ const FALLBACK_MODELS = new Set([
   "gpt-6-astra",
   "gpt-6-luna",
   "gpt-6-sol",
+  "gpt-6.1-sol",
+  "gpt-6.1-terra",
+  "gpt-6.2-astra",
+  "gpt-6.2-sol",
 ]);
-const SEPARATE_MODELS = new Set(["gpt-5.4-mini", "gpt-5.3-codex-spark"]);
+// OpenAI Ultrafast (plan-gated: Pro $500, eligible Enterprise/Edu for 6 Astra and 6.1 Sol).
+// Used only where no account catalog exists; the Codex backend uses its catalog instead.
+const OPENAI_ULTRAFAST_MODELS = new Set([
+  "gpt-6-astra",
+  "gpt-6.1-sol",
+  "gpt-6.2-astra",
+  "gpt-6.2-sol",
+]);
+const OPENAI_SEPARATE_MODELS = new Set(["gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.3-codex-spark"]);
+// Anthropic Fast: https://platform.claude.com/docs/en/build-with-claude/fast-mode
+// Opus 4.8 is omitted: its Fast mode is removed on 2026-11-30.
+const ANTHROPIC_FAST_MODELS = new Set([
+  "claude-fable-5-2",
+  "claude-mythos-5-2",
+  "claude-opus-5-5",
+  "claude-opus-5",
+]);
 const CACHE_MS = 15 * 60_000;
 const RETRY_MS = 60_000;
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
+// Codex hides models newer than the reported client; report a current CLI release.
+const CODEX_CATALOG_CLIENT_VERSION = "0.170.0";
+// The catalog is tailored per originator; ask as Pi, which is what Pi's requests send.
+const CODEX_ORIGINATOR = "pi";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function capability(
+  status: FastSupport,
+  ultrafast: FastSupport,
+  source: FastCapability["source"],
+  reason: string,
+  ultrafastTier?: string,
+): FastCapability {
+  return {
+    status,
+    ultrafast,
+    source,
+    reason,
+    ...(ultrafast === "supported" && ultrafastTier ? { ultrafastTier } : {}),
+  };
 }
 
 /** Read only capability fields; never retain server-provided instructions or other catalog data. */
@@ -43,7 +94,10 @@ export function capabilityFromMetadata(
   source: "model" | "catalog",
 ): FastCapability | undefined {
   if (!isRecord(metadata)) return undefined;
-  const tiers = metadata.service_tiers;
+  // Codex catalogs use snake_case; Pi provider extensions (and T3 Code) use `serviceTiers`.
+  // Fall back to camelCase only when snake_case is absent; a null value is malformed, not missing.
+  const tiers =
+    metadata.service_tiers !== undefined ? metadata.service_tiers : metadata.serviceTiers;
   const legacy = metadata.additional_speed_tiers;
   if (tiers === undefined && legacy === undefined) return undefined;
   if (
@@ -53,56 +107,135 @@ export function capabilityFromMetadata(
     (legacy !== undefined &&
       (!Array.isArray(legacy) || !legacy.every((tier) => typeof tier === "string")))
   ) {
-    return { status: "unknown", source, reason: "Malformed service-tier metadata." };
+    return capability("unknown", "unknown", source, "Malformed service-tier metadata.");
   }
-  const supported =
-    (tiers as Array<{ id: string }> | undefined)?.some((tier) =>
-      ["priority", "fast"].includes(tier.id),
-    ) || (legacy as string[] | undefined)?.includes("fast");
-  return {
-    status: supported ? "supported" : "unsupported",
+  const ids = new Set([
+    ...((tiers as Array<{ id: string }> | undefined) ?? []).map((tier) => tier.id),
+    ...((legacy as string[] | undefined) ?? []),
+  ]);
+  const fast = ids.has("priority") || ids.has("fast");
+  const ultrafast = ids.has("ultrafast");
+  const advertised = [fast && "Fast", ultrafast && "Ultrafast"].filter(Boolean).join(" and ");
+  return capability(
+    fast ? "supported" : "unsupported",
+    ultrafast ? "supported" : "unsupported",
     source,
-    reason: supported
-      ? "Fast is advertised in service-tier metadata."
+    advertised
+      ? `${advertised} advertised in service-tier metadata.`
       : "Metadata does not advertise Fast.",
-  };
+    "ultrafast",
+  );
+}
+
+function resolveOpenAICapability(model: Model<Api>, codexFamily: boolean): FastCapability {
+  if (OPENAI_FAST_MODELS.has(model.id)) {
+    // Without an account catalog, Codex-family Ultrafast stays unknown rather than guessed.
+    const ultrafast: FastSupport = OPENAI_ULTRAFAST_MODELS.has(model.id)
+      ? codexFamily
+        ? "unknown"
+        : "supported"
+      : "unsupported";
+    return capability(
+      "supported",
+      ultrafast,
+      "fallback",
+      ultrafast === "supported"
+        ? "Documented Fast and Ultrafast model; Ultrafast is plan-gated and account availability is unverified."
+        : "Documented model fallback; account availability is unverified.",
+      "ultrafast",
+    );
+  }
+  if (OPENAI_SEPARATE_MODELS.has(model.id))
+    return capability(
+      "unsupported",
+      "unsupported",
+      "fallback",
+      "This separate model is not in the documented Fast-mode family.",
+    );
+  return capability(
+    "unknown",
+    "unknown",
+    "none",
+    "No Fast capability metadata or documented fallback for this model.",
+  );
+}
+
+function resolveAnthropicCapability(model: Model<Api>): FastCapability {
+  return ANTHROPIC_FAST_MODELS.has(model.id)
+    ? capability(
+        "supported",
+        "unsupported",
+        "fallback",
+        "Documented Claude Fast model; organization enablement and usage credits are unverified.",
+      )
+    : capability(
+        "unsupported",
+        "unsupported",
+        "fallback",
+        "Claude Fast is not documented for this model.",
+      );
+}
+
+function resolveGatewayCapability(model: Model<Api>, hasModel?: ModelLookup): FastCapability {
+  if (model.id.endsWith("-fast"))
+    return capability(
+      "unsupported",
+      "unsupported",
+      "fallback",
+      "This is already a Fast variant model; select its base model to toggle speed.",
+    );
+  const openaiId = model.id.startsWith("openai/") ? model.id.slice("openai/".length) : undefined;
+  const ultrafast: FastSupport =
+    openaiId !== undefined && OPENAI_ULTRAFAST_MODELS.has(openaiId) ? "supported" : "unsupported";
+  const variant = hasModel?.(model.provider, `${model.id}-fast`);
+  const fast: FastSupport =
+    variant === true ? "supported" : variant === false ? "unsupported" : "unknown";
+  return capability(
+    fast,
+    ultrafast,
+    "fallback",
+    fast === "supported"
+      ? "AI Gateway lists a Fast variant of this model; the gateway speed option is unverified."
+      : "AI Gateway lists no Fast variant of this model.",
+    "ultrafast",
+  );
 }
 
 export function resolveFastCapability(
   model: Model<Api> | undefined,
   routes: FastModeRoutes = NATIVE_FAST_ROUTES,
   auth?: CapabilityAuth,
+  hasModel?: ModelLookup,
 ): FastCapability {
-  if (!routes.includes(model, auth?.baseUrl)) {
-    return {
-      status: "unsupported",
-      source: "none",
-      reason: "Requires native Codex or an explicitly opted-in Responses proxy route.",
-    };
+  const adapter = routes.adapter(model, auth?.baseUrl);
+  if (!model || !adapter) {
+    return capability(
+      "unsupported",
+      "unsupported",
+      "none",
+      "Requires an official OpenAI, Codex, Anthropic or AI Gateway endpoint, or an opted-in Responses proxy route.",
+    );
   }
   const metadata = capabilityFromMetadata(model, "model");
   if (metadata) return metadata;
-  if (FALLBACK_MODELS.has(model.id)) {
-    return {
-      status: "supported",
-      source: "fallback",
-      reason: isCodexModel(model)
-        ? "Documented model fallback; account availability is unverified."
-        : "Documented model fallback on an opted-in proxy route; upstream account availability is unverified.",
-    };
+  switch (adapter.id) {
+    case "anthropic":
+      return resolveAnthropicCapability(model);
+    case "gateway":
+      return resolveGatewayCapability(model, hasModel);
+    case "proxy": {
+      const resolved = resolveOpenAICapability(model, true);
+      return resolved.source === "fallback" && resolved.status === "supported"
+        ? {
+            ...resolved,
+            reason:
+              "Documented model fallback on an opted-in proxy route; upstream account availability is unverified.",
+          }
+        : resolved;
+    }
+    default:
+      return resolveOpenAICapability(model, adapter.id === "codex");
   }
-  if (SEPARATE_MODELS.has(model.id)) {
-    return {
-      status: "unsupported",
-      source: "fallback",
-      reason: "This separate model is not in the documented Fast-mode family.",
-    };
-  }
-  return {
-    status: "unknown",
-    source: "none",
-    reason: "No Fast capability metadata or documented fallback for this model.",
-  };
 }
 
 /** Never probe a custom proxy or follow redirects with provider credentials. */
@@ -120,14 +253,14 @@ export function codexModelsUrl(baseUrl: string): string | undefined {
       )
     )
       return undefined;
-    return "https://chatgpt.com/backend-api/codex/models?client_version=0.85.1";
+    return `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CATALOG_CLIENT_VERSION}`;
   } catch {
     return undefined;
   }
 }
 
 function authHeaders(model: Model<Api>, auth: CapabilityAuth): Headers {
-  const headers = new Headers();
+  const headers = new Headers({ originator: CODEX_ORIGINATOR });
   if (auth.apiKey) {
     headers.set("authorization", `Bearer ${auth.apiKey}`);
     try {
@@ -221,19 +354,22 @@ export class CodexCapabilities {
   private readonly fetchCatalog: typeof fetch;
   private readonly now: () => number;
   private readonly routes: FastModeRoutes;
+  private readonly hasModel?: ModelLookup;
 
   constructor(
     fetchCatalog: typeof fetch = globalThis.fetch,
     now: () => number = Date.now,
     routes: FastModeRoutes = NATIVE_FAST_ROUTES,
+    hasModel?: ModelLookup,
   ) {
     this.fetchCatalog = fetchCatalog;
     this.now = now;
     this.routes = routes;
+    this.hasModel = hasModel;
   }
 
   resolve(model: Model<Api> | undefined, auth?: CapabilityAuth): FastCapability {
-    if (!isCodexModel(model)) return resolveFastCapability(model, this.routes, auth);
+    if (!isCodexModel(model)) return resolveFastCapability(model, this.routes, auth, this.hasModel);
     const local = capabilityFromMetadata(model, "model");
     if (local) return local;
     const snapshot = this.snapshot;

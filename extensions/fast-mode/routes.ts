@@ -1,5 +1,12 @@
 import { readFile } from "node:fs/promises";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  NATIVE_SPEED_PROVIDERS,
+  SPEED_ADAPTERS,
+  nativeAdapterFor,
+  normalizedEndpoint,
+  type SpeedAdapter,
+} from "./adapters.ts";
 
 /** Explicit consent to request Codex priority through this Responses endpoint. */
 export interface FastProxyRoute {
@@ -7,23 +14,7 @@ export interface FastProxyRoute {
   baseUrl: string;
 }
 
-function endpoint(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  try {
-    const url = new URL(value);
-    if (
-      !["http:", "https:"].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash
-    )
-      return undefined;
-    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
-  } catch {
-    return undefined;
-  }
-}
+const endpoint = normalizedEndpoint;
 
 export function isCodexModel(
   model: Model<Api> | undefined,
@@ -51,14 +42,23 @@ export class FastModeRoutes {
   }
 
   hasProvider(provider: string): boolean {
-    return provider === "openai-codex" || this.proxies.has(provider);
+    return NATIVE_SPEED_PROVIDERS.has(provider) || this.proxies.has(provider);
+  }
+
+  /** The wire format for this request, or undefined when speed must not be touched. */
+  adapter(model: Model<Api> | undefined, baseUrl = model?.baseUrl): SpeedAdapter | undefined {
+    if (!model) return undefined;
+    // An opted-in proxy is an explicit, exact endpoint match and wins over native matching.
+    if (model.api === "openai-responses") {
+      const url = endpoint(baseUrl);
+      if (url !== undefined && this.proxies.get(model.provider)?.has(url) === true)
+        return SPEED_ADAPTERS.proxy;
+    }
+    return nativeAdapterFor(model, baseUrl);
   }
 
   includes(model: Model<Api> | undefined, baseUrl = model?.baseUrl): model is Model<Api> {
-    if (isCodexModel(model)) return true;
-    if (!model || model.api !== "openai-responses") return false;
-    const url = endpoint(baseUrl);
-    return url !== undefined && this.proxies.get(model.provider)?.has(url) === true;
+    return this.adapter(model, baseUrl) !== undefined;
   }
 }
 

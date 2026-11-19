@@ -1,59 +1,65 @@
 # Pi Fast Mode
 
-A global preference that requests `service_tier: "priority"` for eligible native Codex calls and explicitly opted-in Codex proxies. Requires Pi **0.85.1+**; compatibility tests target 0.85.1.
+A global speed preference (**Off**, **Fast**, or **Ultrafast**) that adds each provider's own speed field to eligible requests. Requires Pi **1.5.2+**; compatibility tests target 1.5.2.
 
-Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It can increase charges; check [current Codex speed and pricing](https://developers.openai.com/codex/speed). A saved on preference also applies to supported GPT-6 Astra, Luna, and Sol models.
+Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It costs more (plan credits or premium token rates), and Fast and standard requests use separate prompt caches.
 
 ## Use it
 
-| Command         | Effect                                                                |
-| --------------- | --------------------------------------------------------------------- |
-| `/fast`         | Toggle the global preference                                          |
-| `/fast on`      | Enable                                                                |
-| `/fast off`     | Disable                                                               |
-| `/fast status`  | Inspect preference, support, discovery, and the last observed request |
-| `/fast refresh` | Refresh model capabilities without changing the preference            |
+| Command                  | Effect                                                                 |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `/fast`                  | Toggle Off ↔ Fast                                                      |
+| `/fast on` / `/fast off` | Fast / Off                                                             |
+| `/ultrafast`             | Toggle Off ↔ Ultrafast                                                 |
+| `/ultrafast on` / `off`  | Ultrafast (falls back to Fast where only Fast exists) / Off            |
+| `/fast status`           | Preference, per-model support, paused speeds, and the last request     |
+| `/fast refresh`          | Refresh capabilities and clear paused speeds without changing anything |
 
-After installation or updates, run `/reload`, then `/fast status`. Startup is quiet. Toggle, on/off, and refresh reply only `Fast mode on` or `Fast mode off`; errors are still reported.
+The footer shows the speed the **current model** will get: `speed ultrafast`, `speed fast`, `speed fast (no ultra)` (Ultrafast chosen, model has only Fast), `speed fast (ultra ?)` (Ultrafast support unknown), `speed standard (fallback)` (provider refused or rate-limited it), `speed unavailable`, `speed ?`, or `speed !` (state error). It is hidden when off.
 
-The native footer shows `speed fast` when enabled and supported, `speed ?` for uncertainty, `speed unavailable` for unsupported models, and `speed !` for state/policy failures. It is hidden when off. RPC receives the labels; print/JSON sessions have no status UI.
+## Providers
 
-**On is a preference, not proof of backend admission.** Changes affect subsequent requests, not an in-flight request. Off leaves another caller's explicit `service_tier` untouched; remove static overrides if you want this toggle to be the only owner.
+| Provider (official endpoint only)          | Fast                                                      | Ultrafast                                                                    | Support source                                                                            |
+| ------------------------------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `openai` (API key or Sign in with ChatGPT) | `service_tier: "priority"`                                | `service_tier: "ultrafast"`                                                  | Documented model lists                                                                    |
+| `openai-codex` (ChatGPT backend)           | `service_tier: "priority"`                                | the catalog's tier id, verbatim (as Codex does)                              | Account catalog, then documented list; Ultrafast only from the catalog                    |
+| `anthropic`                                | `speed: "fast"` (+ `fast-mode-2026-02-01` beta on Opus 5) | —                                                                            | Documented models: Fable 5.2, Mythos 5.2, Opus 5.5, Opus 5                                |
+| `vercel-ai-gateway`                        | `providerOptions.gateway.speed: "fast"`                   | `providerOptions.openai.serviceTier: "ultrafast"`, routed `only: ["openai"]` | Fast where the catalog lists a `-fast` variant; Ultrafast on documented `openai/*` models |
+| Opted-in Responses proxy (below)           | `service_tier: "priority"`                                | only from model metadata                                                     | Same lists as Codex, no account catalog                                                   |
 
-## Model support and discovery
+On AI Gateway, Ultrafast only pins routing to OpenAI when you haven't set `gateway.only` yourself; if your allowlist excludes OpenAI or you set your own `openai.serviceTier`, the request asks for Fast instead.
 
-Support is resolved from explicit model metadata, then a fresh account/endpoint catalog, then an exact-model fallback. Metadata can exclude fallback models; malformed metadata means unknown support. Unknown future names and aliases are not enabled by a broad name match. The maintained fallback IDs live in [`capabilities.ts`](capabilities.ts).
+Model metadata wins over every list: a model with `service_tiers`/`serviceTiers` (`priority`/`fast`, `ultrafast`) or `additional_speed_tiers` is used as advertised. Unknown future names are never enabled by pattern. The lists live in [`capabilities.ts`](capabilities.ts). xAI and other providers are untouched.
 
-Discovery uses Pi's model-registry credentials and probes **only official Codex endpoints**. It rejects credentialed redirects and forwards only authorization/account-routing headers. Custom proxy credentials are never used for discovery.
+**Not yet verified against live servers:** `ultrafast` on any route, `priority` with Sign in with ChatGPT on api.openai.com, `speed` with Claude subscription (OAuth) credentials, and the AI Gateway shape (taken from Vercel's fx agent, unconfirmed on the gateway's Messages route). The OpenAI Ultrafast list comes from the ChatGPT speed page, which is plan-gated (Pro $500, eligible Enterprise/Edu); Claude Fast needs usage credits on subscriptions or a provisioned Console org. The refusal fallback below keeps a wrong guess from failing a turn.
 
-Catalogs are memory-only and account-scoped. Only model IDs and capability decisions are retained, not credentials, server instructions, or response bodies. Discovery runs in the background at session start, model selection, and before an agent run. `/fast refresh` waits for it; `/fast status` does not fetch or refresh credentials. Set `PI_OFFLINE=1` to disable discovery.
+## Refusals and fallback
 
-Until discovery succeeds, the resolver uses the documented fallback or leaves unknown models unchanged. A fallback does not establish entitlement. Discovery failures appear in `/fast status`.
+When a provider refuses a speed this extension added, it steps down (Ultrafast → Fast → standard) within the same request and pauses each refused speed for that model:
 
-## State and recovery
+- Anthropic `429` or `529` that points at Fast (an exhausted `anthropic-fast-*` limit header, or an error about the Fast limit or capacity): retry at standard and pause until `retry-after` (default 60 s). Org-wide rate limits and general overload stay with Pi's normal retries.
+- `400`/`403`/`404`/`422` that names the speed setting (OpenAI `error.param` such as `service_tier`, or a message about the service tier, Ultrafast or Fast mode): pause until `/fast refresh` or any preference change, from any session.
 
-The preference defaults to off and is shared by Pi processes using the same agent directory:
+A step down restores the caller's own values: OpenAI gets an explicit `service_tier: "default"` (so a project default of Fast can't apply), Anthropic drops the Fast beta it added from `anthropic-beta`, and AI Gateway gets the caller's original `providerOptions`. Later sends of the same request, such as provider retries, keep the lower speed, and Pi's cost estimate follows the speed actually sent. You get a one-line warning per step. Other errors are never retried. Fallback covers HTTP transports, including zstd-compressed Codex bodies; Codex WebSocket requests are not retried.
 
-```text
-~/.pi/agent/fast-mode.json
-```
+## Codex catalog discovery
+
+For `openai-codex`, support comes from the account's model catalog (`/backend-api/codex/models`, asked as originator `pi`, because the catalog is tailored per client), then the documented list. Discovery uses Pi's credentials, contacts **only official Codex endpoints**, rejects credentialed redirects, and forwards only authorization/account headers. Catalogs are memory-only; only model ids and tier decisions are kept. `PI_OFFLINE=1` disables discovery. The catalog query (`client_version=0.170.0`, originator `pi`) has not been checked against a live account.
+
+## State
+
+The preference is shared by Pi processes using the same agent directory:
 
 ```json
-{
-  "version": 1,
-  "enabled": false
-}
+// ~/.pi/agent/fast-mode.json
+{ "version": 1, "enabled": true, "ultrafast": true }
 ```
 
-A custom agent directory moves this path. Writes use an inter-process lock and atomic private replacement; requests reread authoritative state, and idle TUI/RPC sessions watch for changes.
-
-Invalid state is an error, not “off.” Eligible requests fail on a state-read error rather than silently dropping the policy. Repair the file, or move it aside to restore the missing-file default:
+`ultrafast` is optional, so older versions of this extension still read the file (as Fast). Writes use an inter-process lock and atomic private replacement; requests reread authoritative state and idle sessions watch for changes. Invalid state is an error, not "off": eligible requests fail rather than silently dropping the policy. Repair the file or move it aside:
 
 ```bash
 mv ~/.pi/agent/fast-mode.json ~/.pi/agent/fast-mode.json.bad
 ```
-
-Adjust that path if using a custom agent directory, and preserve any existing backup.
 
 ## Codex proxies: explicit opt-in
 
@@ -62,39 +68,24 @@ For a trusted Codex-compatible proxy such as CLIProxyAPI, create `~/.pi/agent/fa
 ```json
 {
   "version": 1,
-  "routes": [
-    {
-      "provider": "local-codex",
-      "baseUrl": "http://127.0.0.1:8317/v1"
-    }
-  ]
+  "routes": [{ "provider": "local-codex", "baseUrl": "http://127.0.0.1:8317/v1" }]
 }
 ```
 
-Run `/reload`, then `/fast on` and `/fast status`. If the preference was already on, opt-in begins requesting priority after reload and can increase credit consumption.
+Provider, `openai-responses` API and normalized endpoint must match exactly. Routes load at session start/reload. Invalid configuration shows `speed !` and installs nothing. SDK embeddings may pass `proxyRoutes` to `createFastModeExtension`; an empty array disables opt-in.
 
-- The provider, `openai-responses` API, and normalized endpoint must match. Trailing slashes are ignored; hosts, ports, schemes, and paths remain distinct, including `localhost` versus `127.0.0.1`.
-- The same metadata and exact-model fallback rules apply. Opt-in does not enable unknown aliases, probe upstream accounts, or alter account-pool selection.
-- Routes load at session start/reload. After editing or removing this file, reload every affected session; `/fast refresh` does not reload routes.
-- Without the file, only native Codex is eligible. Invalid route configuration shows `speed !` and installs no policy decorators.
-- The file contains no credentials and lives beside `fast-mode.json`. SDK embeddings may pass `proxyRoutes` to `createFastModeExtension`; an explicit empty array disables opt-in for that instance.
+## Diagnostics
 
-## Interpret diagnostics
+`/fast status` shows the newest request's model, requested tier, whether this extension set it, any fallback, HTTP status, the provider-reported tier (OpenAI `service_tier`, Anthropic `usage.speed`, read from stream events on SSE and WebSocket), and output/completion timing. Records are bounded, session-local, and contain no prompts, auth or response text. A reported tier is provider evidence, not billing verification.
 
-`/fast status` shows the newest request's model, timestamp, requested tier, whether this extension set it, transport, HTTP status, raw reported tier, and observed output/completion timing when available. Records are bounded, session-local, and cleared on reload. They contain no prompts, tool arguments, response text, auth, or full headers.
+Pi's own cost estimate applies its priority multiplier for Fast on OpenAI routes; it has no Ultrafast or Claude Fast rate, so those estimates are low.
 
-Raw response-tier metadata is observed for SSE; it remains unknown for WebSocket on the tested Pi version. The extension neither forces SSE nor patches global WebSocket objects. HTTP success and Pi's cost estimate are not admission confirmation. A raw tier is provider evidence, not independent billing verification; missing evidence stays unknown. For proxy-specific interpretation, consult the proxy's current documentation.
-
-Timing covers provider requests, not total task/tool time. A useful speed comparison holds model, reasoning, task, context, and transport constant and alternates Standard/Fast runs under an explicit spending budget. No paid benchmark runs automatically.
-
-## Development and compatibility
-
-From the repository root:
+## Development
 
 ```bash
 nix develop -c bun run --filter pi-fast-mode check
 ```
 
-Tests use fake credentials and synthetic responses, not paid model calls. [`runtime.ts`](runtime.ts) uses Pi internals to preserve the policy across host and child runtimes; future Pi versions may require adaptation. Required methods are checked before installation. Unsupported providers/APIs and mismatched payload models remain untouched.
+Tests use fake credentials and Pi's real OpenAI, Codex and Anthropic serializers with fake `fetch`, never paid calls. [`runtime.ts`](runtime.ts) uses Pi internals so the policy also reaches child runtimes; future Pi versions may need adaptation.
 
-For discovery-protocol work, consult upstream [ModelsClient](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/models.rs) and [model metadata](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).
+References: [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed), [Claude fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode), Codex [model metadata](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).

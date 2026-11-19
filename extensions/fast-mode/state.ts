@@ -34,9 +34,19 @@ const processIdentityCache = new Map<
   { instance: ProcessInstance | undefined; expiresAt: number }
 >();
 
+/** The global speed preference. Ultrafast falls back to Fast where only Fast is available. */
+export type FastSpeed = "off" | "fast" | "ultrafast";
+
+export const FAST_SPEEDS: readonly FastSpeed[] = ["off", "fast", "ultrafast"];
+
+/**
+ * Version 1 stays the on-disk format so already-running sessions keep parsing it:
+ * older readers ignore `ultrafast` and treat the preference as Fast.
+ */
 interface FastModeState {
   version: 1;
   enabled: boolean;
+  ultrafast?: true;
 }
 
 interface LegacyFastModeLockOwner {
@@ -92,20 +102,45 @@ function parseState(value: unknown): FastModeState {
   if (typeof state.enabled !== "boolean") {
     throw new Error("Fast-mode state enabled must be a boolean.");
   }
-  return { version: 1, enabled: state.enabled };
+  if (state.ultrafast !== undefined && typeof state.ultrafast !== "boolean") {
+    throw new Error("Fast-mode state ultrafast must be a boolean when present.");
+  }
+  return state.enabled && state.ultrafast === true
+    ? { version: 1, enabled: true, ultrafast: true }
+    : { version: 1, enabled: state.enabled };
+}
+
+function speedFromState(state: FastModeState): FastSpeed {
+  if (!state.enabled) return "off";
+  return state.ultrafast ? "ultrafast" : "fast";
+}
+
+function stateFromSpeed(speed: FastSpeed): FastModeState {
+  if (speed === "off") return { version: 1, enabled: false };
+  return speed === "ultrafast"
+    ? { version: 1, enabled: true, ultrafast: true }
+    : { version: 1, enabled: true };
+}
+
+export function isFastSpeed(value: unknown): value is FastSpeed {
+  return typeof value === "string" && (FAST_SPEEDS as readonly string[]).includes(value);
 }
 
 export async function loadFastMode(path: string = FAST_MODE_STATE_PATH): Promise<boolean> {
+  return (await loadFastSpeed(path)) !== "off";
+}
+
+export async function loadFastSpeed(path: string = FAST_MODE_STATE_PATH): Promise<FastSpeed> {
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return false;
+    if (isNodeError(error) && error.code === "ENOENT") return "off";
     throw new Error(`Could not read fast-mode state at ${path}.`, { cause: error });
   }
 
   try {
-    return parseState(JSON.parse(raw)).enabled;
+    return speedFromState(parseState(JSON.parse(raw)));
   } catch (error) {
     throw new Error(
       `Invalid fast-mode state at ${path}: ${error instanceof Error ? error.message : String(error)}`,
@@ -118,8 +153,15 @@ export async function saveFastMode(
   enabled: boolean,
   path: string = FAST_MODE_STATE_PATH,
 ): Promise<void> {
+  return saveFastSpeed(enabled ? "fast" : "off", path);
+}
+
+export async function saveFastSpeed(
+  speed: FastSpeed,
+  path: string = FAST_MODE_STATE_PATH,
+): Promise<void> {
   try {
-    await writePreferenceJson(path, { version: 1, enabled } satisfies FastModeState);
+    await writePreferenceJson(path, stateFromSpeed(speed) satisfies FastModeState);
   } catch (error) {
     throw new Error(`Could not save fast-mode state at ${path}.`, { cause: error });
   }
@@ -537,16 +579,45 @@ async function acquireFastModeLock(path: string): Promise<() => Promise<void>> {
   }
 }
 
-async function updateFastMode(value: boolean | undefined, path: string): Promise<boolean> {
+async function updateFastSpeed(
+  next: (current: FastSpeed) => FastSpeed,
+  path: string,
+): Promise<FastSpeed> {
   const release = await acquireFastModeLock(path);
   try {
-    const current = await loadFastMode(path);
-    const enabled = value ?? !current;
-    if (enabled !== current) await saveFastMode(enabled, path);
-    return enabled;
+    const current = await loadFastSpeed(path);
+    const speed = next(current);
+    if (speed !== current) await saveFastSpeed(speed, path);
+    return speed;
   } finally {
     await release();
   }
+}
+
+async function updateFastMode(value: boolean | undefined, path: string): Promise<boolean> {
+  const speed = await updateFastSpeed((current) => {
+    if (value === undefined) return current === "off" ? "fast" : "off";
+    // "On" keeps a stored Ultrafast preference; only Off changes it.
+    if (value) return current === "off" ? "fast" : current;
+    return "off";
+  }, path);
+  return speed !== "off";
+}
+
+/** Explicit speed writes share the toggle's inter-process lock. */
+export async function setFastSpeed(
+  speed: FastSpeed,
+  path: string = FAST_MODE_STATE_PATH,
+): Promise<FastSpeed> {
+  return updateFastSpeed(() => speed, path);
+}
+
+/** Toggle between Off and the given speed; any other speed switches to the given one. */
+export async function toggleFastSpeed(
+  speed: Exclude<FastSpeed, "off">,
+  path: string = FAST_MODE_STATE_PATH,
+): Promise<FastSpeed> {
+  return updateFastSpeed((current) => (current === speed ? "off" : speed), path);
 }
 
 /** Idempotent explicit writes share the toggle's inter-process lock. */

@@ -2,7 +2,7 @@
   "name": "pi-fast-mode",
   "version": "0.1.0",
   "private": true,
-  "description": "Global Codex Fast mode toggle for Pi",
+  "description": "Global Fast and Ultrafast speed preference for Pi (OpenAI, Codex, Claude, AI Gateway)",
   "type": "module",
   "scripts": {
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
@@ -14,17 +14,17 @@
     "test": "bun test ./tests"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.85.1",
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-tui": "0.85.1",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2",
     "@types/node": "^24.12.4",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "typescript": "5.9.3"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.85.1",
-    "@earendil-works/pi-coding-agent": ">=0.85.1"
+    "@earendil-works/pi-ai": ">=1.5.2",
+    "@earendil-works/pi-coding-agent": ">=1.5.2"
   },
   "engines": {
     "node": ">=22.19.0"

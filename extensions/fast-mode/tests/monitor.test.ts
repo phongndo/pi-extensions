@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { jest } from "bun:test";
 import { FastStateMonitor } from "../monitor.ts";
-import { loadFastMode, saveFastMode, setFastMode } from "../state.ts";
+import { loadFastMode, saveFastMode, setFastMode, type FastSpeed } from "../state.ts";
 import { eventually } from "./helpers.ts";
 
 test("explicit on/off is locked, idempotent, atomic and private", async (t) => {
@@ -76,7 +76,7 @@ test("polling recovers a missing parent directory and shows state errors then re
 });
 
 test("late reads cannot overwrite newer state and shutdown prevents late UI writes", async () => {
-  const pending: Array<(value: boolean) => void> = [];
+  const pending: Array<(value: FastSpeed) => void> = [];
   let renders = 0;
   const monitor = new FastStateMonitor(
     () => {
@@ -87,15 +87,15 @@ test("late reads cannot overwrite newer state and shutdown prevents late UI writ
   );
   const first = monitor.refresh();
   const second = monitor.refresh();
-  pending[1]!(false);
+  pending[1]!("off");
   await second;
-  pending[0]!(true);
+  pending[0]!("fast");
   await first;
   assert.equal(monitor.snapshot.enabled, false);
   assert.equal(renders, 1);
   const last = monitor.refresh();
   monitor.close();
-  pending[2]!(true);
+  pending[2]!("fast");
   await last;
   assert.equal(monitor.snapshot.enabled, false);
   assert.equal(renders, 1);
@@ -104,7 +104,7 @@ test("late reads cannot overwrite newer state and shutdown prevents late UI writ
 test("slow polling reads do not overlap or starve snapshot publication", async (t) => {
   jest.useFakeTimers();
   t.after(() => jest.useRealTimers());
-  const pending: Array<(value: boolean) => void> = [];
+  const pending: Array<(value: FastSpeed) => void> = [];
   const monitor = new FastStateMonitor(
     () => {},
     "/not-existing-test-directory/state",
@@ -114,12 +114,12 @@ test("slow polling reads do not overlap or starve snapshot publication", async (
   monitor.start(10);
   jest.advanceTimersByTime(30);
   assert.equal(pending.length, 1, "poll ticks must share the outstanding background read");
-  pending[0]!(true);
+  pending[0]!("fast");
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(monitor.snapshot.enabled, true);
   jest.advanceTimersByTime(10);
   assert.equal(pending.length, 2, "polling resumes after completion");
-  pending[1]!(false);
+  pending[1]!("off");
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(monitor.snapshot.enabled, false);
 });

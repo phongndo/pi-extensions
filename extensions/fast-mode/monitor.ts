@@ -1,12 +1,28 @@
 import { watch, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
-import { FAST_MODE_STATE_PATH, loadFastMode, setFastMode, toggleFastMode } from "./state.ts";
+import {
+  FAST_MODE_STATE_PATH,
+  loadFastSpeed,
+  setFastMode,
+  setFastSpeed,
+  toggleFastSpeed,
+  type FastSpeed,
+} from "./state.ts";
 
 /** Unknown, known, or failed: an error cannot simultaneously report enabled. */
 export type FastStateSnapshot =
-  | { enabled?: never; error?: never }
-  | { enabled: boolean; error?: never }
-  | { enabled?: never; error: string };
+  | { enabled?: never; speed?: never; error?: never }
+  | { enabled: boolean; speed?: FastSpeed; error?: never }
+  | { enabled?: never; speed?: never; error: string };
+
+/** A snapshot's speed; older callers may only supply `enabled`. */
+export function snapshotSpeed(state: FastStateSnapshot): FastSpeed | undefined {
+  if (state.error || state.enabled === undefined) return undefined;
+  return state.speed ?? (state.enabled ? "fast" : "off");
+}
+
+/** `true`/`false` set Fast/Off; a speed sets it; `{ toggle }` flips between Off and that speed. */
+export type FastStateChange = boolean | FastSpeed | { toggle: Exclude<FastSpeed, "off"> };
 
 /** UI snapshot only. Requests still read authoritative state; old reads cannot overwrite newer UI. */
 export class FastStateMonitor {
@@ -19,20 +35,24 @@ export class FastStateMonitor {
   private debounce?: ReturnType<typeof setTimeout>;
   private readonly changed: () => void;
   private readonly path: string;
-  private readonly read: () => Promise<boolean>;
+  private readonly read: () => Promise<FastSpeed>;
 
-  constructor(changed: () => void, path = FAST_MODE_STATE_PATH, read = () => loadFastMode(path)) {
+  constructor(
+    changed: () => void,
+    path = FAST_MODE_STATE_PATH,
+    read: () => Promise<FastSpeed> = () => loadFastSpeed(path),
+  ) {
     this.changed = changed;
     this.path = path;
     this.read = read;
   }
 
-  async refresh(): Promise<boolean> {
+  async refresh(): Promise<FastSpeed> {
     const generation = ++this.generation;
     try {
-      const enabled = await this.read();
-      this.publish(generation, { enabled });
-      return enabled;
+      const speed = await this.read();
+      this.publish(generation, { enabled: speed !== "off", speed });
+      return speed;
     } catch (error) {
       this.publish(generation, { error: error instanceof Error ? error.message : String(error) });
       throw error;
@@ -41,7 +61,11 @@ export class FastStateMonitor {
 
   private publish(generation: number, snapshot: FastStateSnapshot): void {
     if (this.closed || generation !== this.generation) return;
-    if (snapshot.enabled === this.snapshot.enabled && snapshot.error === this.snapshot.error)
+    if (
+      snapshot.enabled === this.snapshot.enabled &&
+      snapshot.speed === this.snapshot.speed &&
+      snapshot.error === this.snapshot.error
+    )
       return;
     this.snapshot = snapshot;
     try {
@@ -51,11 +75,12 @@ export class FastStateMonitor {
     }
   }
 
-  async change(value?: boolean): Promise<boolean> {
+  async change(value: FastStateChange = { toggle: "fast" }): Promise<FastSpeed> {
     this.generation++; // Invalidate reads started before a local write.
     try {
-      if (value === undefined) await toggleFastMode(this.path);
-      else await setFastMode(value, this.path);
+      if (typeof value === "object") await toggleFastSpeed(value.toggle, this.path);
+      else if (typeof value === "boolean") await setFastMode(value, this.path);
+      else await setFastSpeed(value, this.path);
     } catch (error) {
       this.publish(++this.generation, {
         error: error instanceof Error ? error.message : String(error),

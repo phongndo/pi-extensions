@@ -1,7 +1,28 @@
 import type { Api, Model, StreamOptions } from "@earendil-works/pi-ai";
+import type { AppliedSpeed } from "./adapters.ts";
 import { isRecord, type FastCapability } from "./capabilities.ts";
 
-export type ObservedTier = "priority" | "fast" | "default" | "auto" | "flex" | "scale" | "unknown";
+export type ObservedTier =
+  | "priority"
+  | "fast"
+  | "ultrafast"
+  | "standard"
+  | "default"
+  | "auto"
+  | "flex"
+  | "scale"
+  | "unknown";
+
+const OBSERVED_TIERS: readonly string[] = [
+  "priority",
+  "fast",
+  "ultrafast",
+  "standard",
+  "default",
+  "auto",
+  "flex",
+  "scale",
+];
 
 export interface FastRequestRecord {
   id: number;
@@ -9,6 +30,10 @@ export interface FastRequestRecord {
   startedAt: number;
   requestedTier: ObservedTier | "omitted";
   applied: boolean;
+  /** The speed this extension sent; absent when it left the request unchanged. */
+  appliedSpeed?: AppliedSpeed;
+  /** Set when a refusal was retried at a lower speed. */
+  fellBackTo?: AppliedSpeed | "standard";
   capability: FastCapability;
   configuredTransport: StreamOptions["transport"];
   observedTransport: "sse" | "unknown";
@@ -19,8 +44,7 @@ export interface FastRequestRecord {
 }
 
 export function observedTier(value: unknown): ObservedTier {
-  return typeof value === "string" &&
-    ["priority", "fast", "default", "auto", "flex", "scale"].includes(value)
+  return typeof value === "string" && OBSERVED_TIERS.includes(value)
     ? (value as ObservedTier)
     : "unknown";
 }
@@ -56,18 +80,18 @@ export class FastRequestJournal {
 
   begin(
     model: Model<Api>,
-    payload: Record<string, unknown>,
+    requested: string,
     options: StreamOptions,
-    applied: boolean,
+    applied: AppliedSpeed | undefined,
     capability: FastCapability,
   ): FastRequestObservation {
     const record: FastRequestRecord = {
       id: ++this.sequence,
       model: safeLabel(model.id),
       startedAt: this.now(),
-      requestedTier:
-        payload.service_tier === undefined ? "omitted" : observedTier(payload.service_tier),
-      applied,
+      requestedTier: requested === "omitted" ? "omitted" : observedTier(requested),
+      applied: applied !== undefined,
+      ...(applied ? { appliedSpeed: applied } : {}),
       capability,
       configuredTransport: options.transport ?? "auto",
       observedTransport: "unknown",
@@ -107,7 +131,60 @@ export class FastRequestObservation {
     } catch {
       return;
     }
+    this.event(event);
+  }
+
+  /** A retry at a lower speed replaced the original request. */
+  fellBack(speed: AppliedSpeed | undefined, requested: string): void {
+    this.record.fellBackTo = speed ?? "standard";
+    this.record.applied = speed !== undefined;
+    if (speed) this.record.appliedSpeed = speed;
+    else delete this.record.appliedSpeed;
+    this.record.requestedTier = requested === "omitted" ? "omitted" : observedTier(requested);
+    this.changed();
+  }
+
+  /** A parsed provider stream event (SSE or WebSocket), treated as read-only. */
+  event(event: unknown): void {
     if (!isRecord(event)) return;
+    // Anthropic reports the speed actually used in usage, on message_start and message_delta.
+    const message = isRecord(event.message) ? event.message : undefined;
+    const usage = isRecord(event.usage)
+      ? event.usage
+      : isRecord(message?.usage)
+        ? message.usage
+        : undefined;
+    if (usage && typeof usage.speed === "string") {
+      this.record.responseTier = observedTier(usage.speed);
+      this.changed();
+    }
+    // AI Gateway confirms the served speed or tier in its provider metadata.
+    const metadata = isRecord(event.provider_metadata)
+      ? event.provider_metadata
+      : isRecord(event.providerMetadata)
+        ? event.providerMetadata
+        : undefined;
+    const gateway = isRecord(metadata?.gateway) ? metadata.gateway : undefined;
+    const routing = isRecord(gateway?.routing) ? gateway.routing : undefined;
+    const served =
+      typeof gateway?.serviceTier === "string"
+        ? gateway.serviceTier
+        : typeof routing?.speed === "string"
+          ? routing.speed
+          : undefined;
+    if (served !== undefined) {
+      this.record.responseTier = observedTier(served);
+      this.changed();
+    }
+    if (this.record.firstOutputMs === undefined && event.type === "content_block_delta") {
+      this.record.firstOutputMs = this.now() - this.record.startedAt;
+      this.changed();
+    }
+    if (event.type === "message_stop") {
+      this.record.completedMs = this.now() - this.record.startedAt;
+      this.changed();
+      return;
+    }
     if (
       this.record.firstOutputMs === undefined &&
       [

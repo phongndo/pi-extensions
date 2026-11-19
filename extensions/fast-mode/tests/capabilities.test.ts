@@ -38,7 +38,7 @@ test("catalog discovery stays on the official endpoint, with no redirects or unr
     calls++;
     assert.equal(
       String(input),
-      "https://chatgpt.com/backend-api/codex/models?client_version=0.85.1",
+      "https://chatgpt.com/backend-api/codex/models?client_version=0.170.0",
     );
     assert.equal(init?.redirect, "error");
     assert.ok(init?.signal);
@@ -46,6 +46,7 @@ test("catalog discovery stays on the official endpoint, with no redirects or unr
     assert.equal(headers.get("authorization"), `Bearer ${token()}`);
     assert.equal(headers.get("chatgpt-account-id"), "test-account");
     assert.equal(headers.get("x-private-data"), null);
+    assert.equal(headers.get("originator"), "pi", "ask for the catalog Pi's requests get");
     return catalog([fast("gpt-future"), { slug: "gpt-6-astra", service_tiers: [] }]);
   });
   const auth = { apiKey: token(), headers: { "x-private-data": "must-not-leak" } };

@@ -13,7 +13,7 @@ import { CodexCapabilities, resolveFastCapability } from "../capabilities.ts";
 import { installFastModeProviderLookup } from "../runtime.ts";
 import { formatFastDetails } from "../footer.ts";
 import { withFastPayload } from "../policy.ts";
-import { catalog, model, token } from "./helpers.ts";
+import { catalog, model, token, transcript } from "./helpers.ts";
 
 function sse(text: string): Response {
   return new Response(text, { headers: { "content-type": "text/event-stream" } });
@@ -57,7 +57,7 @@ test("real Codex stream and streamSimple send Astra priority and expose raw SSE 
       async () => true,
       { journal },
     );
-    const context = { systemPrompt: "DO NOT RETAIN THIS PROMPT", messages: [] };
+    const context = transcript({ systemPrompt: "DO NOT RETAIN THIS PROMPT" });
     const response = await (
       simple
         ? streamSimple(model(), context, { ...options, reasoning: "xhigh" })
@@ -91,9 +91,9 @@ test("SSE tap preserves split CRLF and UTF-8 bytes, ignoring malformed and overs
   );
   const observation = journal.begin(
     model(),
-    { service_tier: "priority" },
+    "priority",
     {},
-    true,
+    "fast",
     resolveFastCapability(model()),
   );
   now = 150;
@@ -133,7 +133,13 @@ test("observer forwards cancellation and never invents WebSocket confirmation", 
   await options.onPayload?.({ model: model().id }, model());
   assert.equal(journal.last?.responseTier, undefined);
   assert.equal(journal.last?.observedTransport, "unknown");
-  const observation = journal.begin(model(), {}, {}, false, resolveFastCapability(model()));
+  const observation = journal.begin(
+    model(),
+    "omitted",
+    {},
+    undefined,
+    resolveFastCapability(model()),
+  );
   const response = observation.response(
     new Response(
       new ReadableStream({
@@ -154,18 +160,12 @@ test("out-of-order completions do not replace the newest request and UI failures
   });
   const first = journal.begin(
     model("gpt-5.5"),
-    { service_tier: "priority" },
+    "priority",
     {},
-    true,
+    "fast",
     resolveFastCapability(model()),
   );
-  const second = journal.begin(
-    model(),
-    { service_tier: "default" },
-    {},
-    false,
-    resolveFastCapability(model()),
-  );
+  const second = journal.begin(model(), "default", {}, undefined, resolveFastCapability(model()));
   await second.response(sse(done("default"))).text();
   await first.response(sse(done("priority"))).text();
   assert.equal(journal.last?.model, "gpt-6-astra");

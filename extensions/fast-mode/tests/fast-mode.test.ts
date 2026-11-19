@@ -24,6 +24,7 @@ import {
   supportsCodexFastMode,
 } from "../policy.ts";
 import { loadFastMode, saveFastMode, toggleFastMode } from "../state.ts";
+import { transcript } from "./helpers.ts";
 
 function model(id: string, provider = "openai-codex", api: Api = "openai-codex-responses") {
   return {
@@ -129,13 +130,9 @@ test("provider decoration composes payload hooks for child runtimes", async () =
   const selected = model("gpt-5.5");
   assert.throws(
     () =>
-      decorated.streamSimple(
-        selected,
-        { messages: [] },
-        {
-          onPayload: async (payload) => ({ ...(payload as object), marker: true }),
-        },
-      ),
+      decorated.streamSimple(selected, transcript(), {
+        onPayload: async (payload) => ({ ...(payload as object), marker: true }),
+      }),
     (error: unknown) => error === stopped,
   );
   assert.ok(captured?.onPayload);
@@ -147,7 +144,7 @@ test("provider decoration composes payload hooks for child runtimes", async () =
   assert.equal((captured as StreamOptions & { serviceTier?: string }).serviceTier, "priority");
 
   assert.throws(
-    () => decorated.stream(selected, { messages: [] }, { onPayload: async () => null }),
+    () => decorated.stream(selected, transcript(), { onPayload: async () => null }),
     (error: unknown) => error === stopped,
   );
   assert.ok(captured?.onPayload);
@@ -160,7 +157,7 @@ test("provider decoration composes payload hooks for child runtimes", async () =
     throw stateError;
   });
   assert.throws(
-    () => failing.stream(selected, { messages: [] }),
+    () => failing.stream(selected, transcript()),
     (error: unknown) => error === stopped,
   );
   const failingPayloadHook = captured?.onPayload;
@@ -173,7 +170,7 @@ test("provider decoration composes payload hooks for child runtimes", async () =
 
   const unsupported = model("gpt-5.4-mini");
   assert.throws(
-    () => failing.stream(unsupported, { messages: [] }),
+    () => failing.stream(unsupported, transcript()),
     (error: unknown) => error === stopped,
   );
   assert.ok(captured?.onPayload);
@@ -184,13 +181,9 @@ test("provider decoration composes payload hooks for child runtimes", async () =
   const externallyPrioritized = decorateCodexProvider(provider, async () => false);
   assert.throws(
     () =>
-      externallyPrioritized.stream(
-        selected,
-        { messages: [] },
-        {
-          onPayload: async (payload) => ({ ...(payload as object), service_tier: "priority" }),
-        },
-      ),
+      externallyPrioritized.stream(selected, transcript(), {
+        onPayload: async (payload) => ({ ...(payload as object), service_tier: "priority" }),
+      }),
     (error: unknown) => error === stopped,
   );
   assert.ok(captured?.onPayload);
@@ -229,7 +222,7 @@ test("active Fast provider survives a composed registry refresh", async () => {
         resolve: async () => ({ auth: { apiKey: "test-key" }, source: "test" }),
       },
     },
-    getModels: () => [model("gpt-5.5")],
+    getModels: () => [model("gpt-6-astra")],
     refreshModels: async () => {
       catalogRefreshed = true;
     },
@@ -251,11 +244,11 @@ test("active Fast provider survives a composed registry refresh", async () => {
   assert.equal(runtime.getRegisteredNativeProvider("openai-codex"), base);
   assert.equal(catalogRefreshed, true);
   const refreshedProvider = registry.getProvider("openai-codex");
-  const selected = runtime.getModel("openai-codex", "gpt-5.5");
+  const selected = runtime.getModel("openai-codex", "gpt-6-astra");
   assert.ok(refreshedProvider);
   assert.ok(selected);
   assert.notEqual(refreshedProvider, base);
-  const result = await refreshedProvider.stream(selected, { messages: [] }).result();
+  const result = await refreshedProvider.stream(selected, transcript()).result();
   assert.equal(result.stopReason, "error");
   assert.equal(result.errorMessage, stopped.message);
   assert.ok(captured?.onPayload);
@@ -294,7 +287,7 @@ test("direct runtime streams stay Fast after a built-in provider refresh", async
 
   await runtime.refresh({ allowNetwork: false });
   assert.equal(runtime.getRegisteredNativeProvider("openai-codex"), undefined);
-  const selected = runtime.getModel("openai-codex", "gpt-5.5");
+  const selected = runtime.getModel("openai-codex", "gpt-6-astra");
   const refreshedProvider = runtime.getProvider("openai-codex");
   assert.ok(selected);
   assert.ok(refreshedProvider);
@@ -306,7 +299,7 @@ test("direct runtime streams stay Fast after a built-in provider refresh", async
     captured = options;
     throw stopped;
   };
-  const result = await runtime.streamSimple(selected, { messages: [] }).result();
+  const result = await runtime.streamSimple(selected, transcript()).result();
   assert.equal(result.stopReason, "error");
   assert.equal(result.errorMessage, stopped.message);
   assert.ok(captured?.onPayload);
@@ -365,8 +358,7 @@ test("shared registry installations survive either teardown order and restore lo
     try {
       removers[firstRemoved]!();
       assert.throws(
-        () =>
-          registry.getProvider("openai-codex")!.streamSimple(model("gpt-5.5"), { messages: [] }),
+        () => registry.getProvider("openai-codex")!.streamSimple(model("gpt-5.5"), transcript()),
         /captured/,
       );
       assert.ok(captured?.onPayload);
@@ -397,9 +389,9 @@ test("a retained outer runtime wrapper stays safe after Fast teardown", async ()
   removeLookup();
 
   assert.equal(runtime.stream, outerStream);
-  const selected = runtime.getModel("openai-codex", "gpt-5.5");
+  const selected = runtime.getModel("openai-codex", "gpt-6-astra");
   assert.ok(selected);
-  assert.doesNotThrow(() => runtime.stream(selected, { messages: [] }));
+  assert.doesNotThrow(() => runtime.stream(selected, transcript()));
 });
 
 test("Fast provider lookup supports immutable native providers", async () => {
@@ -441,7 +433,7 @@ test("Fast provider lookup supports immutable native providers", async () => {
 
   const selected = model("gpt-5.5");
   assert.throws(
-    () => decorated.stream(selected, { messages: [] }),
+    () => decorated.stream(selected, transcript()),
     (error: unknown) => error === stopped,
   );
   assert.ok(captured?.onPayload);
@@ -464,7 +456,7 @@ test("Astra and unavailable models have explicit, distinct status text", () => {
     formatFastStatus({ enabled: true }, resolveFastCapability(model("gpt-future"))),
     /support unknown/,
   );
-  assert.match(formatFastDetails({ enabled: true }, astra, supported), /2.5×/);
+  assert.match(formatFastDetails({ enabled: true }, astra, supported), /cost more/);
   assert.deepEqual(
     applyCodexFastMode({ model: astra.id, reasoning: { effort: "xhigh" } }, astra, true),
     {

@@ -83,7 +83,12 @@ test("payload gate keeps unrelated providers and APIs untouched even with a perm
     },
     {
       routes: new FastModeRoutes([route]),
-      resolveCapability: () => ({ status: "supported", source: "model", reason: "test" }),
+      resolveCapability: () => ({
+        status: "supported",
+        ultrafast: "unsupported",
+        source: "model",
+        reason: "test",
+      }),
     },
   );
   for (const candidate of [

@@ -31,6 +31,7 @@ type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
 async function harness(path: string, options: FastModeExtensionOptions = {}) {
   const handlers = new Map<string, Handler>();
   let command!: Command;
+  const commands = new Map<string, Command>();
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
     modelsStore: new InMemoryModelsStore(),
@@ -65,8 +66,9 @@ async function harness(path: string, options: FastModeExtensionOptions = {}) {
     on: (name: string, handler: Handler) => {
       handlers.set(name, handler);
     },
-    registerCommand: (_name: string, value: Command) => {
-      command = value;
+    registerCommand: (name: string, value: Command) => {
+      commands.set(name, value);
+      if (name === "fast") command = value;
     },
     events: createEventBus(),
   } as unknown as ExtensionAPI;
@@ -82,6 +84,9 @@ async function harness(path: string, options: FastModeExtensionOptions = {}) {
     notifications,
     emit,
     command: async (args: string) => command.handler(args, ctx as ExtensionCommandContext),
+    ultrafast: async (args: string) =>
+      commands.get("ultrafast")!.handler(args, ctx as ExtensionCommandContext),
+    commands,
     definition: command,
     get statusUpdates() {
       return statusUpdates;
@@ -113,7 +118,7 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.equal(app.notifications.at(-1), "Fast mode on");
   await app.command("status");
   assert.match(app.notifications.at(-1)!, /^fast on \(global\)/);
-  assert.match(app.notifications.at(-1)!, /Support: supported \(fallback\)/);
+  assert.match(app.notifications.at(-1)!, /Fast: supported; Ultrafast: \w+ \(fallback\)/);
   assert.match(app.notifications.at(-1)!, /Last request:/);
   assert.equal((await stat(path)).mtimeMs, modified);
   assert.deepEqual(app.definition.getArgumentCompletions?.("s"), [
@@ -153,6 +158,51 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.equal(app.statuses.has(FAST_MODE_STATUS_KEY), false);
   await app.emit("session_start");
   assert.equal(app.statuses.has(FAST_MODE_STATUS_KEY), false);
+});
+
+test("/ultrafast picks the fastest supported speed per model and shares state with /fast", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "fast-ultra-"));
+  const path = join(root, "fast-mode.json");
+  const app = await harness(path);
+  t.after(async () => {
+    await app.emit("session_shutdown");
+    await rm(root, { recursive: true, force: true });
+  });
+  await app.emit("session_start");
+  const openai = app.registry.find("openai", "gpt-6.1-sol")!;
+  const terra = app.registry.find("openai", "gpt-6.1-terra")!;
+  const claude = app.registry.find("anthropic", "claude-opus-5-5")!;
+  app.ctx.model = openai;
+  await app.emit("model_select");
+  await app.ultrafast("on");
+  assert.equal(app.notifications.at(-1), "Ultrafast mode on");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed ultrafast");
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
+    version: 1,
+    enabled: true,
+    ultrafast: true,
+  });
+  app.ctx.model = terra;
+  await app.emit("model_select");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast (no ultra)");
+  app.ctx.model = model();
+  await app.emit("model_select");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast (ultra ?)");
+  app.ctx.model = claude;
+  await app.emit("model_select");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast (no ultra)");
+  await app.command("status");
+  assert.match(app.notifications.at(-1)!, /^ultrafast on · Fast only for this model \(global\)/);
+  assert.match(app.notifications.at(-1)!, /via Anthropic/);
+  await app.command("on");
+  assert.equal(app.notifications.at(-1), "Fast mode on", "/fast on switches to Fast");
+  await app.ultrafast("");
+  assert.equal(app.notifications.at(-1), "Ultrafast mode on");
+  await app.ultrafast("");
+  assert.equal(app.notifications.at(-1), "Fast mode off");
+  await app.ultrafast("status");
+  assert.equal(app.notifications.at(-1), "Usage: /ultrafast [on|off]");
+  assert.ok(app.commands.has("ultrafast"));
 });
 
 test("RPC gets status too; two sessions update without prompts", async (t) => {
@@ -206,7 +256,7 @@ test("explicit capability refresh changes UI support without changing saved stat
   const before = (await stat(path)).mtimeMs;
   await app.command("status");
   assert.match(app.notifications.at(-1)!, /^fast on \(global\)/);
-  assert.match(app.notifications.at(-1)!, /Support: supported \(catalog\)/);
+  assert.match(app.notifications.at(-1)!, /Fast: supported; Ultrafast: unsupported \(catalog\)/);
   assert.equal(calls, count, "status does not fetch a catalog");
   assert.equal(authCalls, authCount, "status does not refresh credentials");
   assert.equal((await stat(path)).mtimeMs, before);

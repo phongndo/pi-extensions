@@ -84,8 +84,8 @@ async function harness(routes: unknown = { version: 1, routes: [proxyRoute] }) {
   } as unknown as ExtensionContext;
   const api = {
     on: (name: string, handler: Handler) => handlers.set(name, handler),
-    registerCommand: (_name: string, value: typeof command) => {
-      command = value;
+    registerCommand: (name: string, value: typeof command) => {
+      if (name === "fast") command = value;
     },
   } as unknown as ExtensionAPI;
   createFastModeExtension({
@@ -167,7 +167,10 @@ test("opted-in proxy sends priority through real Responses serialization, follow
   assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
   await app.command("status");
   assert.match(app.notifications.at(-1)!, /proxy/i);
-  assert.match(app.notifications.at(-1)!, /Requested tier: priority \(set by Fast mode\)/);
+  assert.match(
+    app.notifications.at(-1)!,
+    /Requested tier: priority \(set by this extension: Fast\)/,
+  );
   assert.match(app.notifications.at(-1)!, /Response reports: default/);
   assert.match(app.notifications.at(-1)!, /not independent proof/);
   await app.command("refresh");

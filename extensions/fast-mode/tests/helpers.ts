@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, TranscriptContext } from "@earendil-works/pi-ai";
 
 export function model(id = "gpt-6-astra"): Model<"openai-codex-responses"> {
   return {
@@ -33,4 +33,11 @@ export async function eventually(
   const deadline = Date.now() + 2000;
   while (!predicate() && Date.now() < deadline) await delay(10);
   assert.equal(predicate(), true, message);
+}
+
+/** Pi 1.5 brands normalized transcripts; tests only need an empty conversation. */
+export function transcript(
+  context: { systemPrompt?: string; messages?: never[] } = {},
+): TranscriptContext {
+  return { messages: [], ...context } as unknown as TranscriptContext;
 }

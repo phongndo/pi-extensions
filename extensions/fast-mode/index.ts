@@ -9,7 +9,8 @@ import {
 } from "./capabilities.ts";
 import { FastRequestJournal } from "./diagnostics.ts";
 import { FAST_MODE_STATUS_KEY, formatFastDetails, formatFastFooterStatus } from "./footer.ts";
-import { FastStateMonitor } from "./monitor.ts";
+import { FastStateMonitor, snapshotSpeed, type FastStateChange } from "./monitor.ts";
+import type { FastFallbackEvent } from "./policy.ts";
 import { installFastModeProviderLookup } from "./runtime.ts";
 import {
   FastModeRoutes,
@@ -17,6 +18,7 @@ import {
   loadFastProxyRoutes,
   type FastProxyRoute,
 } from "./routes.ts";
+import { FastFallbacks } from "./speed.ts";
 import { FAST_MODE_STATE_PATH } from "./state.ts";
 
 export { installFastModeProviderLookup } from "./runtime.ts";
@@ -58,40 +60,67 @@ export function createFastModeExtension(
   return (pi) => {
     let current: FastModeSession | undefined;
 
+    const runCommand = async (
+      name: "fast" | "ultrafast",
+      args: string,
+      ctx: ExtensionContext,
+    ): Promise<void> => {
+      const action = args.trim().toLowerCase();
+      const actions = name === "fast" ? ["", "on", "off", "status", "refresh"] : ["", "on", "off"];
+      if (!actions.includes(action)) {
+        ctx.ui.notify(
+          name === "fast" ? "Usage: /fast [on|off|status|refresh]" : "Usage: /ultrafast [on|off]",
+          "warning",
+        );
+        return;
+      }
+      if (!current) {
+        ctx.ui.notify("Fast mode has no active session.", "error");
+        return;
+      }
+      const session = current;
+      session.setContext(ctx);
+      try {
+        if (action === "status" || action === "refresh") {
+          await session.state.refresh();
+          if (action === "refresh") {
+            session.fallbacks.clear();
+            await session.discover(true);
+          }
+        } else {
+          if (session.policyError) throw new Error(session.policyError);
+          const change: FastStateChange =
+            action === "" ? { toggle: name } : action === "on" ? name : "off";
+          await session.state.change(change);
+          session.fallbacks.clear();
+          void session.discover();
+        }
+        if (current === session)
+          ctx.ui.notify(action === "status" ? session.status() : session.summary(), "info");
+      } catch (error) {
+        if (current === session)
+          ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    };
+
     pi.registerCommand("fast", {
-      description: "Codex Fast mode globally: on, off, status, refresh (bare /fast toggles)",
+      description:
+        "Fast mode globally (OpenAI, Codex, Claude, AI Gateway): on, off, status, refresh (bare /fast toggles)",
       getArgumentCompletions: (prefix) =>
         ["on", "off", "status", "refresh"]
           .filter((value) => value.startsWith(prefix))
           .map((value) => ({ value, label: value })),
-      handler: async (args, ctx) => {
-        const action = args.trim().toLowerCase();
-        if (!["", "on", "off", "status", "refresh"].includes(action)) {
-          ctx.ui.notify("Usage: /fast [on|off|status|refresh]", "warning");
-          return;
-        }
-        if (!current) {
-          ctx.ui.notify("Fast mode has no active session.", "error");
-          return;
-        }
-        const session = current;
-        session.setContext(ctx);
-        try {
-          if (action === "status" || action === "refresh") {
-            await session.state.refresh();
-            if (action === "refresh") await session.discover(true);
-          } else {
-            if (session.policyError) throw new Error(session.policyError);
-            await session.state.change(action === "" ? undefined : action === "on");
-            void session.discover();
-          }
-          if (current === session)
-            ctx.ui.notify(action === "status" ? session.status() : session.summary(), "info");
-        } catch (error) {
-          if (current === session)
-            ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-        }
-      },
+      handler: (args, ctx) => runCommand("fast", args, ctx),
+    });
+
+    pi.registerCommand("ultrafast", {
+      description:
+        "Ultrafast globally where supported, else Fast: on, off (bare /ultrafast toggles; /fast status inspects)",
+      getArgumentCompletions: (prefix) =>
+        ["on", "off"]
+          .filter((value) => value.startsWith(prefix))
+          .map((value) => ({ value, label: value })),
+      handler: (args, ctx) => runCommand("ultrafast", args, ctx),
     });
 
     pi.on("session_start", async (_event, ctx) => {
@@ -122,6 +151,7 @@ export function createFastModeExtension(
 
 class FastModeSession {
   readonly state: FastStateMonitor;
+  readonly fallbacks = new FastFallbacks();
   policyError?: string;
   private ctx: ExtensionContext;
   private readonly options: FastModeExtensionOptions;
@@ -142,13 +172,58 @@ class FastModeSession {
     this.ctx = ctx;
     this.modelKey = this.keyForContext(ctx);
     this.options = options;
-    this.state = new FastStateMonitor(() => this.render(), options.statePath);
-    this.capabilities = new CodexCapabilities(options.fetchCatalog);
+    this.state = new FastStateMonitor(() => this.stateChanged(), options.statePath);
+    this.capabilities = new CodexCapabilities(
+      options.fetchCatalog,
+      Date.now,
+      NATIVE_FAST_ROUTES,
+      this.hasModel,
+    );
     this.journal = new FastRequestJournal(() => this.render());
   }
 
+  /** AI Gateway Fast is offered only where the catalog lists a `-fast` variant. */
+  private readonly hasModel = (provider: string, id: string): boolean => {
+    try {
+      return this.ctx.modelRegistry.find(provider, id) !== undefined;
+    } catch {
+      return false;
+    }
+  };
+
+  private readonly onFallback = (event: FastFallbackEvent): void => {
+    if (!this.active) return;
+    const to =
+      event.to === undefined ? "standard speed" : event.to === "fast" ? "Fast" : "Ultrafast";
+    const from = event.from === "fast" ? "Fast" : "Ultrafast";
+    try {
+      this.ctx.ui.notify(
+        `${from} unavailable for ${event.model.id}: ${event.reason}. Retried at ${to}.`,
+        "warning",
+      );
+    } catch {
+      /* UI teardown can race a request. */
+    }
+    this.render();
+  };
+
   private snapshot() {
     return this.policyError ? { error: this.policyError } : this.state.snapshot;
+  }
+
+  private observedSpeed?: string;
+
+  /**
+   * Any session may change the shared preference. A change seen here, from this or another
+   * session, ends paused speeds, as `/fast status` promises.
+   */
+  private stateChanged(): void {
+    const speed = snapshotSpeed(this.state.snapshot);
+    if (speed !== undefined && speed !== this.observedSpeed) {
+      if (this.observedSpeed !== undefined) this.fallbacks.clear();
+      this.observedSpeed = speed;
+    }
+    this.render();
   }
 
   private render(): void {
@@ -157,6 +232,8 @@ class FastModeSession {
       const status = formatFastFooterStatus(
         this.snapshot(),
         this.capabilities.resolve(this.ctx.model, this.uiAuth),
+        this.ctx.model,
+        this.fallbacks,
       );
       if (status === this.renderedStatus) return;
       setFooterStatus(this.ctx, FAST_MODE_STATUS_KEY, status);
@@ -169,8 +246,10 @@ class FastModeSession {
   summary(): string {
     const state = this.snapshot();
     if (state.error) throw new Error(state.error);
-    if (state.enabled === undefined) return "Fast mode unknown";
-    return `Fast mode ${state.enabled ? "on" : "off"}`;
+    const speed = snapshotSpeed(state);
+    if (speed === undefined) return "Fast mode unknown";
+    if (speed === "ultrafast") return "Ultrafast mode on";
+    return `Fast mode ${speed === "fast" ? "on" : "off"}`;
   }
 
   status(): string {
@@ -180,6 +259,8 @@ class FastModeSession {
       this.capabilities.resolve(this.ctx.model, this.uiAuth),
       this.journal.last,
       this.discoveryError ?? this.capabilities.error,
+      this.fallbacks,
+      this.routes.adapter(this.ctx.model)?.label,
     );
   }
 
@@ -209,7 +290,12 @@ class FastModeSession {
             join(dirname(this.options.statePath ?? FAST_MODE_STATE_PATH), "fast-mode-proxies.json"),
           );
       if (!this.active) return;
-      this.capabilities = new CodexCapabilities(this.options.fetchCatalog, Date.now, this.routes);
+      this.capabilities = new CodexCapabilities(
+        this.options.fetchCatalog,
+        Date.now,
+        this.routes,
+        this.hasModel,
+      );
       this.removePolicy = installFastModeProviderLookup(
         this.ctx.modelRegistry,
         () => this.state.refresh(),
@@ -218,6 +304,8 @@ class FastModeSession {
           resolveCapability: (model, requestOptions) =>
             this.capabilities.resolve(model, requestOptions),
           journal: this.journal,
+          fallbacks: this.fallbacks,
+          onFallback: this.onFallback,
           isActive: () => this.active,
         },
       );
@@ -240,9 +328,11 @@ class FastModeSession {
     if (this.discovery && !force) return this.discovery.promise;
     const model = this.ctx.model;
     if (!isCodexModel(model)) {
-      if (this.routes.includes(model))
-        this.discoveryError =
-          "Proxy capability discovery is disabled: upstream account availability and priority admission are unverified. Proxy credentials are never sent to ChatGPT.";
+      // Only Codex has an account catalog; other providers use documented model lists.
+      this.discoveryError =
+        this.routes.adapter(model)?.id === "proxy"
+          ? "Proxy capability discovery is disabled: upstream account availability and priority admission are unverified. Proxy credentials are never sent to ChatGPT."
+          : undefined;
       return;
     }
     if (
@@ -301,6 +391,7 @@ class FastModeSession {
     this.removePolicy?.();
     this.removePolicy = undefined;
     this.capabilities.clear();
+    this.fallbacks.clear();
     this.uiAuth = undefined;
     setFooterStatus(this.ctx, FAST_MODE_STATUS_KEY, undefined);
   }
