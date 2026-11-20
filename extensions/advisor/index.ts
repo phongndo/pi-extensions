@@ -1,0 +1,421 @@
+import { createHash } from "node:crypto";
+import {
+  getSupportedThinkingLevels,
+  type Api,
+  type AssistantMessage,
+  type Message,
+  type Model,
+  type Usage,
+} from "@earendil-works/pi-ai";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { convertToLlm, getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, Text, type AutocompleteItem } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { setFooterStatus } from "../../src/footer-status.ts";
+import {
+  ADVISOR_CONFIG_PATH,
+  DEFAULT_THINKING,
+  effectiveThinking,
+  formatChoice,
+  loadAdvisorChoice,
+  modelRef,
+  parseSpec,
+  resolveModelRef,
+  saveAdvisorChoice,
+  type AdvisorChoice,
+} from "./config.ts";
+import { AdvisorPicker, type PickerResult } from "./picker.ts";
+import { ADVISOR_SYSTEM_PROMPT, buildAdvisorRequest, type PromptCacheState } from "./prompt.ts";
+
+export const ADVISOR_TOOL = "advisor";
+const STATUS_KEY = "advisor";
+const COLLAPSED_LINES = 12;
+const UPDATE_INTERVAL_MS = 100;
+
+export interface AdvisorDetails {
+  status: "running" | "done";
+  model: string;
+  usage?: Usage;
+  durationMs?: number;
+  truncated?: boolean;
+  transcriptChars?: number;
+  stopReason?: string;
+}
+
+export interface AdvisorExtensionOptions {
+  configPath?: string;
+}
+
+type Registry = ExtensionContext["modelRegistry"];
+
+function hasToolCall(messages: readonly Message[], toolCallId: string): boolean {
+  return messages.some(
+    (message) =>
+      message.role === "assistant" &&
+      message.content.some((block) => block.type === "toolCall" && block.id === toolCallId),
+  );
+}
+
+function formatTokens(count: number): string {
+  return count >= 1_000 ? `${(count / 1_000).toFixed(1)}k` : String(count);
+}
+
+function formatMeta(details: AdvisorDetails): string {
+  const parts = [details.model];
+  if (details.usage) {
+    const input = details.usage.input + details.usage.cacheRead + details.usage.cacheWrite;
+    parts.push(`${formatTokens(input)} in`, `${formatTokens(details.usage.output)} out`);
+    if (details.usage.cost.total > 0) parts.push(`$${details.usage.cost.total.toFixed(3)}`);
+  }
+  if (details.durationMs !== undefined) parts.push(`${(details.durationMs / 1000).toFixed(1)}s`);
+  if (details.truncated) parts.push("transcript shortened");
+  return parts.join(" · ");
+}
+
+/** Factory seam for tests; the default export uses the global preference file. */
+export function createAdvisorExtension(
+  options: AdvisorExtensionOptions = {},
+): (pi: ExtensionAPI) => void {
+  const configPath = options.configPath ?? ADVISOR_CONFIG_PATH;
+
+  return (pi) => {
+    let choice: AdvisorChoice | undefined;
+    let registry: Registry | undefined;
+    let lastAssistant: AssistantMessage | undefined;
+    let promptCache: PromptCacheState | undefined;
+
+    const setToolActive = (active: boolean) => {
+      const tools = pi.getActiveTools();
+      if (tools.includes(ADVISOR_TOOL) === active) return;
+      pi.setActiveTools(
+        active ? [...tools, ADVISOR_TOOL] : tools.filter((name) => name !== ADVISOR_TOOL),
+      );
+    };
+
+    const showFooter = (ctx: ExtensionContext) => {
+      try {
+        // Pi's footer style: the value in parentheses, like "(sub)" and "(auto)".
+        const thinking = choice?.thinking ?? DEFAULT_THINKING;
+        setFooterStatus(
+          ctx,
+          STATUS_KEY,
+          choice
+            ? `advisor (${choice.model}${thinking === "off" ? "" : ` • ${thinking}`})`
+            : undefined,
+        );
+      } catch {
+        // A stale UI must not break configuration.
+      }
+    };
+
+    const apply = async (ctx: ExtensionCommandContext, next: AdvisorChoice | undefined) => {
+      try {
+        await saveAdvisorChoice(next, configPath);
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        return;
+      }
+      choice = next;
+      setToolActive(choice !== undefined);
+      showFooter(ctx);
+      ctx.ui.notify(choice ? `Advisor: ${formatChoice(choice)}` : "Advisor off", "info");
+    };
+
+    const candidates = (ctx: {
+      modelRegistry: Registry;
+      scopedModels: ExtensionContext["scopedModels"];
+    }) =>
+      ctx.scopedModels.length > 0
+        ? ctx.scopedModels.map((scoped) => scoped.model)
+        : ctx.modelRegistry.getAvailable();
+
+    const toChoice = (
+      ctx: ExtensionCommandContext,
+      model: Model<Api>,
+      thinking: AdvisorChoice["thinking"],
+    ): AdvisorChoice | string =>
+      ctx.modelRegistry.hasConfiguredAuth(model)
+        ? {
+            provider: model.provider,
+            model: model.id,
+            thinking: effectiveThinking(model, thinking),
+          }
+        : `No credentials for ${modelRef(model)}. Log in to ${model.provider} first.`;
+
+    const openPicker = async (ctx: ExtensionCommandContext, initialSearch?: string) => {
+      const current = choice;
+      const result = await ctx.ui.custom<PickerResult | undefined>(
+        (_tui, theme, _keybindings, done) =>
+          new AdvisorPicker({
+            theme,
+            models: ctx.modelRegistry.getAvailable(),
+            scoped: ctx.scopedModels.map((scoped) => scoped.model),
+            ...(current
+              ? {
+                  current: {
+                    model: ctx.modelRegistry.find(current.provider, current.model),
+                    thinking: current.thinking ?? DEFAULT_THINKING,
+                  },
+                }
+              : {}),
+            defaultThinking: DEFAULT_THINKING,
+            ...(initialSearch ? { initialSearch } : {}),
+            done,
+          }),
+      );
+      if (!result) return;
+      if (result.kind === "off") {
+        await apply(ctx, undefined);
+        return;
+      }
+      const next = toChoice(ctx, result.model, result.thinking);
+      if (typeof next === "string") ctx.ui.notify(next, "error");
+      else await apply(ctx, next);
+    };
+
+    const completions = (prefix: string): AutocompleteItem[] | null => {
+      if (!registry) return null;
+      const query = prefix.trim();
+      const models = registry.getAvailable();
+      const colon = query.lastIndexOf(":");
+      if (colon > 0) {
+        const ref = query.slice(0, colon);
+        const model = models.find((candidate) => modelRef(candidate) === ref);
+        if (model) {
+          const items = getSupportedThinkingLevels(model)
+            .filter((level) => level.startsWith(query.slice(colon + 1)))
+            .map((level) => ({ value: `${ref}:${level}`, label: `${ref}:${level}` }));
+          return items.length ? items : null;
+        }
+      }
+      const items: AutocompleteItem[] = [
+        { value: "off", label: "off", description: "Disable the advisor tool" },
+        { value: "status", label: "status", description: "Show the advisor model" },
+        ...models.map((model) => ({
+          value: modelRef(model),
+          label: modelRef(model),
+          description: model.name,
+        })),
+      ].filter((item) => item.value.includes(query));
+      return items.length ? items.slice(0, 100) : null;
+    };
+
+    pi.on("session_start", async (_event, ctx) => {
+      registry = ctx.modelRegistry;
+      try {
+        choice = await loadAdvisorChoice(configPath);
+      } catch (error) {
+        choice = undefined;
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+      }
+      setToolActive(choice !== undefined);
+      showFooter(ctx);
+    });
+
+    // Fallback in case the assistant message carrying the advisor call is not yet persisted.
+    pi.on("message_end", (event) => {
+      if (event.message.role === "assistant") lastAssistant = event.message;
+    });
+
+    pi.registerCommand("advisor", {
+      description: "Choose the advisor model: /advisor [provider/model[:thinking] | off | status]",
+      getArgumentCompletions: completions,
+      handler: async (args, ctx) => {
+        registry = ctx.modelRegistry;
+        const arg = args.trim();
+        if (arg === "status" || (!arg && ctx.mode !== "tui")) {
+          ctx.ui.notify(choice ? `Advisor: ${formatChoice(choice)}` : "Advisor off", "info");
+          return;
+        }
+        if (arg === "off") {
+          await apply(ctx, undefined);
+          return;
+        }
+        if (!arg) {
+          await openPicker(ctx);
+          return;
+        }
+        const spec = parseSpec(arg);
+        const model = resolveModelRef(
+          spec.ref,
+          (provider, id) => ctx.modelRegistry.find(provider, id),
+          candidates(ctx),
+        );
+        if (typeof model === "string") {
+          // Like /model: an inexact name opens the picker filtered by it.
+          if (ctx.mode === "tui") await openPicker(ctx, spec.ref);
+          else ctx.ui.notify(model, "error");
+          return;
+        }
+        const next = toChoice(ctx, model, spec.thinking);
+        if (typeof next === "string") {
+          ctx.ui.notify(next, "error");
+          return;
+        }
+        await apply(ctx, next);
+      },
+    });
+
+    pi.registerTool({
+      name: ADVISOR_TOOL,
+      label: "advisor",
+      description:
+        "Consult a stronger reviewer model. It takes no parameters: your full transcript, including every tool call and result, is forwarded automatically. Returns advice to weigh before continuing.",
+      promptSnippet: "Consult a stronger reviewer model that sees your whole transcript",
+      promptGuidelines: [
+        "Call advisor before substantive work: before writing or editing, committing to an interpretation, or building on an assumption. Orientation (finding files, reading sources, seeing what is there) comes first and does not need advisor.",
+        "Also call advisor when stuck (recurring errors, an approach that is not converging), when considering a change of approach, and before declaring a multi-step task done. Make the deliverable durable (write the file, save the result) before that final advisor call.",
+        "Skip advisor on short reactive tasks where the next action follows directly from tool output. On longer tasks, call advisor at least once before committing to an approach and once before finishing.",
+        "Give advisor's advice serious weight. If evidence you already hold contradicts it, do not silently switch: call advisor again and state the conflict.",
+        "Call advisor on its own, not alongside other tool calls in the same turn, so it sees every result.",
+      ],
+      parameters: Type.Object({}, { additionalProperties: false }),
+      defaultActive: false,
+      executionMode: "sequential",
+
+      async execute(toolCallId, _params, signal, onUpdate, ctx) {
+        const current = choice;
+        if (!current) {
+          throw new Error("No advisor model is configured. The user can choose one with /advisor.");
+        }
+        const model = ctx.modelRegistry.find(current.provider, current.model);
+        if (!model) throw new Error(`Advisor model ${formatChoice(current)} is not available.`);
+        const thinking = effectiveThinking(model, current.thinking);
+        const label = `${modelRef(model)}${thinking === "off" ? "" : `:${thinking}`}`;
+        if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
+          throw new Error(`Advisor model ${label} has no credentials.`);
+        }
+
+        const messages = convertToLlm(ctx.sessionManager.buildSessionProjection().messages);
+        if (
+          !hasToolCall(messages, toolCallId) &&
+          lastAssistant &&
+          hasToolCall([lastAssistant], toolCallId)
+        ) {
+          messages.push(lastAssistant);
+        }
+        const active = new Set(pi.getActiveTools());
+        // Stable per session and advisor model, and short enough for every provider's cache key.
+        const cacheKey = `advisor-${createHash("sha256")
+          .update(`${ctx.sessionManager.getSessionId()}\0${modelRef(model)}`)
+          .digest("hex")
+          .slice(0, 32)}`;
+        const request = buildAdvisorRequest({
+          model,
+          executorSystemPrompt: ctx.getSystemPrompt(),
+          tools: pi
+            .getAllTools()
+            .filter((tool) => active.has(tool.name))
+            .map((tool) => ({ name: tool.name, description: tool.description })),
+          messages,
+          cacheKey,
+          previous: promptCache,
+        });
+
+        const running: AdvisorDetails = {
+          status: "running",
+          model: label,
+          truncated: request.truncated,
+          transcriptChars: request.transcriptChars,
+        };
+        onUpdate?.({ content: [{ type: "text", text: "" }], details: running });
+
+        const started = Date.now();
+        const stream = ctx.modelRegistry.streamSimple(
+          model,
+          {
+            systemPrompt: ADVISOR_SYSTEM_PROMPT,
+            messages: [{ role: "user", content: request.content, timestamp: started }],
+          },
+          {
+            ...(thinking === "off" ? {} : { reasoning: thinking }),
+            signal,
+            sessionId: cacheKey,
+            disableContinuation: true,
+          },
+        );
+
+        let streamed = "";
+        let lastUpdate = 0;
+        for await (const event of stream) {
+          if (event.type !== "text_delta") continue;
+          streamed += event.delta;
+          if (Date.now() - lastUpdate >= UPDATE_INTERVAL_MS) {
+            lastUpdate = Date.now();
+            onUpdate?.({ content: [{ type: "text", text: streamed }], details: running });
+          }
+        }
+        const result = await stream.result();
+        if (result.stopReason === "aborted") throw new Error("Advisor call was cancelled.");
+        if (result.stopReason === "error") {
+          throw new Error(`Advisor ${label} failed: ${result.errorMessage ?? "unknown error"}`);
+        }
+        promptCache = request.state;
+        const advice = result.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join("\n")
+          .trim();
+        if (!advice) {
+          throw new Error(
+            `Advisor ${label} returned no advice (stop reason ${result.stopReason}).`,
+          );
+        }
+        const note =
+          result.stopReason === "length"
+            ? "\n\n[Advice cut off at the advisor model's output limit.]"
+            : "";
+        return {
+          content: [{ type: "text", text: advice + note }],
+          details: {
+            ...running,
+            status: "done",
+            usage: result.usage,
+            durationMs: result.durationMs ?? Date.now() - started,
+            stopReason: result.stopReason,
+          } satisfies AdvisorDetails,
+          usage: result.usage,
+        };
+      },
+
+      renderCall(_args, theme) {
+        return new Text(theme.fg("toolTitle", theme.bold("advisor")), 0, 0);
+      },
+
+      renderResult(result, { expanded, isPartial }, theme) {
+        const details = result.details as AdvisorDetails | undefined;
+        const block = result.content.find((item) => item.type === "text");
+        const text = block?.type === "text" ? block.text : "";
+        if (!details) return new Text(text, 0, 0);
+
+        const container = new Container();
+        if (isPartial || details.status === "running") {
+          container.addChild(new Text(theme.fg("muted", `Consulting ${details.model}…`), 0, 0));
+          const tail = text.trimEnd().split("\n").slice(-4).join("\n");
+          if (tail) container.addChild(new Text(theme.fg("dim", tail), 0, 0));
+          return container;
+        }
+
+        const lines = text.split("\n");
+        const collapsed = !expanded && lines.length > COLLAPSED_LINES;
+        container.addChild(
+          new Markdown(
+            collapsed ? lines.slice(0, COLLAPSED_LINES).join("\n") : text,
+            0,
+            0,
+            getMarkdownTheme(),
+          ),
+        );
+        const hint = collapsed ? ` (${keyHint("app.tools.expand", "to expand")})` : "";
+        container.addChild(new Text(theme.fg("dim", formatMeta(details) + hint), 0, 0));
+        return container;
+      },
+    });
+  };
+}
+
+export default createAdvisorExtension();

@@ -47,6 +47,7 @@
     "extensions": [
       "./extensions/question/index.ts",
       "./extensions/fast-mode/index.ts",
+      "./extensions/advisor/index.ts",
       "./extensions/env-context/index.ts"
     ],
     "themes": [
