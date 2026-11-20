@@ -60,6 +60,13 @@ const ANTHROPIC_FAST_MODELS = new Set([
   "claude-opus-5-5",
   "claude-opus-5",
 ]);
+/** Like Claude Code, don't carry another model's Fast opt-in over to Fable.
+ * https://code.claude.com/docs/en/fast-mode#switch-models-while-fast-mode-is-on
+ */
+export function requiresAdvisorFastOptIn(model: Model<Api>): boolean {
+  return model.provider === "anthropic" && model.id === "claude-fable-5-2";
+}
+
 const CACHE_MS = 15 * 60_000;
 const RETRY_MS = 60_000;
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;

@@ -2,7 +2,7 @@
 
 A global speed preference (**Off**, **Fast**, or **Ultrafast**) that adds each provider's own speed field to eligible requests. Requires Pi **1.5.2+**; compatibility tests target 1.5.2.
 
-Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It costs more (plan credits or premium token rates), and Fast and standard requests use separate prompt caches.
+Fast mode **does not change models or reasoning effort, establish account entitlement, or guarantee a speedup**. It costs more (plan credits or premium token rates), and Fast and standard requests use separate prompt caches. [Advisor](../advisor/README.md) calls inherit the global preference by default, except direct Anthropic Fable 5.2, which requires explicit opt-in for the advisor. `/advisor speed` can override the advisor's speed without changing the executor's.
 
 ## Use it
 

@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { writePreferenceJson } from "../../src/preference-file.ts";
+import { isRequestSpeedPreference, type RequestSpeedPreference } from "../../src/request-speed.ts";
 
 export const ADVISOR_CONFIG_PATH = join(getAgentDir(), "advisor.json");
 
@@ -30,6 +31,8 @@ export interface AdvisorChoice {
   model: string;
   /** Clamped to what the model supports at call time; omitted means {@link DEFAULT_THINKING}. */
   thinking?: ModelThinkingLevel;
+  /** Omitted means Inherit, including in existing version-1 configs. */
+  speed?: RequestSpeedPreference;
 }
 
 interface AdvisorConfigFile {
@@ -113,10 +116,14 @@ function parseConfig(value: unknown): AdvisorChoice | undefined {
   ) {
     throw new Error("Advisor config needs a provider, a model, and an optional thinking level.");
   }
+  if (advisor.speed !== undefined && !isRequestSpeedPreference(advisor.speed)) {
+    throw new Error("Advisor speed must be inherit, standard, fast, or ultrafast.");
+  }
   return {
     provider: advisor.provider,
     model: advisor.model,
     ...(advisor.thinking ? { thinking: advisor.thinking as ModelThinkingLevel } : {}),
+    ...(advisor.speed !== undefined ? { speed: advisor.speed } : {}),
   };
 }
 

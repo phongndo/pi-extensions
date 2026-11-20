@@ -8,10 +8,16 @@ import type {
   TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import {
+  REQUEST_SPEED,
+  type RequestSpeedOptions,
+  type RequestSpeedReport,
+} from "../../src/request-speed.ts";
 
 import { originalFields, restoreFields, type AppliedSpeed, type SpeedAdapter } from "./adapters.ts";
 import {
   isRecord,
+  requiresAdvisorFastOptIn,
   resolveFastCapability,
   type FastCapability,
   type FastCapabilityResolver,
@@ -162,6 +168,8 @@ export function withFastPayload<TOptions extends StreamOptions>(
 ): TOptions {
   const previous = options?.onPayload;
   const previousEvent = options?.onProviderStreamEvent;
+  const control = (options as RequestSpeedOptions | undefined)?.[REQUEST_SPEED];
+  let report: RequestSpeedReport | undefined;
   const effective = { ...options } as TOptions & { serviceTier?: string };
   let observation: FastRequestObservation | undefined;
   let pending: PendingRequest | undefined;
@@ -184,6 +192,7 @@ export function withFastPayload<TOptions extends StreamOptions>(
       const lowerTo = (lower: AppliedSpeed | undefined) => {
         const json = lowerBody(sent!.json, request, lower);
         const requested = request.adapter.requested(json);
+        if (report) report.fellBackTo = lower ?? "standard";
         observation?.fellBack(lower, requested);
         const tier = pricingTier(request.adapter, requested, request.capability);
         effective.serviceTier = tier;
@@ -249,15 +258,21 @@ export function withFastPayload<TOptions extends StreamOptions>(
     const capability =
       hooks?.resolveCapability?.(requestModel, requestOptions) ??
       resolveFastCapability(requestModel, routes, requestOptions);
-    const preference =
-      capability.status === "supported" || capability.ultrafast === "supported"
-        ? toSpeed(await readEnabled())
-        : "off";
+    const override = control?.preference;
+    const available = capability.status === "supported" || capability.ultrafast === "supported";
+    const canInherit =
+      override !== "standard" &&
+      !(override === "inherit" && requiresAdvisorFastOptIn(requestModel));
+    let preference: FastSpeed = "off";
+    if (override === "fast" || override === "ultrafast") preference = override;
+    else if (canInherit && available) preference = toSpeed(await readEnabled());
     if (hooks?.isActive?.() === false) return transformed;
     const speed = effectiveSpeed(preference, capability, requestModel, hooks?.fallbacks);
     const fastPayload = speed
       ? adapter.apply(transformed, requestModel, speed, capability.ultrafastTier)
-      : transformed;
+      : override && override !== "inherit" && available && adapter.standard
+        ? { ...adapter.standard, ...transformed }
+        : transformed;
     if (speed)
       pending = {
         model: requestModel,
@@ -284,6 +299,22 @@ export function withFastPayload<TOptions extends StreamOptions>(
       if (isRecord(this)) this.serviceTier = tier;
     }
     observation = hooks?.journal?.begin(requestModel, requested, requestOptions, speed, capability);
+    if (control) {
+      const snapshot: RequestSpeedReport = {
+        preferred: preference === "off" ? "standard" : preference,
+        requested:
+          requested === "priority" || requested === "fast"
+            ? "fast"
+            : requested === (capability.ultrafastTier ?? "ultrafast")
+              ? "ultrafast"
+              : "standard",
+      };
+      report = snapshot;
+      control.report = () => {
+        const reportedTier = observation?.responseTier;
+        return { ...snapshot, ...(reportedTier ? { reportedTier } : {}) };
+      };
+    }
     return fastPayload;
   };
   return effective;

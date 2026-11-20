@@ -134,6 +134,10 @@ export class FastRequestObservation {
     this.event(event);
   }
 
+  get responseTier(): ObservedTier | undefined {
+    return this.record.responseTier;
+  }
+
   /** A retry at a lower speed replaced the original request. */
   fellBack(speed: AppliedSpeed | undefined, requested: string): void {
     this.record.fellBackTo = speed ?? "standard";

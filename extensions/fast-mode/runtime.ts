@@ -1,5 +1,7 @@
 import type { Provider } from "@earendil-works/pi-ai";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { REQUEST_SPEED_SUPPORT, type RequestSpeedSupportLookup } from "../../src/request-speed.ts";
+import { resolveFastCapability } from "./capabilities.ts";
 import { NATIVE_FAST_ROUTES } from "./routes.ts";
 import {
   decorateCodexProvider,
@@ -128,6 +130,18 @@ export function installFastModeProviderLookup(
     const registrations = new Set([registration]);
     const originalGetProvider = registry.getProvider;
     const originalGetNativeProvider = registry.getRegisteredNativeProvider;
+    const speedLookup: RequestSpeedSupportLookup = registry as ModelRegistry &
+      RequestSpeedSupportLookup;
+    const previousSupport = speedLookup[REQUEST_SPEED_SUPPORT];
+    const speedSupport: NonNullable<RequestSpeedSupportLookup[typeof REQUEST_SPEED_SUPPORT]> = (
+      model,
+    ) => {
+      const current = registrations.values().next().value;
+      const hooks = current?.hooks;
+      const capability =
+        hooks?.resolveCapability?.(model) ?? resolveFastCapability(model, hooks?.routes);
+      return { fast: capability.status, ultrafast: capability.ultrafast };
+    };
     const caches = new WeakMap<Registration, WeakMap<Provider, Provider>>();
     const decorate = (provider: Provider | undefined): Provider | undefined => {
       const current = registrations.values().next().value;
@@ -158,10 +172,15 @@ export function installFastModeProviderLookup(
       if (registry.getProvider === getProvider) registry.getProvider = originalGetProvider;
       if (registry.getRegisteredNativeProvider === getNativeProvider)
         registry.getRegisteredNativeProvider = originalGetNativeProvider;
+      if (speedLookup[REQUEST_SPEED_SUPPORT] === speedSupport) {
+        if (previousSupport) speedLookup[REQUEST_SPEED_SUPPORT] = previousSupport;
+        else delete speedLookup[REQUEST_SPEED_SUPPORT];
+      }
     };
     try {
       registry.getProvider = getProvider;
       registry.getRegisteredNativeProvider = getNativeProvider;
+      speedLookup[REQUEST_SPEED_SUPPORT] = speedSupport;
       registry.getProvider("openai-codex");
       registry.getRegisteredNativeProvider("openai-codex");
     } catch (error) {

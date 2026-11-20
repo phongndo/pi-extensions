@@ -6,23 +6,36 @@ import {
   type Model,
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
-import { DynamicBorder, keyHint, type Theme } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, keyHint, rawKeyHint, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,
   fuzzyFilter,
   getKeybindings,
   getSelectPageIndex,
   Input,
+  matchesKey,
   Spacer,
   Text,
   type Focusable,
 } from "@earendil-works/pi-tui";
+import {
+  REQUEST_SPEED_LABELS,
+  REQUEST_SPEED_PREFERENCES,
+  type RequestSpeedPreference,
+  type RequestSpeedSupport,
+} from "../../src/request-speed.ts";
 
 const MAX_VISIBLE = 10;
+const SPEED_KEY = "ctrl+g";
 
 export type PickerResult =
   | { kind: "off" }
-  | { kind: "model"; model: Model<Api>; thinking: ModelThinkingLevel };
+  | {
+      kind: "model";
+      model: Model<Api>;
+      thinking: ModelThinkingLevel;
+      speed: RequestSpeedPreference;
+    };
 
 type Item = { kind: "off" } | { kind: "model"; model: Model<Api> };
 
@@ -32,7 +45,12 @@ export interface AdvisorPickerOptions {
   models: readonly Model<Api>[];
   /** The session's scoped models; when present the picker opens on them and Tab switches scope. */
   scoped: readonly Model<Api>[];
-  current?: { model: Model<Api> | undefined; thinking: ModelThinkingLevel };
+  current?: {
+    model: Model<Api> | undefined;
+    thinking: ModelThinkingLevel;
+    speed?: RequestSpeedPreference;
+  };
+  speedSupport?: (model: Model<Api>) => RequestSpeedSupport;
   /** Thinking level preselected when no advisor is set. */
   defaultThinking: ModelThinkingLevel;
   initialSearch?: string;
@@ -77,6 +95,7 @@ export class AdvisorPicker extends Container implements Focusable {
   private selected = 0;
   /** The level the user wants; each model shows it clamped to what that model supports. */
   private thinking: ModelThinkingLevel;
+  private speed: RequestSpeedPreference;
   private _focused = false;
 
   get focused(): boolean {
@@ -91,6 +110,7 @@ export class AdvisorPicker extends Container implements Focusable {
     super();
     this.opts = opts;
     this.thinking = opts.current?.thinking ?? opts.defaultThinking;
+    this.speed = opts.current?.speed ?? "inherit";
     const currentFirst = (models: readonly Model<Api>[]): Item[] => [
       { kind: "off" },
       ...[...models]
@@ -122,6 +142,7 @@ export class AdvisorPicker extends Container implements Focusable {
           `  ${[
             keyHint("tui.select.confirm", "select"),
             keyHint("app.thinking.cycle", "thinking"),
+            rawKeyHint(SPEED_KEY, "speed"),
             ...(opts.scoped.length > 0 ? [keyHint("tui.input.tab", "scope")] : []),
             keyHint("tui.select.cancel", "cancel"),
           ].join(" · ")}`,
@@ -205,10 +226,20 @@ export class AdvisorPicker extends Container implements Focusable {
     const item = this.selectedItem();
     if (item?.kind === "model") {
       const level = clampThinkingLevel(item.model, this.thinking);
+      const thinking = item.model.reasoning
+        ? `${theme.fg("muted", "  Thinking: ")}${theme.fg(level === "off" ? "muted" : "accent", level)}`
+        : theme.fg("muted", "  Thinking: not supported");
+      const support = this.opts.speedSupport?.(item.model);
+      const tiers = (["fast", "ultrafast"] as const)
+        .filter((tier) => support?.[tier] !== "unsupported")
+        .map((tier) => REQUEST_SPEED_LABELS[tier] + (support?.[tier] === "unknown" ? "?" : ""));
+      const availability = !support
+        ? "fast-mode policy not loaded"
+        : tiers.length
+          ? tiers.join(", ")
+          : "Fast unavailable";
       this.status.setText(
-        item.model.reasoning
-          ? `${theme.fg("muted", "  Thinking: ")}${theme.fg(level === "off" ? "muted" : "accent", level)}`
-          : theme.fg("muted", "  Thinking: not supported"),
+        `${thinking}\n${theme.fg("muted", "  Speed: ")}${theme.fg("accent", REQUEST_SPEED_LABELS[this.speed])}${theme.fg("muted", ` (${availability})`)}`,
       );
     } else {
       this.status.setText(theme.fg("muted", "  Turns the advisor tool off."));
@@ -224,6 +255,18 @@ export class AdvisorPicker extends Container implements Focusable {
     this.update();
   }
 
+  private cycleSpeed(): void {
+    const item = this.selectedItem();
+    if (item?.kind !== "model") return;
+    const support = this.opts.speedSupport?.(item.model);
+    const speeds = REQUEST_SPEED_PREFERENCES.filter(
+      (tier) =>
+        tier === "inherit" || tier === "standard" || (support && support[tier] !== "unsupported"),
+    );
+    this.speed = speeds[(speeds.indexOf(this.speed) + 1) % speeds.length] ?? "inherit";
+    this.update();
+  }
+
   private confirm(): void {
     const item = this.selectedItem();
     if (!item) return;
@@ -234,6 +277,7 @@ export class AdvisorPicker extends Container implements Focusable {
             kind: "model",
             model: item.model,
             thinking: clampThinkingLevel(item.model, this.thinking),
+            speed: this.speed,
           },
     );
   }
@@ -243,6 +287,8 @@ export class AdvisorPicker extends Container implements Focusable {
     const page = getSelectPageIndex(kb, data, this.selected, this.items.length, MAX_VISIBLE);
     if (kb.matches(data, "app.thinking.cycle")) {
       this.cycleThinking();
+    } else if (matchesKey(data, SPEED_KEY)) {
+      this.cycleSpeed();
     } else if (kb.matches(data, "tui.input.tab")) {
       if (this.opts.scoped.length === 0) return;
       this.scope = this.scope === "all" ? "scoped" : "all";

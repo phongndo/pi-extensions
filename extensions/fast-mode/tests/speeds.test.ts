@@ -9,11 +9,20 @@ import {
   InMemoryModelsStore,
   type Api,
   type Model,
+  type SimpleStreamOptions,
   type StreamOptions,
 } from "@earendil-works/pi-ai";
 import { stream as anthropicStream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { stream as openaiStream } from "@earendil-works/pi-ai/api/openai-responses";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+  REQUEST_SPEED,
+  REQUEST_SPEED_SUPPORT,
+  type RequestSpeedControl,
+  type RequestSpeedOptions,
+  type RequestSpeedPreference,
+  type RequestSpeedSupportLookup,
+} from "../../../src/request-speed.ts";
 import {
   ANTHROPIC_FAST_BETA,
   SPEED_ADAPTERS,
@@ -579,6 +588,168 @@ test("Pi's own route (runtime.streamSimple) carries speeds, fallbacks and report
   assert.equal(anthropic.stopReason, "stop", anthropic.errorMessage);
   assert.deepEqual(speeds, ["fast"]);
   assert.equal(journal.last?.responseTier, "fast");
+});
+
+test("advisor speed is per request, survives Pi's runtime, and reports fallbacks", async (t) => {
+  const runtimeOptions = {
+    credentials: new InMemoryCredentialStore(),
+    modelsStore: new InMemoryModelsStore(),
+    modelsPath: null,
+    allowModelNetwork: false,
+  };
+  const piRuntime = await ModelRuntime.create(runtimeOptions);
+  const registry: ModelRegistry & RequestSpeedSupportLookup = new ModelRegistry(piRuntime);
+  let globalSpeed: "ultrafast" | "off" = "ultrafast";
+  const remove = installFastModeProviderLookup(registry, async () => globalSpeed, {
+    fallbacks: new FastFallbacks(),
+    journal: new FastRequestJournal(),
+  });
+  t.after(remove);
+
+  const claude = builtin("anthropic", "claude-fable-5-2");
+  assert.deepEqual(registry[REQUEST_SPEED_SUPPORT]?.(claude), {
+    fast: "supported",
+    ultrafast: "unsupported",
+  });
+  const child = await ModelRuntime.create(runtimeOptions);
+  child.registerNativeProvider(registry.getProvider("anthropic")!);
+
+  let refuse = false;
+  async function run(
+    preference?: RequestSpeedPreference,
+    client: Pick<ModelRegistry, "streamSimple"> = registry,
+    target = claude,
+    callerTier?: string,
+  ) {
+    const control: RequestSpeedControl | undefined = preference ? { preference } : undefined;
+    const sent: Record<string, unknown>[] = [];
+    const anthropic = target.provider === "anthropic";
+    const options: SimpleStreamOptions & RequestSpeedOptions = {
+      ...(control && { [REQUEST_SPEED]: control }),
+      apiKey: anthropic ? "sk-ant-test" : "sk-test",
+      maxRetries: 0,
+      ...(callerTier && {
+        onPayload: (payload) => ({
+          ...(payload as Record<string, unknown>),
+          service_tier: callerTier,
+        }),
+      }),
+      fetch: async (_input, init) => {
+        const request = body(init);
+        sent.push(request);
+        const fast = request.speed === "fast";
+        if (fast && refuse) {
+          return Response.json(
+            { error: { message: "Fast mode capacity" } },
+            { status: 429, headers: { "retry-after": "60" } },
+          );
+        }
+        return sse(
+          anthropic
+            ? anthropicDone(fast ? "fast" : "standard")
+            : openaiDone(String(request.service_tier)),
+        );
+      },
+    };
+    const result = await client.streamSimple(target, transcript(), options).result();
+    assert.equal(result.stopReason, "stop", result.errorMessage);
+    assert.ok(sent.every((payload) => payload.model === target.id));
+    assert.ok(sent.every((payload) => !Object.hasOwn(payload, "preference")));
+    return { sent, report: control?.report?.() };
+  }
+
+  const standard = await run("standard");
+  assert.deepEqual(
+    standard.sent.map((payload) => payload.speed),
+    [undefined],
+  );
+  assert.deepEqual(standard.report, {
+    preferred: "standard",
+    requested: "standard",
+    reportedTier: "standard",
+  });
+  const sol = builtin("openai", "gpt-6.1-sol");
+  const openai = await run("standard", registry, sol);
+  assert.deepEqual(
+    openai.sent.map((payload) => payload.service_tier),
+    ["default"],
+  );
+  const withOwnTier = await run("standard", registry, sol, "flex");
+  assert.deepEqual(
+    withOwnTier.sent.map((payload) => payload.service_tier),
+    ["flex"],
+  );
+  const inherited = await run("inherit");
+  assert.deepEqual(
+    inherited.sent.map((payload) => payload.speed),
+    [undefined],
+  );
+  assert.deepEqual(inherited.report, {
+    preferred: "standard",
+    requested: "standard",
+    reportedTier: "standard",
+  });
+  const opus = await run("inherit", registry, builtin("anthropic", "claude-opus-5-5"));
+  assert.deepEqual(
+    opus.sent.map((payload) => payload.speed),
+    ["fast"],
+  );
+  assert.equal(opus.report?.preferred, "ultrafast");
+  assert.equal(opus.report?.requested, "fast");
+
+  const fableExecutor = await run();
+  assert.deepEqual(
+    fableExecutor.sent.map((payload) => payload.speed),
+    ["fast"],
+  );
+
+  globalSpeed = "off";
+  const fast = await run("fast", child);
+  assert.deepEqual(
+    fast.sent.map((payload) => payload.speed),
+    ["fast"],
+  );
+  assert.deepEqual(fast.report, { preferred: "fast", requested: "fast", reportedTier: "fast" });
+  const ultra = await run("ultrafast");
+  assert.deepEqual(
+    ultra.sent.map((payload) => payload.speed),
+    ["fast"],
+  );
+  assert.deepEqual(ultra.report, {
+    preferred: "ultrafast",
+    requested: "fast",
+    reportedTier: "fast",
+  });
+  const executor = await run();
+  assert.deepEqual(
+    executor.sent.map((payload) => payload.speed),
+    [undefined],
+  );
+
+  refuse = true;
+  const retried = await run("fast");
+  assert.deepEqual(
+    retried.sent.map((payload) => payload.speed),
+    ["fast", undefined],
+  );
+  assert.deepEqual(retried.report, {
+    preferred: "fast",
+    requested: "fast",
+    fellBackTo: "standard",
+    reportedTier: "standard",
+  });
+  const paused = await run("fast");
+  assert.deepEqual(
+    paused.sent.map((payload) => payload.speed),
+    [undefined],
+  );
+  assert.deepEqual(paused.report, {
+    preferred: "fast",
+    requested: "standard",
+    reportedTier: "standard",
+  });
+  remove();
+  assert.equal(registry[REQUEST_SPEED_SUPPORT], undefined);
 });
 
 test("fallbacks: stepwise, explicit standard, beta removal, pricing and no blame for other errors", async () => {

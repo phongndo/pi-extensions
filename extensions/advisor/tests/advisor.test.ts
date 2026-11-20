@@ -15,6 +15,7 @@ import {
 import { initTheme, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters as stripAnsi } from "node:util";
+import { REQUEST_SPEED, type RequestSpeedOptions } from "../../../src/request-speed.ts";
 import {
   effectiveThinking,
   loadAdvisorChoice,
@@ -112,6 +113,7 @@ const KEY = {
   escape: "\x1b",
   shiftTab: "\x1b[Z",
   tab: "\t",
+  speed: "\x07",
 };
 
 function picker(options: Partial<AdvisorPickerOptions> = {}) {
@@ -149,7 +151,9 @@ test("picker opens on the current advisor, listed first and marked", () => {
   assert.match(screen(), /→ ✓ claude-opus-5-5 \[anthropic\]/);
   assert.match(screen(), /Thinking: medium/);
   view.handleInput(KEY.enter);
-  assert.deepEqual(results, [{ kind: "model", model: current, thinking: "medium" }]);
+  assert.deepEqual(results, [
+    { kind: "model", model: current, thinking: "medium", speed: "inherit" },
+  ]);
 });
 
 test("picker filters by typing, cycles thinking, and offers off", () => {
@@ -172,6 +176,37 @@ test("picker filters by typing, cycles thinking, and offers off", () => {
   second.view.handleInput(KEY.enter);
   const plain = second.results[0];
   assert.equal(plain?.kind === "model" && plain.thinking, "off");
+});
+
+test("picker cycles only offered speeds and keeps Standard available", () => {
+  const fable = model("anthropic", "claude-fable-5-2", { thinkingLevelMap: { xhigh: "xhigh" } });
+  const { view, results, screen } = picker({
+    models: [fable],
+    current: { model: fable, thinking: "xhigh" },
+    speedSupport: () => ({ fast: "supported", ultrafast: "unsupported" }),
+  });
+  assert.match(screen(), /Speed: Inherit \(Fast\)/);
+  view.handleInput(KEY.speed);
+  assert.match(screen(), /Speed: Standard/);
+  view.handleInput(KEY.speed);
+  assert.match(screen(), /Speed: Fast/);
+  view.handleInput(KEY.speed);
+  assert.match(screen(), /Speed: Inherit/);
+  view.handleInput(KEY.enter);
+  assert.deepEqual(results, [{ kind: "model", model: fable, thinking: "xhigh", speed: "inherit" }]);
+
+  const unsupported = picker({
+    models: [fable],
+    current: { model: fable, thinking: "xhigh" },
+    speedSupport: () => ({ fast: "unsupported", ultrafast: "unsupported" }),
+  });
+  unsupported.view.handleInput(KEY.speed);
+  assert.match(unsupported.screen(), /Speed: Standard \(Fast unavailable\)/);
+  unsupported.view.handleInput(KEY.enter);
+  assert.equal(
+    unsupported.results[0]?.kind === "model" && unsupported.results[0].speed,
+    "standard",
+  );
 });
 
 test("picker selects off, cancels with escape, and toggles scope", () => {
@@ -211,6 +246,11 @@ test("round-trips the preference file and rejects invalid configs", async () => 
   assert.equal(await loadAdvisorChoice(path), undefined);
   await writeFile(path, JSON.stringify({ version: 1, advisor: { provider: "x" } }));
   await assert.rejects(loadAdvisorChoice(path), /Invalid advisor config/);
+  await writeFile(
+    path,
+    JSON.stringify({ version: 1, advisor: { provider: "x", model: "y", speed: "turbo" } }),
+  );
+  await assert.rejects(loadAdvisorChoice(path), /Advisor speed must be/);
 });
 
 test("flattens messages with full tool output, labels, and no redacted thinking", () => {
@@ -352,6 +392,7 @@ function harness(configPath: string) {
   const advisorModel = model("anthropic", "claude-opus-5-5");
   const requests: { context: Context; options?: SimpleStreamOptions }[] = [];
   let reply: Partial<AssistantMessage> = { stopReason: "stop" };
+  let reportSpeed: ((options: RequestSpeedOptions | undefined) => void) | undefined;
   const notices: string[] = [];
   const ctx = {
     mode: "rpc",
@@ -372,6 +413,7 @@ function harness(configPath: string) {
       hasConfiguredAuth: () => true,
       streamSimple: (_model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
         requests.push({ context, options });
+        reportSpeed?.(options as RequestSpeedOptions | undefined);
         const stream = createAssistantMessageEventStream();
         const final = assistant([{ type: "text", text: "Verify the token refresh path." }], {
           stopReason: "stop",
@@ -398,6 +440,9 @@ function harness(configPath: string) {
     requests,
     notices,
     ctx,
+    reportSpeed: (report: NonNullable<typeof reportSpeed>) => {
+      reportSpeed = report;
+    },
     setReply: (next: Partial<AssistantMessage>) => {
       reply = next;
     },
@@ -436,6 +481,39 @@ test("/advisor saves the choice, activates the tool, and off deactivates it", as
   assert.match(h.notices.at(-1) ?? "", /Unknown model/);
 });
 
+test("/advisor speed preserves Fable xhigh and the tool records its own fallback", async () => {
+  const path = await tempConfig();
+  const h = harness(path);
+  const fable = model("anthropic", "claude-fable-5-2", { thinkingLevelMap: { xhigh: "xhigh" } });
+  h.ctx.modelRegistry.find = () => fable;
+  const original = { provider: fable.provider, model: fable.id, thinking: "xhigh" } as const;
+  await saveAdvisorChoice(original, path);
+  await h.emit("session_start", { reason: "startup" });
+  await h.command.handler("speed fast", h.ctx);
+  assert.deepEqual(await loadAdvisorChoice(path), { ...original, speed: "fast" });
+  assert.deepEqual(h.command.getArgumentCompletions("speed f"), [
+    { value: "speed fast", label: "speed fast" },
+  ]);
+
+  const report = {
+    preferred: "fast",
+    requested: "fast",
+    fellBackTo: "standard",
+    reportedTier: "standard",
+  } as const;
+  h.reportSpeed((options) => {
+    const control = options?.[REQUEST_SPEED];
+    assert.equal(control?.preference, "fast");
+    control.report = () => report;
+  });
+  const result = await h.tool.execute("a", {}, undefined, undefined, h.ctx);
+  assert.equal(h.requests[0]?.options?.reasoning, "xhigh");
+  assert.equal(result.details.model, "anthropic/claude-fable-5-2:xhigh");
+  assert.deepEqual(result.details.speed, report);
+  await h.command.handler("status", h.ctx);
+  assert.match(h.notices.at(-1) ?? "", /speed: Fast → Standard/);
+});
+
 test("execute forwards the transcript, including an unpersisted advisor call", async () => {
   const h = harness(await tempConfig());
   await h.emit("session_start", { reason: "startup" });
@@ -471,6 +549,8 @@ test("execute forwards the transcript, including an unpersisted advisor call", a
   assert.match(text, /<tool_call name="advisor" id="adv-1">/);
   assert.match(text, /- read: Read a file/);
   assert.equal(request.options?.reasoning, "high");
+  assert.equal((request.options as RequestSpeedOptions)[REQUEST_SPEED]?.preference, "inherit");
+  assert.equal(details.speed, undefined, "no report when fast-mode is not loaded");
   assert.match(String(request.options?.sessionId), /^advisor-[0-9a-f]{32}$/);
 });
 

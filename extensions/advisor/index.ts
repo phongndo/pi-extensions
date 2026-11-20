@@ -17,6 +17,17 @@ import { Container, Markdown, Text, type AutocompleteItem } from "@earendil-work
 import { Type } from "typebox";
 import { setFooterStatus } from "../../src/footer-status.ts";
 import {
+  isRequestSpeedPreference,
+  REQUEST_SPEED,
+  REQUEST_SPEED_LABELS,
+  REQUEST_SPEED_PREFERENCES,
+  REQUEST_SPEED_SUPPORT,
+  type RequestSpeedControl,
+  type RequestSpeedOptions,
+  type RequestSpeedReport,
+  type RequestSpeedSupportLookup,
+} from "../../src/request-speed.ts";
+import {
   ADVISOR_CONFIG_PATH,
   DEFAULT_THINKING,
   effectiveThinking,
@@ -44,6 +55,7 @@ export interface AdvisorDetails {
   truncated?: boolean;
   transcriptChars?: number;
   stopReason?: string;
+  speed?: RequestSpeedReport;
 }
 
 export interface AdvisorExtensionOptions {
@@ -64,8 +76,23 @@ function formatTokens(count: number): string {
   return count >= 1_000 ? `${(count / 1_000).toFixed(1)}k` : String(count);
 }
 
+function formatSpeed(report: RequestSpeedReport): string {
+  const label = REQUEST_SPEED_LABELS[report.requested];
+  const fallback = report.fellBackTo ? ` → ${REQUEST_SPEED_LABELS[report.fellBackTo]}` : "";
+  const adjusted =
+    report.preferred === report.requested
+      ? ""
+      : ` (${REQUEST_SPEED_LABELS[report.preferred]} not requested)`;
+  const reported =
+    report.reportedTier && report.reportedTier !== "unknown"
+      ? `, provider reported ${report.reportedTier}`
+      : "";
+  return `speed: ${label}${fallback}${adjusted}${reported}`;
+}
+
 function formatMeta(details: AdvisorDetails): string {
   const parts = [details.model];
+  if (details.speed) parts.push(formatSpeed(details.speed));
   if (details.usage) {
     const input = details.usage.input + details.usage.cacheRead + details.usage.cacheWrite;
     parts.push(`${formatTokens(input)} in`, `${formatTokens(details.usage.output)} out`);
@@ -87,6 +114,13 @@ export function createAdvisorExtension(
     let registry: Registry | undefined;
     let lastAssistant: AssistantMessage | undefined;
     let promptCache: PromptCacheState | undefined;
+    let lastSpeed: RequestSpeedReport | undefined;
+
+    const status = () => {
+      if (!choice) return "Advisor off";
+      const speed = REQUEST_SPEED_LABELS[choice.speed ?? "inherit"];
+      return `Advisor: ${formatChoice(choice)} · speed: ${speed}${lastSpeed ? `\nLast advisor call: ${formatSpeed(lastSpeed)}` : ""}`;
+    };
 
     const setToolActive = (active: boolean) => {
       const tools = pi.getActiveTools();
@@ -100,13 +134,11 @@ export function createAdvisorExtension(
       try {
         // Pi's footer style: the value in parentheses, like "(sub)" and "(auto)".
         const thinking = choice?.thinking ?? DEFAULT_THINKING;
-        setFooterStatus(
-          ctx,
-          STATUS_KEY,
-          choice
-            ? `advisor (${choice.model}${thinking === "off" ? "" : ` • ${thinking}`})`
-            : undefined,
-        );
+        const speed = choice?.speed;
+        const labels = choice ? [choice.model] : [];
+        if (thinking !== "off") labels.push(thinking);
+        if (speed && speed !== "inherit") labels.push(speed);
+        setFooterStatus(ctx, STATUS_KEY, choice ? `advisor (${labels.join(" • ")})` : undefined);
       } catch {
         // A stale UI must not break configuration.
       }
@@ -120,9 +152,10 @@ export function createAdvisorExtension(
         return;
       }
       choice = next;
+      lastSpeed = undefined;
       setToolActive(choice !== undefined);
       showFooter(ctx);
-      ctx.ui.notify(choice ? `Advisor: ${formatChoice(choice)}` : "Advisor off", "info");
+      ctx.ui.notify(status(), "info");
     };
 
     const candidates = (ctx: {
@@ -137,12 +170,14 @@ export function createAdvisorExtension(
       ctx: ExtensionCommandContext,
       model: Model<Api>,
       thinking: AdvisorChoice["thinking"],
+      speed = choice?.speed,
     ): AdvisorChoice | string =>
       ctx.modelRegistry.hasConfiguredAuth(model)
         ? {
             provider: model.provider,
             model: model.id,
             thinking: effectiveThinking(model, thinking),
+            ...(speed ? { speed } : {}),
           }
         : `No credentials for ${modelRef(model)}. Log in to ${model.provider} first.`;
 
@@ -154,11 +189,15 @@ export function createAdvisorExtension(
             theme,
             models: ctx.modelRegistry.getAvailable(),
             scoped: ctx.scopedModels.map((scoped) => scoped.model),
+            speedSupport: (ctx.modelRegistry as Registry & RequestSpeedSupportLookup)[
+              REQUEST_SPEED_SUPPORT
+            ],
             ...(current
               ? {
                   current: {
                     model: ctx.modelRegistry.find(current.provider, current.model),
                     thinking: current.thinking ?? DEFAULT_THINKING,
+                    speed: current.speed,
                   },
                 }
               : {}),
@@ -172,7 +211,7 @@ export function createAdvisorExtension(
         await apply(ctx, undefined);
         return;
       }
-      const next = toChoice(ctx, result.model, result.thinking);
+      const next = toChoice(ctx, result.model, result.thinking, result.speed);
       if (typeof next === "string") ctx.ui.notify(next, "error");
       else await apply(ctx, next);
     };
@@ -180,6 +219,12 @@ export function createAdvisorExtension(
     const completions = (prefix: string): AutocompleteItem[] | null => {
       if (!registry) return null;
       const query = prefix.trim();
+      const speedArg = /^speed\s+(.*)$/.exec(prefix.trimStart());
+      if (speedArg) {
+        return REQUEST_SPEED_PREFERENCES.filter((speed) => speed.startsWith(speedArg[1] ?? "")).map(
+          (speed) => ({ value: `speed ${speed}`, label: `speed ${speed}` }),
+        );
+      }
       const models = registry.getAvailable();
       const colon = query.lastIndexOf(":");
       if (colon > 0) {
@@ -194,7 +239,8 @@ export function createAdvisorExtension(
       }
       const items: AutocompleteItem[] = [
         { value: "off", label: "off", description: "Disable the advisor tool" },
-        { value: "status", label: "status", description: "Show the advisor model" },
+        { value: "status", label: "status", description: "Show the advisor model and speed" },
+        { value: "speed", label: "speed", description: "Set the advisor speed independently" },
         ...models.map((model) => ({
           value: modelRef(model),
           label: modelRef(model),
@@ -206,6 +252,7 @@ export function createAdvisorExtension(
 
     pi.on("session_start", async (_event, ctx) => {
       registry = ctx.modelRegistry;
+      lastSpeed = undefined;
       try {
         choice = await loadAdvisorChoice(configPath);
       } catch (error) {
@@ -222,13 +269,25 @@ export function createAdvisorExtension(
     });
 
     pi.registerCommand("advisor", {
-      description: "Choose the advisor model: /advisor [provider/model[:thinking] | off | status]",
+      description:
+        "Choose the advisor: /advisor [provider/model[:thinking] | speed | off | status]",
       getArgumentCompletions: completions,
       handler: async (args, ctx) => {
         registry = ctx.modelRegistry;
         const arg = args.trim();
         if (arg === "status" || (!arg && ctx.mode !== "tui")) {
-          ctx.ui.notify(choice ? `Advisor: ${formatChoice(choice)}` : "Advisor off", "info");
+          ctx.ui.notify(status(), "info");
+          return;
+        }
+        if (/^speed(?:\s|$)/.test(arg)) {
+          const speed = arg.slice("speed".length).trim().toLowerCase();
+          if (!isRequestSpeedPreference(speed)) {
+            ctx.ui.notify("Usage: /advisor speed inherit|standard|fast|ultrafast", "warning");
+          } else if (!choice) {
+            ctx.ui.notify("Choose an advisor with /advisor before setting its speed.", "warning");
+          } else {
+            await apply(ctx, { ...choice, speed });
+          }
           return;
         }
         if (arg === "off") {
@@ -325,6 +384,8 @@ export function createAdvisorExtension(
         onUpdate?.({ content: [{ type: "text", text: "" }], details: running });
 
         const started = Date.now();
+        const speed: RequestSpeedControl = { preference: current.speed ?? "inherit" };
+        const speedOptions: RequestSpeedOptions = { [REQUEST_SPEED]: speed };
         const stream = ctx.modelRegistry.streamSimple(
           model,
           {
@@ -332,6 +393,7 @@ export function createAdvisorExtension(
             messages: [{ role: "user", content: request.content, timestamp: started }],
           },
           {
+            ...speedOptions,
             ...(thinking === "off" ? {} : { reasoning: thinking }),
             signal,
             sessionId: cacheKey,
@@ -350,9 +412,15 @@ export function createAdvisorExtension(
           }
         }
         const result = await stream.result();
-        if (result.stopReason === "aborted") throw new Error("Advisor call was cancelled.");
+        const report = speed.report?.();
+        if (choice === current) lastSpeed = report;
+        const speedNote = report ? ` (${formatSpeed(report)})` : "";
+        if (result.stopReason === "aborted")
+          throw new Error(`Advisor call was cancelled.${speedNote}`);
         if (result.stopReason === "error") {
-          throw new Error(`Advisor ${label} failed: ${result.errorMessage ?? "unknown error"}`);
+          throw new Error(
+            `Advisor ${label} failed: ${result.errorMessage ?? "unknown error"}${speedNote}`,
+          );
         }
         promptCache = request.state;
         const advice = result.content
@@ -362,7 +430,7 @@ export function createAdvisorExtension(
           .trim();
         if (!advice) {
           throw new Error(
-            `Advisor ${label} returned no advice (stop reason ${result.stopReason}).`,
+            `Advisor ${label} returned no advice (stop reason ${result.stopReason}).${speedNote}`,
           );
         }
         const note =
@@ -377,6 +445,7 @@ export function createAdvisorExtension(
             usage: result.usage,
             durationMs: result.durationMs ?? Date.now() - started,
             stopReason: result.stopReason,
+            ...(report ? { speed: report } : {}),
           } satisfies AdvisorDetails,
           usage: result.usage,
         };
