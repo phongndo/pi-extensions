@@ -46,7 +46,8 @@
   "pi": {
     "extensions": [
       "./extensions/question/index.ts",
-      "./extensions/fast-mode/index.ts"
+      "./extensions/fast-mode/index.ts",
+      "./extensions/env-context/index.ts"
     ],
     "themes": [
       "./themes"
