@@ -111,7 +111,7 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.match(app.notifications.at(-1)!, /^fast off \(global\)/);
   await assert.rejects(stat(path), { code: "ENOENT" });
   await app.command("on");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast)");
   assert.equal(app.notifications.at(-1), "Fast mode on");
   const modified = (await stat(path)).mtimeMs;
   await app.command("on");
@@ -130,7 +130,7 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.equal((await stat(path)).mtimeMs, modified);
   app.ctx.model = model("gpt-future");
   await app.emit("model_select");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed ?");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (?)");
   app.ctx.model = model("gpt-5.4-mini");
   await app.emit("model_select");
   assert.match(app.statuses.get(FAST_MODE_STATUS_KEY)!, /unavailable/);
@@ -143,12 +143,12 @@ test("commands publish on/off/unsupported/unknown/error status, are idempotent, 
   assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), undefined);
   await app.command("");
   assert.equal(app.notifications.at(-1), "Fast mode on");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed unavailable");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (unavailable)");
   await app.command("");
   assert.equal(app.notifications.at(-1), "Fast mode off");
   await writeFile(path, "broken");
   await app.command("status");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed !");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (!)");
   await app.command("on");
   assert.equal(await readFile(path, "utf8"), "broken");
   await saveFastMode(false, path);
@@ -176,7 +176,7 @@ test("/ultrafast picks the fastest supported speed per model and shares state wi
   await app.emit("model_select");
   await app.ultrafast("on");
   assert.equal(app.notifications.at(-1), "Ultrafast mode on");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed ultrafast");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (ultrafast)");
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
     version: 1,
     enabled: true,
@@ -184,13 +184,13 @@ test("/ultrafast picks the fastest supported speed per model and shares state wi
   });
   app.ctx.model = terra;
   await app.emit("model_select");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast (no ultra)");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast, no ultra)");
   app.ctx.model = model();
   await app.emit("model_select");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast (ultra ?)");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast, ultra ?)");
   app.ctx.model = claude;
   await app.emit("model_select");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast (no ultra)");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast, no ultra)");
   await app.command("status");
   assert.match(app.notifications.at(-1)!, /^ultrafast on · Fast only for this model \(global\)/);
   assert.match(app.notifications.at(-1)!, /via Anthropic/);
@@ -219,7 +219,7 @@ test("RPC gets status too; two sessions update without prompts", async (t) => {
   await first.emit("session_start");
   await second.emit("session_start");
   await first.command("on");
-  await eventually(() => second.statuses.get(FAST_MODE_STATUS_KEY) === "speed fast");
+  await eventually(() => second.statuses.get(FAST_MODE_STATUS_KEY) === "speed (fast)");
   await second.command("off");
   await eventually(() => !first.statuses.has(FAST_MODE_STATUS_KEY));
 });
@@ -249,7 +249,7 @@ test("explicit capability refresh changes UI support without changing saved stat
   await app.emit("session_start");
   assert.deepEqual(app.notifications, [], "enabled startup stays quiet too");
   await app.command("refresh");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast)");
   assert.equal(app.notifications.at(-1), "Fast mode on");
   const count = calls;
   const authCount = authCalls;
@@ -323,7 +323,7 @@ test("real Pi loader publishes a minimal native footer status without patching t
       assert.ok(lines.every((line) => !line.includes("⚡") && visibleWidth(line) <= width));
     }
   }
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast)");
   assert.equal(FooterComponent.prototype.render, original);
   app.statuses.set("other", "other extension status");
   const beforeUpdate = app.statusUpdates;
@@ -334,9 +334,9 @@ test("real Pi loader publishes a minimal native footer status without patching t
   );
   assert.equal(app.statuses.has(FAST_MODE_STATUS_KEY), false);
   await saveFastMode(true, path);
-  await eventually(() => app.statuses.get(FAST_MODE_STATUS_KEY) === "speed fast");
+  await eventually(() => app.statuses.get(FAST_MODE_STATUS_KEY) === "speed (fast)");
   assert.equal(app.statuses.get("other"), "other extension status");
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast)");
   await invoke("session_shutdown");
   assert.equal(FooterComponent.prototype.render, original);
   await invoke("session_start");

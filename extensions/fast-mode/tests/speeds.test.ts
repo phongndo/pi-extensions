@@ -303,14 +303,14 @@ test("Ultrafast falls back to Fast where only Fast exists, and footers say so", 
     "ultrafast",
   );
   const state = { enabled: true, speed: "ultrafast" } as const;
-  assert.equal(formatFastFooterStatus(state, capability, terra), "speed fast (no ultra)");
-  assert.equal(formatFastFooterStatus(state, resolveFastCapability(sol), sol), "speed ultrafast");
+  assert.equal(formatFastFooterStatus(state, capability, terra), "speed (fast, no ultra)");
+  assert.equal(formatFastFooterStatus(state, resolveFastCapability(sol), sol), "speed (ultrafast)");
   const fallbacks = new FastFallbacks();
   fallbacks.block(sol, "ultrafast", "test");
   fallbacks.block(sol, "fast", "test");
   assert.equal(
     formatFastFooterStatus(state, resolveFastCapability(sol), sol, fallbacks),
-    "speed standard (fallback)",
+    "speed (standard, fallback)",
   );
 });
 

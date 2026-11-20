@@ -15,7 +15,7 @@ Fast mode **does not change models or reasoning effort, establish account entitl
 | `/fast status`           | Preference, per-model support, paused speeds, and the last request     |
 | `/fast refresh`          | Refresh capabilities and clear paused speeds without changing anything |
 
-The footer shows the speed the **current model** will get: `speed ultrafast`, `speed fast`, `speed fast (no ultra)` (Ultrafast chosen, model has only Fast), `speed fast (ultra ?)` (Ultrafast support unknown), `speed standard (fallback)` (provider refused or rate-limited it), `speed unavailable`, `speed ?`, or `speed !` (state error). It is hidden when off.
+The footer shows the speed the **current model** will get: `speed (ultrafast)`, `speed (fast)`, `speed (fast, no ultra)` (Ultrafast chosen, model has only Fast), `speed (fast, ultra ?)` (Ultrafast support unknown), `speed (standard, fallback)` (provider refused or rate-limited it), `speed (unavailable)`, `speed (?)`, or `speed (!)` (state error). It is hidden when off.
 
 ## Providers
 
@@ -72,7 +72,7 @@ For a trusted Codex-compatible proxy such as CLIProxyAPI, create `~/.pi/agent/fa
 }
 ```
 
-Provider, `openai-responses` API and normalized endpoint must match exactly. Routes load at session start/reload. Invalid configuration shows `speed !` and installs nothing. SDK embeddings may pass `proxyRoutes` to `createFastModeExtension`; an empty array disables opt-in.
+Provider, `openai-responses` API and normalized endpoint must match exactly. Routes load at session start/reload. Invalid configuration shows `speed (!)` and installs nothing. SDK embeddings may pass `proxyRoutes` to `createFastModeExtension`; an empty array disables opt-in.
 
 ## Diagnostics
 

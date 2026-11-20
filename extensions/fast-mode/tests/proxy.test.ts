@@ -164,7 +164,7 @@ test("opted-in proxy sends priority through real Responses serialization, follow
   );
   assert.equal(app.payloads.at(-1)?.service_tier, "priority");
   assert.deepEqual(app.payloads.at(-1)?.reasoning, { effort: "xhigh", summary: "auto" });
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed fast");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (fast)");
   await app.command("status");
   assert.match(app.notifications.at(-1)!, /proxy/i);
   assert.match(
@@ -270,7 +270,7 @@ test("without proxy opt-in, existing exclusion and unavailable UI remain", async
     await app.command("on");
     await completed(app.runtime.streamSimple(app.selected, { messages: [] }, app.options));
     assert.equal(app.payloads.at(-1)?.service_tier, undefined);
-    assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed unavailable");
+    assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (unavailable)");
   }
 });
 
@@ -306,7 +306,7 @@ test("proxy route changes take effect on session reload without changing the glo
   await app.emit("session_start");
   await app.command("status");
   assert.match(app.notifications.at(-1)!, /^fast on · unavailable for this model \(global\)/);
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed unavailable");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (unavailable)");
   await completed(app.runtime.streamSimple(app.selected, { messages: [] }, app.options));
   assert.equal(app.payloads.at(-1)?.service_tier, undefined);
 });
@@ -320,7 +320,7 @@ test("invalid route configuration reports a policy error without installing deco
   const original = app.runtime.streamSimple;
   await app.emit("session_start");
   assert.equal(app.runtime.streamSimple, original);
-  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed !");
+  assert.equal(app.statuses.get(FAST_MODE_STATUS_KEY), "speed (!)");
   assert.match(app.notifications.join("\n"), /proxy/i);
   assert.doesNotMatch(app.notifications.join("\n"), /secret/);
 });

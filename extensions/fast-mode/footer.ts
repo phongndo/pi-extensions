@@ -15,22 +15,22 @@ export function formatFastFooterStatus(
   model?: Model<Api>,
   fallbacks?: FastFallbacks,
 ): string | undefined {
-  if (state.error) return "speed !";
+  if (state.error) return "speed (!)";
   const preference = snapshotSpeed(state);
-  if (preference === undefined) return "speed ?";
+  if (preference === undefined) return "speed (?)";
   if (preference === "off") return undefined;
   const speed = effectiveSpeed(preference, capability, model, fallbacks);
-  if (speed === "ultrafast") return "speed ultrafast";
+  if (speed === "ultrafast") return "speed (ultrafast)";
   if (speed === "fast")
     return preference !== "ultrafast"
-      ? "speed fast"
+      ? "speed (fast)"
       : capability.ultrafast === "unknown"
-        ? "speed fast (ultra ?)"
-        : "speed fast (no ultra)";
+        ? "speed (fast, ultra ?)"
+        : "speed (fast, no ultra)";
   if (model && (fallbacks?.blocked(model, "fast") || fallbacks?.blocked(model, "ultrafast")))
-    return "speed standard (fallback)";
-  if (capability.status === "unknown" || capability.ultrafast === "unknown") return "speed ?";
-  return "speed unavailable";
+    return "speed (standard, fallback)";
+  if (capability.status === "unknown" || capability.ultrafast === "unknown") return "speed (?)";
+  return "speed (unavailable)";
 }
 
 export function formatFastStatus(state: FastStateSnapshot, capability: FastCapability): string {
