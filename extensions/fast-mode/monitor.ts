@@ -113,7 +113,12 @@ export class FastStateMonitor {
     }
   }
 
-  start(pollMs = 1000, tick?: () => void): void {
+  /**
+   * The directory watcher delivers changes immediately; polling only recovers a
+   * missed event or a watcher that could not attach, and refreshes time-based
+   * footer text, so it can run slowly.
+   */
+  start(pollMs = 5000, tick?: () => void): void {
     if (this.poll || this.closed) return;
     this.attachWatcher();
     this.poll = setInterval(() => {
