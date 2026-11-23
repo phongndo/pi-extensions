@@ -1,6 +1,6 @@
 # Pi Extensions
 
-[Question](extensions/question/README.md), [Fast Mode](extensions/fast-mode/README.md), [Advisor](extensions/advisor/README.md), and the `origin` theme for [Pi](https://github.com/earendil-works/pi).
+[Question](extensions/question/README.md), [Fast Mode](extensions/fast-mode/README.md), [Advisor](extensions/advisor/README.md), and themes for [Pi](https://github.com/earendil-works/pi).
 
 Requires Pi 0.85.1+ and Bun 1.4.2 (`nix develop` provides Bun).
 
@@ -15,7 +15,21 @@ Use `/fast` and `/advisor`. Run `/reload` after changes. Extension links above c
 
 For MCP, use [Pi's built-in support](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md) (Pi 0.99.0+); this package does not provide an MCP extension.
 
-Checks:
+## Themes
+
+Select `origin`, `github-dark-high-contrast`, `rex-static-noir`, or `rex-merino-light` in `/settings`. `github-dark-high-contrast` uses GitHub's Primer palette and leaves every background to the terminal. The Rex themes use the app's bundled sRGB palette, with small contrast adjustments for Pi's text roles. The terminal still draws the base background.
+
+To switch between Merino Light and Static Noir with the terminal's appearance, set this in `~/.pi/agent/settings.json`:
+
+```json
+{
+  "theme": "rex-merino-light/rex-static-noir"
+}
+```
+
+Run `/reload` to pick up the change.
+
+## Checks
 
 ```bash
 nix develop --command bun run check
