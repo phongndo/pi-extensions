@@ -1,0 +1,855 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 0ffc698..34031c9 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -58,6 +58,7 @@ node scripts/scenarios.ts --keep warm-turn    # one scenario; keeps its trace fi
+ - `src/subscription-env.ts`: the variables that would move the CLI off the subscription login, and the installation in use (`PI_CLAUDE_CLI_COMMAND`, `PI_CLAUDE_CLI_CONFIG_DIR`), for launches, the probes and the auth check.
+ - `src/tool-call-id.ts`: tool call ids Claude would reject, mapped to valid ones in what is sent and back. pi's stored ids never change.
+ - `src/thinking-config.ts`: pi thinking levels as CLI flags and live control requests.
++- `src/speed-config.ts`: fast mode. The launch payload pi's `onPayload` hook sees, the speed a hook asks for, the `--settings` flag, and the `serviceTiers` model metadata.
+ - `src/account-models.ts`, `src/model-probe.ts`: the model list. The first is pure and loaded at pi start: it joins the account's models with pi's catalogue and implements pi 1.x `refreshModels`. The second asks a short-lived CLI process for the account's models (`initialize`), and is loaded only when a refresh needs it.
+ - `src/provider-env.ts`: the four user settings (`PI_CLAUDE_CLI_COMMAND`, `_CONFIG_DIR`, `_ALLOW_USAGE_CREDITS`, `_TRACE`), resolved through pi's auth hooks (`ctx.env`) and laid over the process environment. Everything else is fixed in `src/provider-config.ts`; scenarios change it with `providerLayerWith(providerConfigLayerWith(...))`, never through the environment.
+ - `src/provider-config.ts`, `src/runtime-directory.ts`, `src/usage.ts`, `src/errors.ts`, `src/cli-requirements.ts`: configuration, the private temp directory, billing arithmetic, tagged errors, minimum CLI version.
+@@ -68,16 +69,16 @@ node scripts/scenarios.ts --keep warm-turn    # one scenario; keeps its trace fi
+ ## Invariants
+ 
+ 1. pi owns the prompt, active tools, complete tool results and compaction. A Claude process is a disposable cache of pi's history, never a second conversation ledger.
+-2. A warm process may continue only when its acknowledged pi-history prefix and launch signature match. Anything else retires it and imports pi's current history into a fresh process. Thinking and the tool list are not in the signature: they are applied to the live process (`applyThinking`, `applyTools`), and only a change the CLI does not take retires it.
++2. A warm process may continue only when its acknowledged pi-history prefix and launch signature match. Anything else retires it and imports pi's current history into a fresh process. Speed is in the signature (fast mode is a launch setting). Thinking and the tool list are not: they are applied to the live process (`applyThinking`, `applyTools`), and only a change the CLI does not take retires it.
+ 3. Tool calls reach pi as real toolCall blocks; the CLI waits for the matching pi result. The CLI has no native tools.
+ 4. Nothing is written to pi's status line or to conversation content except the model's own output. A pi message also gets the fields pi's own Anthropic provider sets (`responseId`, `rawStopReason`, the usage breakdown, `providerThinkingLevel`) one `diagnostics` entry, the subscription's latest limit status, and the `piClaudeCli` key, which holds the model's signed thinking as the API returned it. `diagnostics` stay content-free: pi's bug report collects them. Effect's console logger is replaced: logs are span events.
+ 5. CLI sessions do not persist. No transcript, no resume. Trace files are not a transcript: they hold ids, names, sizes, counts and durations, never prompt text, tool arguments or tool results (unless `PI_CLAUDE_CLI_TRACE_WIRE=raw` is set on purpose).
+-6. Preserve host/managed guards and official subscription authentication. Never extract OAuth tokens. Never forward a variable of `SUBSCRIPTION_OVERRIDE_ENV_VARS` (`src/subscription-env.ts`: API keys and tokens, `ANTHROPIC_BASE_URL`, other model providers' switches) to the CLI; the only base URL it gets is its own relay's. A model call charged to usage credits ends the episode unless the user allowed it.
++6. Preserve host/managed guards and official subscription authentication. Never extract OAuth tokens. Never forward a variable of `SUBSCRIPTION_OVERRIDE_ENV_VARS` (`src/subscription-env.ts`: API keys and tokens, `ANTHROPIC_BASE_URL`, other model providers' switches) to the CLI; the only base URL it gets is its own relay's. A model call charged to usage credits ends the episode unless the user allowed it; asking for fast mode allows it for that call.
+ 7. Report errors as assistant error events and aborts as aborted. Never return a raw string where pi expects an assistant message. Only `src/provider-runtime.ts` and `index.ts` end a pi stream.
+ 
+ ## Conventions
+ 
+-- Effect everywhere, including scripts, following `docs/coding-standards.md`. The exceptions are `index.ts` and what it imports eagerly (`account-models`, `cli-auth`, `cli-update`, `event-bridge`, `overflow`, `provider-env`, `signed-thinking`, `subscription-env`, `thinking-config`, `terminal-event`), which must not import Effect, and the stub CLI.
++- Effect everywhere, including scripts, following `docs/coding-standards.md`. The exceptions are `index.ts` and what it imports eagerly (`account-models`, `cli-auth`, `cli-update`, `event-bridge`, `overflow`, `provider-env`, `signed-thinking`, `speed-config`, `subscription-env`, `thinking-config`, `terminal-event`), which must not import Effect, and the stub CLI.
+ - Vite+ owns the tooling: `vite.config.ts` configures oxfmt, oxlint (type-aware, with type checking) and the tests. Import test APIs from `vite-plus/test`, never `vitest`. Develop with pnpm (`packageManager`), but keep the package installable by npm: pi installs git packages with the user's package manager, and npm refuses a `devEngines` package-manager requirement.
+ - Layers never fail. A failed layer build is remembered for the life of the runtime; record the failure in the service and report it per episode instead.
+ - Never await a `retire` on a path that ends pi's stream; use `pool.retireInBackground`.
+diff --git a/README.md b/README.md
+index 3e59234..92b552b 100644
+--- a/README.md
++++ b/README.md
+@@ -16,6 +16,8 @@ flowchart LR
+ 
+ A fork of [`agustinsacco/pi-claude-cli`](https://github.com/agustinsacco/pi-claude-cli), rewritten on Effect 4 with one execution path. It borrows ideas from pi's own [`pi-claude-code`](https://github.com/earendil-works/pi-claude-code).
+ 
++> **Patched** by [pi-extensions](https://github.com/phongndo/pi-extensions) (`patches/pi-claude-cli.patch`) to take a speed: see [Fast mode](#fast-mode).
++
+ ## Quick start
+ 
+ ```bash
+@@ -186,7 +188,18 @@ on(limit status says "usage credits")
+       stop the next call before the result is sent
+ ```
+ 
+-The charged call is already paid for; the guard stops pi's agent loop from making more. Anthropic refusing to serve a request on plan limits is reported the same way.
++The charged call is already paid for; the guard stops pi's agent loop from making more. Anthropic refusing to serve a request on plan limits is reported the same way. A [fast](#fast-mode) call whose payload consents to usage credits is exempt: fast mode is billed to them by design. The exemption ends when the API reports it served the call at standard speed (`usage.speed`), also when that status arrives after a tool handoff, so a fast request Claude Code fell back on is guarded like any standard call. A call with no reported speed is taken as fast; that is not confirmation it ran fast.
++
++## Fast mode
++
++Claude Code's [fast mode](https://code.claude.com/docs/en/fast-mode) runs the same model faster at a premium price. On a Claude subscription it is **always billed to usage credits**, from the first token and even with plan allowance left, and needs usage credits turned on at claude.ai.
++
++The provider has no HTTP request of its own, so its payload is the launch: before every call it passes `{ model }` to pi's `onPayload` hook (and so to `before_provider_request` handlers). A hook that returns `speed: "fast"` gets the CLI launched with `--settings '{"fastMode":true}'`; adding `usageCredits: "allow"` consents to the charge (see [Usage-credit guard](#usage-credit-guard)). pi-extensions' Fast Mode `/fast` sets both.
++
++- Only Fable 5.2, Opus 5.5 and Opus 5 take it. They advertise it as model metadata, `serviceTiers: [{ id: "fast" }]`; every other model advertises none and runs at standard speed whatever the hook asks.
++- Speed is part of the launch signature: a change retires the parked process and the next call imports pi's history into a fresh one. Fast and standard keep separate prompt caches anyway.
++- Claude Code still decides: a disabled organization or exhausted usage credits run at standard speed. The `episode` span records the speed asked for (`speed=fast`) and whether a usage-credit charge was let through as fast (`rateLimit.fastConsent`).
++- A hook that throws fails the call, as on any provider.
+ 
+ ## Configuration
+ 
+diff --git a/index.ts b/index.ts
+index 6780e2f..ed2c4c8 100644
+--- a/index.ts
++++ b/index.ts
+@@ -49,6 +49,7 @@ import { createEventBridge } from "./src/event-bridge.ts";
+ import { resolveProviderSettings } from "./src/provider-env.ts";
+ import { rewriteOverflowMessage } from "./src/overflow.ts";
+ import type { ProviderRuntime } from "./src/provider-runtime.ts";
++import { type ServiceTier, serviceTiers } from "./src/speed-config.ts";
+ import { endStreamWithError } from "./src/terminal-event.ts";
+ 
+ const PROVIDER_ID = "pi-claude-cli";
+@@ -57,12 +58,16 @@ const PROVIDER_ID = "pi-claude-cli";
+ const LOGIN_HINT =
+   "Claude Code manages its own login. Run `claude auth login` in a terminal; pi-claude-cli uses it automatically. `/pi-claude-cli-status` shows what it finds.";
+ 
+-/** One of the provider's models as pi's model list holds it. */
+-const piModel = (model: ProviderModel): Model<Api> => ({
++/**
++ * One of the provider's models as pi's model list holds it, with the speeds
++ * it offers as `serviceTiers` metadata for speed policies (`speed-config.ts`).
++ */
++const piModel = (model: ProviderModel): Model<Api> & { serviceTiers: ServiceTier[] } => ({
+   ...model,
+   api: PROVIDER_ID,
+   provider: PROVIDER_ID,
+   baseUrl: PROVIDER_ID,
++  serviceTiers: serviceTiers(model.id),
+ });
+ 
+ type StartEpisode = ProviderRuntime["startEpisode"];
+diff --git a/scripts/scenarios.ts b/scripts/scenarios.ts
+index 5695156..490d4db 100644
+--- a/scripts/scenarios.ts
++++ b/scripts/scenarios.ts
+@@ -270,6 +270,31 @@ const SCENARIOS: ReadonlyArray<Scenario> = [
+     ],
+     { env: { CLAUDE_STUB_IGNORE_TOOLS_CHANGED: "1" } },
+   ),
++  scenario(
++    "speed-change",
++    "a change of speed relaunches; the same speed reuses the process",
++    [
++      [...episode("mode=spawn", "spawnReason=signature.speed"), ...count(2)],
++      [...episode("mode=turn", "speed=fast", "outcome=done"), ...count(1)],
++      [...episode("speed=fast"), ...count(2)],
++      [...span("ClaudeProcess.retire", "cause=signature"), ...count(2)],
++      [...span("ClaudeCli.spawn"), ...count(3)],
++    ],
++    { env: { SCENARIO_MODEL: "claude-opus-5-5" } },
++  ),
++  scenario(
++    "speed-unsupported-model",
++    "fast asked of a model without fast mode runs at standard speed",
++    [[...episode("speed=standard", "outcome=done"), ...count(1)]],
++  ),
++  scenario(
++    "payload-hook-fails",
++    "a failing onPayload hook fails the call before any process is launched",
++    [
++      [...episode(), "--status", "error", ...count(1)],
++      [...span("ClaudeCli.spawn"), "--max-count", "0"],
++    ],
++  ),
+   scenario("foreign-provider", "a turn answered by another provider retires the process", [
+     [...episode("mode=spawn", "spawnReason=foreignProvider"), ...count(1)],
+     [...span("ClaudeProcess.retire", "cause=history"), ...count(1)],
+@@ -450,6 +475,60 @@ const SCENARIOS: ReadonlyArray<Scenario> = [
+     ],
+     { env: { PI_CLAUDE_CLI_ALLOW_USAGE_CREDITS: "1" } },
+   ),
++  scenario(
++    "usage-credits-fast",
++    "a fast call charged to usage credits ends normally: asking for fast mode is consent",
++    [
++      [
++        ...episode(
++          "outcome=done",
++          "speed=fast",
++          "rateLimit.usageCredits=true",
++          "rateLimit.fastConsent=true",
++        ),
++        ...count(1),
++      ],
++      [...span("ClaudeProcessPool.park"), ...count(1)],
++    ],
++    { env: { SCENARIO_MODEL: "claude-opus-5-5" } },
++  ),
++  scenario(
++    "usage-credits-fast-served-standard",
++    "a fast call the API served at standard speed keeps the usage-credit guard",
++    [
++      [
++        ...episode("outcome=error", "speed=fast", "rateLimit.fastConsent=false"),
++        "--status",
++        "error",
++        ...count(1),
++      ],
++      [...span("ClaudeProcessPool.park"), "--max-count", "0"],
++    ],
++    { env: { SCENARIO_MODEL: "claude-opus-5-5" } },
++  ),
++  scenario(
++    "usage-credits-fast-without-consent",
++    "a fast call whose hook did not consent to usage credits keeps the guard",
++    [
++      [
++        ...episode("outcome=error", "speed=fast", "rateLimit.fastConsent=false"),
++        "--status",
++        "error",
++        ...count(1),
++      ],
++    ],
++    { env: { SCENARIO_MODEL: "claude-opus-5-5" } },
++  ),
++  scenario(
++    "usage-credits-fast-served-standard-handoff",
++    "a standard-speed report before a handoff keeps the guard for the status after it",
++    [
++      [...episode("mode=spawn", "outcome=toolUse", "speed=fast"), ...count(1)],
++      [...episode("mode=handoff", "outcome=error", "rateLimit.fastConsent=false"), ...count(1)],
++      [...span("toolCall", "outcome=ok"), "--max-count", "0"],
++    ],
++    { env: { SCENARIO_MODEL: "claude-opus-5-5" } },
++  ),
+   scenario(
+     "usage-credits-after-handoff",
+     "a usage-credit charge reported after a tool call stops the next call before the tool result is sent",
+diff --git a/scripts/scenarios/driver.ts b/scripts/scenarios/driver.ts
+index 2b046ad..0b7659b 100644
+--- a/scripts/scenarios/driver.ts
++++ b/scripts/scenarios/driver.ts
+@@ -68,14 +68,21 @@ const tool = (name: string): Tool => ({
+ 
+ const builtinHaiku = getBuiltinModels("anthropic").find((model) => model.id === "claude-haiku-4-5");
+ 
+-/** The model as pi hands it to this provider. */
++/**
++ * The model as pi hands it to this provider: Haiku, or Haiku's settings
++ * under the id `SCENARIO_MODEL` names (the stub answers any model alike).
++ */
+ const scenarioModel = Effect.gen(function* () {
+   if (builtinHaiku === undefined)
+     return yield* new ScenarioExpectationFailed({
+       message: "pi-ai no longer lists claude-haiku-4-5",
+     });
++  const id = yield* Config.option(Config.String("SCENARIO_MODEL")).pipe(
++    Effect.orElseSucceed(() => Option.none<string>()),
++  );
+   const model: Model<Api> = {
+     ...builtinHaiku,
++    id: Option.getOrElse(id, () => builtinHaiku.id),
+     provider: "pi-claude-cli",
+     api: "pi-claude-cli",
+   };
+@@ -196,6 +203,20 @@ const expectError = (answer: AssistantMessage, reason: "error" | "aborted", text
+     `expected ${reason} mentioning "${text}", got ${answer.stopReason}: ${answer.errorMessage ?? textOf(answer)}`,
+   );
+ 
++/**
++ * A speed policy's `onPayload` hook asking for fast mode and consenting to
++ * its usage-credit charge, as `/fast` does (`src/speed-config.ts`).
++ */
++const FAST: EpisodeOptions = {
++  onPayload: (payload) => ({ ...(payload as object), speed: "fast", usageCredits: "allow" }),
++};
++/** A hook asking for fast mode without consenting to usage credits. */
++const FAST_WITHOUT_CONSENT: EpisodeOptions = {
++  onPayload: (payload) => ({ ...(payload as object), speed: "fast" }),
++};
++/** What a fast launch adds to the CLI's argv, as the stub records it. */
++const FAST_MODE_SETTINGS = JSON.stringify(JSON.stringify({ fastMode: true }));
++
+ // ---- scenarios -------------------------------------------------------------
+ 
+ const scenarioDirectory = Config.String("SCENARIO_TMP");
+@@ -491,6 +512,66 @@ const scenarios: Record<
+       yield* expectDone(yield* session.say("think harder", { reasoning: "high" }), "PORT-OK");
+     }),
+ 
++  "speed-change": (session) =>
++    Effect.gen(function* () {
++      yield* expectDone(yield* session.say("hello"), "PORT-OK");
++      yield* expectDone(yield* session.say("faster", FAST), "PORT-OK");
++      yield* expectDone(yield* session.say("still fast", FAST), "PORT-OK");
++      yield* expectDone(yield* session.say("slower"), "PORT-OK");
++      const launches = (yield* readStubFile("argv.jsonl"))
++        .trim()
++        .split("\n")
++        .map((line) => line.includes(FAST_MODE_SETTINGS));
++      yield* expect(
++        JSON.stringify(launches) === "[false,true,false]",
++        `expected only the second of three launches with fast mode, got ${JSON.stringify(launches)}`,
++      );
++    }),
++
++  "usage-credits-fast": (session) =>
++    Effect.gen(function* () {
++      yield* expectDone(yield* session.say("overage", FAST), "PORT-OK");
++    }),
++
++  "speed-unsupported-model": (session) =>
++    Effect.gen(function* () {
++      yield* expectDone(yield* session.say("faster", FAST), "PORT-OK");
++      yield* expect(
++        !(yield* readStubFile("argv.jsonl")).includes(FAST_MODE_SETTINGS),
++        "expected no fast-mode launch on a model without fast mode",
++      );
++    }),
++
++  "usage-credits-fast-served-standard": (session) =>
++    Effect.gen(function* () {
++      yield* expectError(yield* session.say("overage slowed", FAST), "error", "billing");
++      yield* Effect.sleep("200 millis");
++    }),
++
++  "usage-credits-fast-without-consent": (session) =>
++    Effect.gen(function* () {
++      yield* expectError(yield* session.say("overage", FAST_WITHOUT_CONSENT), "error", "billing");
++      yield* Effect.sleep("200 millis");
++    }),
++
++  "usage-credits-fast-served-standard-handoff": (session) =>
++    Effect.gen(function* () {
++      // The standard-speed report comes on the call's message_start; its
++      // limit status arrives after the handoff, on the next episode.
++      yield* expectToolCalls(yield* session.say("tool:read overage slowed", FAST), ["read"]);
++      yield* session.answerToolCalls("CONTENT");
++      yield* expectError(yield* session.call(FAST), "error", "billing");
++      yield* Effect.sleep("200 millis");
++    }),
++
++  "payload-hook-fails": (session) =>
++    Effect.gen(function* () {
++      const answer = yield* session.say("hello", {
++        onPayload: () => Promise.reject(new Error("STUB-HOOK-FAILED")),
++      });
++      yield* expectError(answer, "error", "STUB-HOOK-FAILED");
++    }),
++
+   "abort-mid-stream": (session) =>
+     Effect.gen(function* () {
+       const controller = new AbortController();
+diff --git a/src/claude-cli.ts b/src/claude-cli.ts
+index e5623dd..f1da298 100644
+--- a/src/claude-cli.ts
++++ b/src/claude-cli.ts
+@@ -35,6 +35,7 @@ import {
+   claudeConfigEnvironment,
+   SUBSCRIPTION_OVERRIDE_ENV_VARS,
+ } from "./subscription-env.ts";
++import { type CliSpeed, speedSpawnArgs } from "./speed-config.ts";
+ import { type CliThinking, thinkingSpawnArgs } from "./thinking-config.ts";
+ 
+ /** How long `claude --version` and `claude auth status` may take. */
+@@ -50,6 +51,8 @@ export interface ClaudeCliLaunch {
+   readonly cwd: string;
+   /** The thinking the process starts with; later turns may change it. */
+   readonly thinking: CliThinking;
++  /** Fast mode or not, for the life of the process. */
++  readonly speed: CliSpeed;
+   /** The process's stdin; ending the stream closes it. */
+   readonly stdin: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
+   /** The turn relay's route, as `ANTHROPIC_BASE_URL`; none talks to the API directly. */
+@@ -130,6 +133,7 @@ const launchArguments = (launch: ClaudeCliLaunch): ReadonlyArray<string> => [
+   "--system-prompt-file",
+   launch.systemPromptFile,
+   ...thinkingSpawnArgs(launch.thinking),
++  ...speedSpawnArgs(launch.speed),
+   "--mcp-config",
+   INBAND_MCP_CONFIG_JSON,
+ ];
+diff --git a/src/claude-process.ts b/src/claude-process.ts
+index 5a4e56a..f89495b 100644
+--- a/src/claude-process.ts
++++ b/src/claude-process.ts
+@@ -61,6 +61,7 @@ import {
+   mcpToolCallResponse,
+   mcpToolErrorResult,
+ } from "./mcp-inband.ts";
++import type { CliSpeed } from "./speed-config.ts";
+ import { type CliThinking, type ThinkingControl, thinkingControls } from "./thinking-config.ts";
+ import { isHandoffClaudeTool, mcpToolNameOfClaudeTool } from "./tool-mapping.ts";
+ import type { CliReplayFrame } from "./pi-context.ts";
+@@ -109,6 +110,11 @@ export type RetireCause =
+ export interface ReportedRateLimit {
+   readonly info: ClaudeRateLimitInfo;
+   readonly reportedAtMillis: number;
++  /**
++   * The speed the API reported serving the call this status is about
++   * (`usage.speed` on its `message_start`); none when it reported none.
++   */
++  readonly servedSpeed: Option.Option<string>;
+ }
+ 
+ /** What a process is launched with. */
+@@ -118,6 +124,8 @@ export interface ClaudeProcessLaunch {
+   readonly systemPromptFile: string;
+   readonly cwd: string;
+   readonly thinking: CliThinking;
++  /** Fast mode or not; part of the signature, so never changed in place. */
++  readonly speed: CliSpeed;
+   /** What a later call must match to reuse the process. */
+   readonly signature: LaunchSignature;
+   /** True holds a tool call open for pi; false denies it so the turn can be interrupted. */
+@@ -331,6 +339,8 @@ const startClaudeProcess = Effect.fnUntraced(function* (
+   const turnEnded = yield* Ref.make(yield* Deferred.make<void>());
+   const thinking = yield* Ref.make(launch.thinking);
+   const rateLimit = yield* Ref.make(Option.none<ReportedRateLimit>());
++  /** `usage.speed` of the latest API call's `message_start`, for its limit status. */
++  const servedSpeed = yield* Ref.make(Option.none<string>());
+   const tools = yield* Ref.make(launch.tools);
+   /** Completed by the next `tools/list` the CLI sends. */
+   const toolsRelisted = yield* Ref.make(Option.none<Deferred.Deferred<void>>());
+@@ -398,6 +408,7 @@ const startClaudeProcess = Effect.fnUntraced(function* (
+     systemPromptFile: launch.systemPromptFile,
+     cwd: launch.cwd,
+     thinking: launch.thinking,
++    speed: launch.speed,
+     stdin: Stream.fromQueue(outbound).pipe(Stream.encodeText),
+     baseUrl: Option.map(relay, (started) => started.baseUrl),
+   });
+@@ -531,6 +542,8 @@ const startClaudeProcess = Effect.fnUntraced(function* (
+         // Recorded here, not by the episode: the `tools/call` for a block
+         // can reach this reader before the episode has read the block.
+         const block = message.event.content_block;
++        if (message.event.type === "message_start")
++          yield* Ref.set(servedSpeed, Option.fromNullishOr(message.event.message?.usage?.speed));
+         if (
+           message.event.type === "content_block_start" &&
+           block?.type === "tool_use" &&
+@@ -554,15 +567,23 @@ const startClaudeProcess = Effect.fnUntraced(function* (
+         yield* endTurn;
+         yield* Queue.offer(inbox, message);
+         return yield* failExpectedToolCalls("the turn ended before pi delivered this result.");
+-      case "RateLimit":
++      case "RateLimit": {
++        // Stamped with the speed of the call it is about, so the episode
++        // that reads it, now or after a handoff, judges that call.
++        const served = yield* Ref.get(servedSpeed);
+         yield* Ref.set(
+           rateLimit,
+           Option.some({
+             info: message.info,
+             reportedAtMillis: yield* Clock.currentTimeMillis,
++            servedSpeed: served,
+           }),
+         );
+-        return yield* Queue.offer(inbox, message);
++        return yield* Queue.offer(inbox, {
++          ...message,
++          servedSpeed: Option.getOrUndefined(served),
++        });
++      }
+       case "AssistantMessage":
+       case "Other":
+         return yield* Queue.offer(inbox, message);
+diff --git a/src/cli-protocol.ts b/src/cli-protocol.ts
+index fd9f606..f2ff168 100644
+--- a/src/cli-protocol.ts
++++ b/src/cli-protocol.ts
+@@ -29,6 +29,8 @@ const ClaudeUsage = Schema.Struct({
+   output_tokens_details: Schema.optional(
+     Schema.NullOr(Schema.Struct({ thinking_tokens: TokenCount })),
+   ),
++  /** The speed the API served, `fast` or `standard`, when the request asked for one. */
++  speed: Schema.optional(Schema.NullOr(Schema.String)),
+ });
+ 
+ /** Token counts of one API call or one turn, as the Anthropic API names them. */
+@@ -248,6 +250,11 @@ export type CliMessage =
+       /** The subscription's limit status after an API call. */
+       readonly _tag: "RateLimit";
+       readonly info: ClaudeRateLimitInfo;
++      /**
++       * `usage.speed` of the call this status is about, stamped by the
++       * process reader (the CLI does not send it with the status).
++       */
++      readonly servedSpeed?: string;
+     }
+   | {
+       /**
+diff --git a/src/episode-mode.ts b/src/episode-mode.ts
+index 75e3baf..73be20d 100644
+--- a/src/episode-mode.ts
++++ b/src/episode-mode.ts
+@@ -9,6 +9,7 @@
+ 
+ import type { Message } from "@earendil-works/pi-ai";
+ import { Option } from "effect";
++import type { CliSpeed } from "./speed-config.ts";
+ 
+ /**
+  * Everything a process was launched with that a later call cannot change in
+@@ -21,6 +22,8 @@ export interface LaunchSignature {
+   readonly prompt: string;
+   readonly cwd: string;
+   readonly handoff: boolean;
++  /** Fast mode is a launch setting: a change of speed needs a fresh process. */
++  readonly speed: CliSpeed;
+ }
+ 
+ /** The pi history a process has acknowledged: a prefix length and its hash. */
+@@ -96,9 +99,13 @@ export const latestAssistantIsForeign = (messages: ReadonlyArray<Message>): bool
+   );
+ };
+ 
+-const SIGNATURE_KEYS = ["model", "prompt", "cwd", "handoff"] as const satisfies ReadonlyArray<
+-  keyof LaunchSignature
+->;
++const SIGNATURE_KEYS = [
++  "model",
++  "prompt",
++  "cwd",
++  "handoff",
++  "speed",
++] as const satisfies ReadonlyArray<keyof LaunchSignature>;
+ 
+ /** The first launch setting that differs, if any. */
+ export const firstSignatureDifference = (
+diff --git a/src/episode.ts b/src/episode.ts
+index 37e117d..a3657fe 100644
+--- a/src/episode.ts
++++ b/src/episode.ts
+@@ -43,6 +43,7 @@ import {
+   type EpisodeError,
+   InactivityTimeout,
+   ModelStopError,
++  PayloadHookError,
+   StreamMismatchError,
+   UsageCreditsChargeError,
+ } from "./errors.ts";
+@@ -57,6 +58,7 @@ import {
+ } from "./pi-context.ts";
+ import { ProviderConfig } from "./provider-config.ts";
+ import { RuntimeDirectory } from "./runtime-directory.ts";
++import { launchPayload, launchRequest, STANDARD_LAUNCH } from "./speed-config.ts";
+ import { providerThinkingLevel, resolveCliThinking } from "./thinking-config.ts";
+ import { isHandoffClaudeTool } from "./tool-mapping.ts";
+ import { recordSpanEvent } from "./tracing.ts";
+@@ -147,6 +149,26 @@ const resultErrorMessage = (result: ClaudeResultMessage): Option.Option<string>
+ const isToolResult = (message: Message): message is ToolResultMessage =>
+   message.role === "toolResult";
+ 
++/**
++ * The launch pi's `onPayload` hook asks for on this call's launch payload
++ * (`speed-config.ts`). A hook that throws fails the call, as it would on any
++ * other provider.
++ */
++const requestedLaunch = (model: Model<Api>, options: EpisodeOptions) => {
++  if (options.onPayload === undefined) return Effect.succeed(STANDARD_LAUNCH);
++  const payload = launchPayload(model.id);
++  return Effect.tryPromise({
++    try: async () => {
++      const next = await options.onPayload?.(payload, model);
++      return launchRequest(next === undefined ? payload : next, model.id);
++    },
++    catch: (cause) =>
++      new PayloadHookError({
++        message: cause instanceof Error && cause.message.length > 0 ? cause.message : String(cause),
++      }),
++  });
++};
++
+ /**
+  * Serve one pi model call.
+  *
+@@ -184,6 +206,7 @@ export const runEpisode = Effect.fn("episode", { root: true })(function* (input:
+     options.timeoutMs !== undefined && options.timeoutMs > 0
+       ? Duration.millis(options.timeoutMs)
+       : config.inactivityTimeout;
++  const { speed, usageCreditConsent } = yield* requestedLaunch(model, options);
+   const allowUsageCredits = usageCreditsAllowed({ ...providerEnv(), ...options.env });
+   const tools = mcpToolDefinitions(request.tools);
+   const signature: LaunchSignature = {
+@@ -191,10 +214,12 @@ export const runEpisode = Effect.fn("episode", { root: true })(function* (input:
+     prompt: request.systemPrompt,
+     cwd,
+     handoff: allowHandoff,
++    speed,
+   };
+   yield* Effect.annotateCurrentSpan({
+     piSession: Option.getOrElse(piSessionId, () => "none"),
+     model: model.id,
++    speed,
+     messages: messages.length,
+     tools: tools.length,
+     systemUpdates: request.systemUpdates.length,
+@@ -214,14 +239,23 @@ export const runEpisode = Effect.fn("episode", { root: true })(function* (input:
+   const checkRateLimit = Effect.fnUntraced(function* ({
+     info,
+     reportedAtMillis,
++    servedSpeed,
+   }: ReportedRateLimit) {
+     yield* Effect.sync(() => bridge.recordRateLimit(info, reportedAtMillis));
+     const charged = isChargedToUsageCredits(info);
++    // Fast mode on a subscription is billed to usage credits from its first
++    // token. A fast launch whose payload consented to that (`speed-config.ts`)
++    // lets the charge through, unless the API says it served the call at
++    // standard speed. Absent a reported speed, the request is taken as fast:
++    // that is not confirmation it ran fast. Standard calls keep the guard.
++    const fastConsent =
++      speed === "fast" && usageCreditConsent && !Option.contains(servedSpeed, "standard");
+     yield* Effect.annotateCurrentSpan({
+       "rateLimit.status": info.status ?? "unknown",
+       "rateLimit.usageCredits": charged,
++      "rateLimit.fastConsent": fastConsent,
+     });
+-    if (charged && !allowUsageCredits)
++    if (charged && !allowUsageCredits && !fastConsent)
+       return yield* new UsageCreditsChargeError({
+         message: usageCreditsChargeMessage(info),
+       });
+@@ -246,6 +280,7 @@ export const runEpisode = Effect.fn("episode", { root: true })(function* (input:
+         systemPromptFile,
+         cwd,
+         thinking,
++        speed,
+         signature,
+         allowHandoff,
+         tools,
+@@ -456,6 +491,8 @@ export const runEpisode = Effect.fn("episode", { root: true })(function* (input:
+           yield* checkRateLimit({
+             info: message.info,
+             reportedAtMillis: yield* Clock.currentTimeMillis,
++            // Stamped by the process reader with the speed the call was served at.
++            servedSpeed: Option.fromUndefinedOr(message.servedSpeed),
+           });
+           continue;
+         }
+diff --git a/src/errors.ts b/src/errors.ts
+index caa3e3e..9a0dff6 100644
+--- a/src/errors.ts
++++ b/src/errors.ts
+@@ -60,6 +60,11 @@ export class UsageCreditsChargeError extends Data.TaggedError("UsageCreditsCharg
+   readonly message: string;
+ }> {}
+ 
++/** pi's `onPayload` hook failed on the launch payload (`speed-config.ts`). */
++export class PayloadHookError extends Data.TaggedError("PayloadHookError")<{
++  readonly message: string;
++}> {}
++
+ /** The model stopped without an answer: a refusal or a safety stop. */
+ export class ModelStopError extends Data.TaggedError("ModelStopError")<{
+   /** The API's stop reason: `refusal`, `sensitive`. */
+@@ -98,6 +103,7 @@ export type EpisodeError =
+   | ProcessGone
+   | CliResultError
+   | UsageCreditsChargeError
++  | PayloadHookError
+   | ModelStopError
+   | StreamMismatchError
+   | InactivityTimeout;
+diff --git a/src/speed-config.ts b/src/speed-config.ts
+new file mode 100644
+index 0000000..7da3d07
+--- /dev/null
++++ b/src/speed-config.ts
+@@ -0,0 +1,94 @@
++/**
++ * Claude Code's fast mode, chosen per pi call through pi's `onPayload` hook.
++ *
++ * This provider sends no HTTP request of its own, so its "payload" is the
++ * launch it asks of the CLI: `{ model }`. pi passes it through its
++ * `onPayload` hook (and so `before_provider_request` handlers) before every
++ * call; a hook that returns `speed: "fast"` asks for fast mode, the field
++ * Anthropic's Messages API uses for the same thing. Every other field of the
++ * returned payload is ignored but one: `usageCredits: "allow"` beside
++ * `speed: "fast"` consents to fast mode's usage-credit charge, so the
++ * usage-credit guard lets that call through. A hook that sets only `speed`
++ * gets fast mode with the guard still on. (pi-extensions' Fast Mode sets
++ * both, because `/fast` is the user's consent.)
++ *
++ * Fast mode is a launch setting (`--settings '{"fastMode":true}'`, the form
++ * Claude Code documents for `-p`) and part of the launch signature, so a
++ * change of speed retires the parked process and the next call imports pi's
++ * history into a fresh one. Fast and standard requests keep separate prompt
++ * caches on Anthropic's side, so nothing is lost that a switch keeps.
++ *
++ * The models Claude Code documents fast mode for advertise it as model
++ * metadata, `serviceTiers: [{ id: "fast" }]`, the shape speed policies read;
++ * every other model advertises none, and asking for fast on it is standard.
++ * Claude Code still decides whether fast mode applies: a disabled
++ * organization or exhausted usage credits run at standard speed. On a
++ * subscription, fast mode is always billed to usage credits.
++ *
++ * Pure and free of Effect imports.
++ */
++
++/** The speed one pi call asks the CLI for. */
++export type CliSpeed = "standard" | "fast";
++
++/** What this provider passes to pi's `onPayload` hook. */
++export interface LaunchPayload {
++  readonly model: string;
++  readonly speed?: "fast";
++  readonly usageCredits?: "allow";
++}
++
++/** What one pi call asks of its CLI launch. */
++export interface LaunchRequest {
++  readonly speed: CliSpeed;
++  /** True when the call consented to fast mode's usage-credit charge. */
++  readonly usageCreditConsent: boolean;
++}
++
++/** A call no hook asked anything of. */
++export const STANDARD_LAUNCH: LaunchRequest = { speed: "standard", usageCreditConsent: false };
++
++/**
++ * Claude Code's fast-mode models (code.claude.com/docs/en/fast-mode). Opus
++ * 4.8 is left out: its fast mode is removed on 2026-11-30.
++ */
++const FAST_MODE_MODELS: ReadonlySet<string> = new Set([
++  "claude-fable-5-2",
++  "claude-opus-5-5",
++  "claude-opus-5",
++]);
++
++/** One speed a model offers beyond standard, as model metadata. */
++export interface ServiceTier {
++  readonly id: "fast";
++}
++
++/** The speeds `modelId` offers beyond standard: fast, or none. */
++export function serviceTiers(modelId: string): ServiceTier[] {
++  return FAST_MODE_MODELS.has(modelId) ? [{ id: "fast" }] : [];
++}
++
++/** The payload pi's hooks see for a call on `modelId`, before any hook ran. */
++export const launchPayload = (modelId: string): LaunchPayload => ({ model: modelId });
++
++const isRecord = (value: unknown): value is Record<string, unknown> =>
++  typeof value === "object" && value !== null && !Array.isArray(value);
++
++/**
++ * What a hook's result asks for on `modelId`: fast only for `speed: "fast"`
++ * on a model that offers it, and consent to its usage-credit charge only
++ * with `usageCredits: "allow"` on such a fast launch.
++ */
++export function launchRequest(payload: unknown, modelId: string): LaunchRequest {
++  if (!isRecord(payload) || payload["speed"] !== "fast" || serviceTiers(modelId).length === 0)
++    return STANDARD_LAUNCH;
++  return { speed: "fast", usageCreditConsent: payload["usageCredits"] === "allow" };
++}
++
++/**
++ * CLI flags for a spawn at `speed`. Standard adds nothing: the CLI reads no
++ * user settings (`--setting-sources ""`), so fast mode is off unless asked.
++ */
++export function speedSpawnArgs(speed: CliSpeed): string[] {
++  return speed === "fast" ? ["--settings", JSON.stringify({ fastMode: true })] : [];
++}
+diff --git a/tests/e2e/claude-stub.cjs b/tests/e2e/claude-stub.cjs
+index 72512cd..2f1a736 100755
+--- a/tests/e2e/claude-stub.cjs
++++ b/tests/e2e/claude-stub.cjs
+@@ -32,6 +32,9 @@
+  *                   CLI's own `assistant` envelope
+  *   overage         combined with any of the above: every API call's
+  *                   rate_limit_event says it was charged to usage credits
++ *   slowed          combined with any of the above: a process launched in
++ *                   fast mode reports `usage.speed: "standard"`, as the API
++ *                   does when it serves a fast request at standard speed
+  *
+  * Like the real CLI (2.1.299), every API message has an id, every content
+  * block is recorded in an `assistant` envelope before its
+@@ -216,7 +219,18 @@ let messageSeq = 0;
+ /** The id of the API message being streamed. */
+ let messageId;
+ /** The current turn's keywords that change what is streamed or reported. */
+-let turnFlags = { overage: false, mismatch: false, unicodeEscapes: false };
++let turnFlags = { overage: false, mismatch: false, unicodeEscapes: false, slowed: false };
++
++/** True when launched with `--settings '{"fastMode":true}'`, as the provider asks for fast. */
++const fastMode = (() => {
++  const index = args.indexOf("--settings");
++  if (index === -1) return false;
++  try {
++    return JSON.parse(args[index + 1]).fastMode === true;
++  } catch {
++    return false;
++  }
++})();
+ 
+ const messageStart = () => {
+   messageId = `msg_stub_${process.pid}_${++messageSeq}`;
+@@ -232,6 +246,8 @@ const messageStart = () => {
+           ephemeral_5m_input_tokens: 0,
+           ephemeral_1h_input_tokens: 7,
+         },
++        // The API reports the speed only when the request asked for one.
++        ...(fastMode ? { speed: turnFlags.slowed ? "standard" : "fast" } : {}),
+       },
+     },
+   });
+@@ -385,6 +401,7 @@ const startTurn = (text) => {
+     overage: text.includes("overage"),
+     mismatch: text.includes("mismatch"),
+     unicodeEscapes: text.includes("unicode-escapes"),
++    slowed: text.includes("slowed"),
+   };
+   const tool = /tools?:([A-Za-z0-9_.,-]+)/.exec(text);
+   if (tool) {
+diff --git a/tests/speed-config.test.ts b/tests/speed-config.test.ts
+new file mode 100644
+index 0000000..5a15e9b
+--- /dev/null
++++ b/tests/speed-config.test.ts
+@@ -0,0 +1,67 @@
++import { describe, expect, it } from "vite-plus/test";
++import {
++  launchPayload,
++  launchRequest,
++  serviceTiers,
++  speedSpawnArgs,
++  STANDARD_LAUNCH,
++} from "../src/speed-config";
++
++describe("the launch payload pi's onPayload hook sees", () => {
++  it("names the model and asks for no speed", () => {
++    expect(launchPayload("claude-opus-5-5")).toEqual({ model: "claude-opus-5-5" });
++  });
++
++  it("is fast only when a hook returns speed: fast", () => {
++    const opus = "claude-opus-5-5";
++    const fast = { speed: "fast", usageCreditConsent: false };
++    expect(launchRequest({ model: opus, speed: "fast" }, opus)).toEqual(fast);
++    expect(launchRequest({ model: opus }, opus)).toEqual(STANDARD_LAUNCH);
++    expect(launchRequest({ model: opus, speed: "ultrafast" }, opus)).toEqual(STANDARD_LAUNCH);
++    expect(launchRequest({ model: opus, speed: true }, opus)).toEqual(STANDARD_LAUNCH);
++    expect(launchRequest(undefined, opus)).toEqual(STANDARD_LAUNCH);
++    expect(launchRequest(["fast"], opus)).toEqual(STANDARD_LAUNCH);
++  });
++
++  it("consents to usage credits only on a fast launch that says so", () => {
++    const opus = "claude-opus-5-5";
++    expect(launchRequest({ speed: "fast", usageCredits: "allow" }, opus)).toEqual({
++      speed: "fast",
++      usageCreditConsent: true,
++    });
++    expect(launchRequest({ usageCredits: "allow" }, opus)).toEqual(STANDARD_LAUNCH);
++    expect(launchRequest({ speed: "fast", usageCredits: true }, opus).usageCreditConsent).toBe(
++      false,
++    );
++  });
++
++  it("is standard on a model without fast mode, whatever the hook asks", () => {
++    expect(launchRequest({ speed: "fast", usageCredits: "allow" }, "claude-haiku-4-5")).toEqual(
++      STANDARD_LAUNCH,
++    );
++  });
++});
++
++describe("the speeds a model advertises", () => {
++  it("offers fast on Claude Code's fast-mode models only", () => {
++    for (const id of ["claude-fable-5-2", "claude-opus-5-5", "claude-opus-5"])
++      expect(serviceTiers(id)).toEqual([{ id: "fast" }]);
++    for (const id of [
++      "claude-opus-4-8",
++      "claude-sonnet-5-5",
++      "claude-haiku-4-5",
++      "claude-opus-5-5-x",
++    ])
++      expect(serviceTiers(id)).toEqual([]);
++  });
++});
++
++describe("speed launch flags", () => {
++  it("turns fast mode on through the documented --settings form", () => {
++    expect(speedSpawnArgs("fast")).toEqual(["--settings", '{"fastMode":true}']);
++  });
++
++  it("adds nothing at standard speed", () => {
++    expect(speedSpawnArgs("standard")).toEqual([]);
++  });
++});
+diff --git a/vite.config.ts b/vite.config.ts
+index aed1707..4c8158a 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -41,6 +41,7 @@ export default defineConfig({
+         "src/provider-env.ts",
+         "src/relay-rewrite.ts",
+         "src/signed-thinking.ts",
++        "src/speed-config.ts",
+         "src/subscription-env.ts",
+         "src/thinking-config.ts",
+         "src/tool-call-id.ts",

@@ -3,7 +3,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 /** A speed actually sent on the wire; Off sends nothing. */
 export type AppliedSpeed = "fast" | "ultrafast";
 
-export type SpeedAdapterId = "codex" | "openai" | "anthropic" | "gateway" | "proxy";
+export type SpeedAdapterId = "codex" | "openai" | "anthropic" | "claude-cli" | "gateway" | "proxy";
 
 /** Anthropic needs this beta for Fast on models still in research preview. */
 export const ANTHROPIC_FAST_BETA = "fast-mode-2026-02-01";
@@ -80,6 +80,22 @@ const anthropicAdapter: SpeedAdapter = {
   fields: ["speed"],
   // The SDK sends payload `betas` as this header; a standard retry must not keep the Fast beta.
   headers: { "anthropic-beta": ANTHROPIC_FAST_BETA },
+  requested: (payload) => (typeof payload.speed === "string" ? payload.speed : "omitted"),
+  piServiceTier: () => undefined,
+};
+
+/**
+ * pi-claude-cli, patched by patches/pi-claude-cli.patch: its payload is the Claude Code
+ * launch, `{ model }`, and `speed: "fast"` launches the CLI with fast mode on.
+ * Claude Code applies it and handles its own Fast refusals, so no HTTP request is seen here.
+ */
+const claudeCliAdapter: SpeedAdapter = {
+  id: "claude-cli",
+  label: "Claude Code (pi-claude-cli)",
+  // `/fast` is the user's consent to Fast's usage-credit charge on a subscription; the
+  // provider's usage-credit guard lets only a call that says so through.
+  apply: (payload) => ({ ...payload, speed: "fast", usageCredits: "allow" }),
+  fields: ["speed", "usageCredits"],
   requested: (payload) => (typeof payload.speed === "string" ? payload.speed : "omitted"),
   piServiceTier: () => undefined,
 };
@@ -162,6 +178,7 @@ export const SPEED_ADAPTERS = {
   // The API resolves an omitted tier to the project's default, which may be Fast.
   openai: serviceTierAdapter("openai", "OpenAI", { service_tier: "default" }),
   anthropic: anthropicAdapter,
+  "claude-cli": claudeCliAdapter,
   gateway: gatewayAdapter,
 } as const satisfies Record<SpeedAdapterId, SpeedAdapter>;
 
@@ -188,6 +205,7 @@ export const NATIVE_SPEED_PROVIDERS = new Set([
   "openai-codex",
   "openai",
   "anthropic",
+  "pi-claude-cli",
   "vercel-ai-gateway",
 ]);
 
@@ -199,6 +217,9 @@ export function nativeAdapterFor(
   if (!model) return undefined;
   if (model.provider === "openai-codex" && model.api === "openai-codex-responses")
     return SPEED_ADAPTERS.codex;
+  // A local CLI provider: no endpoint to match, the provider and api name it.
+  if (model.provider === "pi-claude-cli" && model.api === "pi-claude-cli")
+    return SPEED_ADAPTERS["claude-cli"];
   const url = normalizedEndpoint(baseUrl);
   if (!url) return undefined;
   if (

@@ -64,7 +64,10 @@ const ANTHROPIC_FAST_MODELS = new Set([
  * https://code.claude.com/docs/en/fast-mode#switch-models-while-fast-mode-is-on
  */
 export function requiresAdvisorFastOptIn(model: Model<Api>): boolean {
-  return model.provider === "anthropic" && model.id === "claude-fable-5-2";
+  return (
+    (model.provider === "anthropic" || model.provider === "pi-claude-cli") &&
+    model.id === "claude-fable-5-2"
+  );
 }
 
 const CACHE_MS = 15 * 60_000;
@@ -220,7 +223,7 @@ export function resolveFastCapability(
       "unsupported",
       "unsupported",
       "none",
-      "Requires an official OpenAI, Codex, Anthropic or AI Gateway endpoint, or an opted-in Responses proxy route.",
+      "Requires an official OpenAI, Codex, Anthropic or AI Gateway endpoint, pi-claude-cli, or an opted-in Responses proxy route.",
     );
   }
   const metadata = capabilityFromMetadata(model, "model");
@@ -228,6 +231,14 @@ export function resolveFastCapability(
   switch (adapter.id) {
     case "anthropic":
       return resolveAnthropicCapability(model);
+    case "claude-cli":
+      // The patched provider advertises `serviceTiers` on every model (handled above).
+      return capability(
+        "unsupported",
+        "unsupported",
+        "none",
+        "This pi-claude-cli does not take a speed; run pi-extensions' patches/apply-pi-claude-cli.sh and /reload.",
+      );
     case "gateway":
       return resolveGatewayCapability(model, hasModel);
     case "proxy": {
