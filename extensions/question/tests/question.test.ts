@@ -48,9 +48,9 @@ test("registers a compact sequential question tool", () => {
   assert.equal(tool.label, "question");
   assert.equal(tool.executionMode, "sequential");
   assert.deepEqual(tool.promptGuidelines, [
-    "With the question tool, prefer one brief clarification over guessing at a consequential assumption, and batch related questions in one call. Do not use question for information discoverable with available tools or for trivial, low-impact choices.",
+    "Use question instead of guessing at a consequential choice; not for what tools can find or for trivial choices.",
   ]);
-  assert.match(tool.description, /do not ask those questions in prose/);
+  assert.match(tool.description, /instead of asking in prose/);
   assert.match(tool.description, /batch related questions/);
 });
 
@@ -65,7 +65,7 @@ test("keeps the provider-visible tool contract cache-stable", () => {
     executionMode: tool.executionMode,
   };
   const fingerprint = createHash("sha256").update(JSON.stringify(contract)).digest("hex");
-  assert.equal(fingerprint, "2058567d1c83a9d6d5337dabae14ae77b9cf5037cf215ce7ed2166f529966068");
+  assert.equal(fingerprint, "c8ab953b3b9120fec4514ddfa4213b948e884259d2d37beb645aa3cabc23f312");
 });
 
 test("number keys immediately select the matching native list item", () => {

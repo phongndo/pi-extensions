@@ -316,10 +316,10 @@ export default function questionExtension(pi: ExtensionAPI): void {
     name: "question",
     label: "question",
     description:
-      "Ask the user one to four brief, related questions and wait for answers. Use whenever user input about intent, scope, preferences, constraints, decisions, or tradeoffs is needed before continuing; do not ask those questions in prose. Supports free-text, single-choice, and multiple-choice questions; batch related questions in one call. Use two to four options normally (maximum six). The UI always allows a custom answer.",
+      "Ask the user 1-4 brief questions and wait for the answers. Use it for intent, scope, preference, or tradeoff decisions instead of asking in prose, and batch related questions in one call. The UI always allows a custom answer.",
     promptSnippet: "Ask the user brief clarifying questions and wait for the answers",
     promptGuidelines: [
-      "With the question tool, prefer one brief clarification over guessing at a consequential assumption, and batch related questions in one call. Do not use question for information discoverable with available tools or for trivial, low-impact choices.",
+      "Use question instead of guessing at a consequential choice; not for what tools can find or for trivial choices.",
     ],
     parameters: QuestionParameters,
     executionMode: "sequential",

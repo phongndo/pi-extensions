@@ -326,11 +326,7 @@ export function createAdvisorExtension(
         "Consult a stronger reviewer model. It takes no parameters: your full transcript, including every tool call and result, is forwarded automatically. Returns advice to weigh before continuing.",
       promptSnippet: "Consult a stronger reviewer model that sees your whole transcript",
       promptGuidelines: [
-        "Call advisor before substantive work: before writing or editing, committing to an interpretation, or building on an assumption. Orientation (finding files, reading sources, seeing what is there) comes first and does not need advisor.",
-        "Also call advisor when stuck (recurring errors, an approach that is not converging), when considering a change of approach, and before declaring a multi-step task done. Make the deliverable durable (write the file, save the result) before that final advisor call.",
-        "Skip advisor on short reactive tasks where the next action follows directly from tool output. On longer tasks, call advisor at least once before committing to an approach and once before finishing.",
-        "Give advisor's advice serious weight. If evidence you already hold contradicts it, do not silently switch: call advisor again and state the conflict.",
-        "Call advisor on its own, not alongside other tool calls in the same turn, so it sees every result.",
+        "On multi-step tasks, call advisor alone (no other tool calls in the turn) before committing to an approach, when stuck, and before finishing; weigh its advice, and call again stating the conflict if your evidence contradicts it.",
       ],
       parameters: Type.Object({}, { additionalProperties: false }),
       defaultActive: false,
