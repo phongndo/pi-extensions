@@ -559,3 +559,37 @@ test("cancels a pending RPC free-text prompt when the tool signal aborts", async
   assert.equal(result.content[0].text, '{"cancelled":true}');
   assert.equal(result.details.status, "cancelled");
 });
+
+test("the TUI dialog reports pi as blocked on a question without sending its text", async () => {
+  const { tool } = createHarness();
+  const calls: unknown[] = [];
+  const ctx = {
+    mode: "tui",
+    hasUI: true,
+    ui: {
+      custom: async (_factory: unknown, options: unknown) => {
+        calls.push(options);
+        return { database: ["SQLite"] } satisfies DialogAnswers;
+      },
+      notify: () => {},
+    },
+  } as unknown as ExtensionContext;
+  const result = await tool.execute(
+    "call-tui",
+    {
+      questions: [
+        {
+          id: "database",
+          question: "Which database should I use?",
+          options: [{ label: "PostgreSQL" }, { label: "SQLite" }],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.deepEqual(calls, [{ blocked: { kind: "question", message: "Waiting for your answer" } }]);
+  assert.equal(JSON.stringify(calls).includes("database"), false);
+  assert.deepEqual(result.details.answers, { database: ["SQLite"] });
+});

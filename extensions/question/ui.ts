@@ -613,6 +613,9 @@ export async function selectQuestionChoice(
   return selected === undefined ? undefined : displayed.indexOf(selected);
 }
 
+/** The program status the question dialog reports while it waits for an answer. */
+export const QUESTION_BLOCKED = { kind: "question", message: "Waiting for your answer" } as const;
+
 export async function showQuestionDialog(
   ctx: ExtensionContext,
   questions: DialogQuestion[],
@@ -630,5 +633,8 @@ export async function showQuestionDialog(
         (message) => ctx.ui.notify(message, "warning"),
         done,
       ),
+    // Report pi as waiting for the user (OSC 7501 program status) while the dialog is open.
+    // The message is generic: terminals and dashboards show it, so no question text is sent.
+    { blocked: QUESTION_BLOCKED },
   );
 }
