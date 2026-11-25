@@ -24,7 +24,7 @@ pi install git:github.com/dmmulroy/pi-claude-cli@802744c4426e9f4e7372e9fb9d962ba
 patches/apply-pi-claude-cli.sh   # pi's checkout by default, or pass a checkout path
 ```
 
-Then `/reload`. The script leaves an applied patch alone and never resets or cleans the checkout. A package update may restore the checkout: run it again afterwards. To move to a newer upstream, apply the patch there, fix conflicts, and regenerate it with `git diff` (new files included) in that checkout. The patch also carries its own stub scenarios and tests; run them with upstream's toolchain (`vp`, see its README).
+Then `/reload`. The script leaves an applied patch alone and never resets or cleans the checkout. A package update may restore the checkout: run it again afterwards. If it says the patch neither applies nor is applied, the checkout may be half restored (for example, tracked files reset but the patch's new `src/speed-config.ts` and `tests/speed-config.test.ts` left behind): inspect `git status` there and remove only those leftovers before running it again. To move to a newer upstream, apply the patch there, fix conflicts, and regenerate it with `git diff` (new files included) in that checkout. The patch also carries its own stub scenarios and tests; run them with upstream's toolchain (`vp`, see its README).
 
 On a Claude subscription Fast mode is billed to usage credits from the first token, even with plan allowance left.
 
