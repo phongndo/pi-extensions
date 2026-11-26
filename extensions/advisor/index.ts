@@ -39,8 +39,8 @@ import {
   saveAdvisorChoice,
   type AdvisorChoice,
 } from "./config.ts";
-import { AdvisorPicker, type PickerResult } from "./picker.ts";
-import { ADVISOR_SYSTEM_PROMPT, buildAdvisorRequest, type PromptCacheState } from "./prompt.ts";
+import type { PickerResult } from "./picker.ts";
+import type { PromptCacheState } from "./prompt.ts";
 
 export const ADVISOR_TOOL = "advisor";
 const STATUS_KEY = "advisor";
@@ -183,6 +183,8 @@ export function createAdvisorExtension(
 
     const openPicker = async (ctx: ExtensionCommandContext, initialSearch?: string) => {
       const current = choice;
+      // The picker and request builder load on first use, not at startup.
+      const { AdvisorPicker } = await import("./picker.ts");
       const result = await ctx.ui.custom<PickerResult | undefined>(
         (_tui, theme, _keybindings, done) =>
           new AdvisorPicker({
@@ -359,6 +361,7 @@ export function createAdvisorExtension(
           .update(`${ctx.sessionManager.getSessionId()}\0${modelRef(model)}`)
           .digest("hex")
           .slice(0, 32)}`;
+        const { ADVISOR_SYSTEM_PROMPT, buildAdvisorRequest } = await import("./prompt.ts");
         const request = buildAdvisorRequest({
           model,
           executorSystemPrompt: ctx.getSystemPrompt(),

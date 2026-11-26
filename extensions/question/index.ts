@@ -1,15 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import {
-  OTHER_CHOICE,
-  selectQuestionChoice,
-  showQuestionDialog,
-  showQuestionEditor,
-  type QuestionChoice,
-} from "./ui.ts";
+import { choiceAnswer, MAX_CUSTOM_ANSWER_LENGTH, OTHER_CHOICE } from "./answers.ts";
+import type { QuestionChoice } from "./ui.ts";
 
-import { choiceAnswer, MAX_CUSTOM_ANSWER_LENGTH } from "./answers.ts";
+// The dialog is only needed once the model asks; keep it out of startup.
+const loadUi = () => import("./ui.ts");
 const CUSTOM_CHOICE = "Type your own answer…";
 
 const OptionSchema = Type.Object(
@@ -178,7 +174,7 @@ async function promptForText(
 ): Promise<string | undefined> {
   while (true) {
     if (signal?.aborted) return undefined;
-    const answer = await showQuestionEditor(ctx, title, signal);
+    const answer = await (await loadUi()).showQuestionEditor(ctx, title, signal);
     if (answer === undefined || signal?.aborted) return undefined;
     const trimmed = answer.trim();
     if (!trimmed) {
@@ -208,12 +204,9 @@ async function promptSingleChoice(
     { label: CUSTOM_CHOICE },
   ];
   while (true) {
-    const selectedIndex = await selectQuestionChoice(
-      ctx,
-      titleFor(question, index, total),
-      choices,
-      signal,
-    );
+    const selectedIndex = await (
+      await loadUi()
+    ).selectQuestionChoice(ctx, titleFor(question, index, total), choices, signal);
     if (selectedIndex === undefined) return undefined;
     const option = question.options[selectedIndex];
     if (option) return choiceAnswer(question.options, new Set([option.label]));
@@ -244,12 +237,9 @@ async function promptMultipleChoice(
     const answerCount = selectedLabels.size + (customAnswer ? 1 : 0);
     choices.push({ label: answerCount > 0 ? `Done — ${answerCount} selected` : "Done" });
 
-    const selectedIndex = await selectQuestionChoice(
-      ctx,
-      titleFor(question, index, total),
-      choices,
-      signal,
-    );
+    const selectedIndex = await (
+      await loadUi()
+    ).selectQuestionChoice(ctx, titleFor(question, index, total), choices, signal);
     if (selectedIndex === undefined) return undefined;
 
     const customIndex = question.options.length;
@@ -285,7 +275,7 @@ export async function promptForAnswers(
   signal: AbortSignal | undefined,
 ): Promise<PromptResult> {
   if (ctx.mode === "tui") {
-    const answers = await showQuestionDialog(ctx, questions, signal);
+    const answers = await (await loadUi()).showQuestionDialog(ctx, questions, signal);
     return answers === undefined ? { cancelled: true, answers: {} } : { cancelled: false, answers };
   }
 
