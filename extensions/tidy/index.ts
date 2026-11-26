@@ -54,7 +54,14 @@ export function displayOptions(settings: NoticeSettings, ctx?: ExtensionContext)
     cacheMissNotices: notice("cacheMisses"),
     cacheWarmingNotices: notice("cacheWarming"),
     reasoningDropNotices: notice("reasoningDrops"),
-    cacheReadCost: (provider, model) => ctx?.modelRegistry.find(provider, model)?.cost.cacheRead,
+    cacheReadCost: (provider, model) => {
+      try {
+        return ctx?.modelRegistry.find(provider, model)?.cost.cacheRead;
+      } catch {
+        // A ctx gone stale after a reload or session switch: the next session_start replaces it.
+        return undefined;
+      }
+    },
   };
 }
 
@@ -95,8 +102,16 @@ export default async function tidy(pi: ExtensionAPI): Promise<void> {
   let config = await loadConfig();
   const index = new RowIndex();
   let current: ExtensionContext | undefined;
+  let settings: NoticeSettings = {};
   const timeline = new Timeline(
-    () => displayOptions(pi.getSettings() as NoticeSettings, current),
+    () => {
+      // Rows drawn after a reload or session switch can still reach this instance, whose pi is
+      // then stale and throws: keep drawing with the settings last read.
+      try {
+        settings = pi.getSettings() as NoticeSettings;
+      } catch {}
+      return displayOptions(settings, current);
+    },
     // Calls that stand apart (another renderer's rows, image reads) end a run of reads.
     (name, id) => EXPLORE.has(name) && !index.isApart(id),
   );
