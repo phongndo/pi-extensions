@@ -363,8 +363,13 @@ export class Timeline {
   /** The response that is streaming now, which the session gets once it ends. */
   setLive(message: MessageLike | undefined): void {
     const items = message ? itemsOfMessage(message, this.currentOptions()) : [];
-    if (message === this.live && signature(items) === signature(this.liveItems)) return;
+    const same =
+      message?.timestamp === this.live?.timestamp &&
+      (message === undefined) === (this.live === undefined) &&
+      signature(items) === signature(this.liveItems);
+    // Pi sends each update as a new object: the runs change only with the calls or the response.
     this.live = message;
+    if (same) return;
     this.liveItems = items;
     this.liveVersion++;
   }
