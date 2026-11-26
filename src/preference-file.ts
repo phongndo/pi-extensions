@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import lockfile from "proper-lockfile";
+
+// Loaded on first lock: proper-lockfile pulls in graceful-fs, which patches fs, and
+// most sessions never write a preference.
+type Lockfile = typeof import("proper-lockfile");
+let lockfileModule: Promise<Lockfile> | undefined;
+const loadLockfile = () =>
+  (lockfileModule ??= import("proper-lockfile").then(
+    (module) => (module as { default?: Lockfile }).default ?? module,
+  ));
 
 /** Serialize cooperating writers across processes, including before first creation.
  * Callers must use the supplied canonical path for both reads and writes.
@@ -17,6 +25,7 @@ export async function withPreferenceLock<T>(
   const canonical = join(await realpath(dirname(path)), basename(path));
   return withFileMutationQueue(canonical, async () => {
     let compromised: Error | undefined;
+    const lockfile = await loadLockfile();
     const release = await lockfile.lock(canonical, {
       realpath: false,
       stale: 300_000,
