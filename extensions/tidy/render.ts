@@ -763,6 +763,11 @@ export class CallView implements Component {
   private regions: Region[] = [];
   /** A run whose first call is still running, though others have results. */
   private waitingRun = false;
+  /**
+   * Pi repaints every row each frame. A block drawn only from Tidy's own text is a function of
+   * the width and its calls' inputs, so it is kept until one of them changes.
+   */
+  private drawn: { key: unknown[]; lines: string[]; waitingRun: boolean } | undefined;
 
   constructor(record: CallRecord, index: RowIndex, timeline: Timeline, theme: Theme) {
     this.record = record;
@@ -784,20 +789,34 @@ export class CallView implements Component {
         width,
         this.theme,
       );
-    let cell: Cell;
+    let run: CallRecord[] | undefined;
     if (EXPLORE.has(own.tool)) {
       const ids = this.timeline.segment(own.id) ?? [own.id];
       // The first call with a live row draws the run.
       const leader = leaderOf(ids, this.index);
       if (leader !== undefined && leader !== own.id) return [];
-      const run = ids.flatMap((id) => {
+      run = ids.flatMap((id) => {
         const record = id === own.id ? own : this.index.get(id);
         return record ? [record] : [];
       });
+    }
+    const key = drawKey(width, run ?? [own], this.theme);
+    const drawn = this.drawn;
+    if (drawn && sameKey(drawn.key, key)) {
+      this.waitingRun = drawn.waitingRun;
+      return drawn.lines;
+    }
+    let cell: Cell;
+    if (run) {
       this.waitingRun = !own.result && run.some((record) => record.result);
       cell = exploredCell(run, own.expanded, this.theme);
     } else cell = cellOf(own, this.theme);
-    return drawCell(cell, own.outputPad, own.expanded, width, this.theme, this.regions);
+    const lines = drawCell(cell, own.outputPad, own.expanded, width, this.theme, this.regions);
+    // Another renderer's component can change while every input stays the same: redraw it.
+    this.drawn = cell.body.every((part) => part instanceof Lines || part instanceof Fit)
+      ? { key, lines, waitingRun: this.waitingRun }
+      : undefined;
+    return lines;
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -822,10 +841,25 @@ export class CallView implements Component {
   }
 
   invalidate(): void {
+    this.drawn = undefined;
     this.record.memo?.clear();
     this.record.innerCall?.invalidate();
     this.record.innerResult?.invalidate();
   }
+}
+
+/** What a block's lines depend on: the width and, for each call drawn, its inputs. */
+function drawKey(width: number, run: readonly CallRecord[], theme: Theme): unknown[] {
+  const key: unknown[] = [width, run.length];
+  for (const record of run)
+    key.push(record, ...inputs(record, theme), record.outputPad, record.expandKey);
+  return key;
+}
+
+function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 /** A row's result slot. Live rows draw everything from the call slot; an export draws the body here. */
