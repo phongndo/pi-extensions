@@ -428,6 +428,39 @@ test("clicks in an expanded block reach another tool's own component, as its tar
   assert.equal(view.handleMouse!(click(7, 0)), undefined);
 });
 
+test("another renderer's component is redrawn only when its lines change", () => {
+  let lines = ["one"];
+  let clicks = 0;
+  const widget: Component = {
+    render: () => lines,
+    invalidate: () => {},
+    handleMouse: () => {
+      clicks++;
+      return { capture: true };
+    },
+  };
+  const call: Call = { id: "a", tool: "widget", args: {}, result: text("x") };
+  const renderers = createRenderers(
+    "widget",
+    { renderResult: () => widget },
+    new RowIndex(),
+    timelineOver([]),
+  );
+  const context = rowContext(call, true);
+  const view = renderers.renderCall!({}, theme, context);
+  renderers.renderResult!(call.result!, { expanded: true, isPartial: false }, theme, context);
+  const first = view.render(40);
+  // Same lines from the widget: the row keeps its lines, and clicks still reach the widget.
+  assert.equal(view.render(40), first);
+  assert.ok(view.handleMouse!(click(7, 1)));
+  assert.equal(clicks, 1);
+  lines = ["two"];
+  assert.deepEqual(
+    view.render(40).map((line) => stripAnsi(line)),
+    [" • Called widget()", "   └ two"],
+  );
+});
+
 test("a run whose first read is still running expands on click", () => {
   const entries = [assistant([toolCall("a"), toolCall("b")])];
   const index = new RowIndex();

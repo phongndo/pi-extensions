@@ -537,11 +537,21 @@ class Capped implements Component {
     this.more = more;
   }
 
+  private last: { drawn: string[]; lines: string[] } | undefined;
+
   render(width: number): string[] {
-    const lines = trimBlank(this.inner.render(width));
-    return lines.length <= this.max
-      ? lines
-      : [...lines.slice(0, this.max - 1), this.more(lines.length - this.max + 1)];
+    const drawn = this.inner.render(width);
+    // The same lines from `inner` give the same lines here, so a row can tell nothing changed.
+    if (this.last?.drawn === drawn) return this.last.lines;
+    const lines = trimBlank(drawn);
+    this.last = {
+      drawn,
+      lines:
+        lines.length <= this.max
+          ? lines
+          : [...lines.slice(0, this.max - 1), this.more(lines.length - this.max + 1)],
+    };
+    return this.last.lines;
   }
 
   invalidate(): void {
@@ -550,6 +560,13 @@ class Capped implements Component {
 }
 
 const BULLET_COLOR = { pending: "dim", ok: "success", error: "error" } as const;
+
+/** Lines another renderer's component drew, to tell on the next frame whether it changed. */
+interface Drawn {
+  part: Component;
+  width: number;
+  lines: string[];
+}
 
 interface Region {
   component: Component;
@@ -603,6 +620,7 @@ export function drawBody(
   theme: Theme,
   regions: Region[] = [],
   top = 0,
+  foreign: Drawn[] = [],
 ): string[] {
   const bodyWidth = width - pad - 4;
   if (bodyWidth < 1) return [];
@@ -610,6 +628,8 @@ export function drawBody(
   const lines: string[] = [];
   for (const part of cell.body) {
     const drawn = part.render(bodyWidth);
+    if (!(part instanceof Lines || part instanceof Fit))
+      foreign.push({ part, width: bodyWidth, lines: drawn });
     const start = lines.length;
     for (const line of drawn)
       lines.push(
@@ -629,10 +649,11 @@ export function drawCell(
   width: number,
   theme: Theme,
   regions: Region[] = [],
+  foreign: Drawn[] = [],
 ): string[] {
   const header = drawHeader(cell, pad, expanded, width, theme);
   if (header.length === 0) return [];
-  return [...header, ...drawBody(cell, pad, width, theme, regions, header.length)];
+  return [...header, ...drawBody(cell, pad, width, theme, regions, header.length, foreign)];
 }
 
 /**
@@ -767,7 +788,15 @@ export class CallView implements Component {
    * Pi repaints every row each frame. A block drawn only from Tidy's own text is a function of
    * the width and its calls' inputs, so it is kept until one of them changes.
    */
-  private drawn: { key: unknown[]; lines: string[]; waitingRun: boolean } | undefined;
+  private drawn:
+    | {
+        key: unknown[];
+        lines: string[];
+        waitingRun: boolean;
+        regions: Region[];
+        foreign: Drawn[];
+      }
+    | undefined;
 
   constructor(record: CallRecord, index: RowIndex, timeline: Timeline, theme: Theme) {
     this.record = record;
@@ -802,8 +831,15 @@ export class CallView implements Component {
     }
     const key = drawKey(width, run ?? [own], this.theme);
     const drawn = this.drawn;
-    if (drawn && sameKey(drawn.key, key)) {
+    // Another renderer's component can change while every input stays the same: such a row
+    // keeps its lines only while each of those components draws the very same lines again.
+    if (
+      drawn &&
+      sameKey(drawn.key, key) &&
+      drawn.foreign.every(({ part, width, lines }) => part.render(width) === lines)
+    ) {
       this.waitingRun = drawn.waitingRun;
+      this.regions = drawn.regions;
       return drawn.lines;
     }
     let cell: Cell;
@@ -811,11 +847,17 @@ export class CallView implements Component {
       this.waitingRun = !own.result && run.some((record) => record.result);
       cell = exploredCell(run, own.expanded, this.theme);
     } else cell = cellOf(own, this.theme);
-    const lines = drawCell(cell, own.outputPad, own.expanded, width, this.theme, this.regions);
-    // Another renderer's component can change while every input stays the same: redraw it.
-    this.drawn = cell.body.every((part) => part instanceof Lines || part instanceof Fit)
-      ? { key, lines, waitingRun: this.waitingRun }
-      : undefined;
+    const foreign: Drawn[] = [];
+    const lines = drawCell(
+      cell,
+      own.outputPad,
+      own.expanded,
+      width,
+      this.theme,
+      this.regions,
+      foreign,
+    );
+    this.drawn = { key, lines, waitingRun: this.waitingRun, regions: this.regions, foreign };
     return lines;
   }
 
@@ -918,10 +960,14 @@ class Indent implements Component {
     this.inner = inner;
   }
 
+  private last: { drawn: string[]; lines: string[] } | undefined;
+
   render(width: number): string[] {
-    const lines = this.inner.render(Math.max(1, width - 2)).map((line) => `  ${line}`);
-    this.height = lines.length;
-    return lines;
+    const drawn = this.inner.render(Math.max(1, width - 2));
+    // The same lines from `inner` give the same lines here, so a row can tell nothing changed.
+    if (this.last?.drawn !== drawn) this.last = { drawn, lines: drawn.map((line) => `  ${line}`) };
+    this.height = this.last.lines.length;
+    return this.last.lines;
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
