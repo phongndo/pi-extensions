@@ -1061,6 +1061,53 @@ test("another extension's result renderer for a built-in tool replaces Tidy's re
   assert.notEqual(own![1], "   └ custom diff view");
 });
 
+test("an expanded read's own result view that changes is drawn once a frame", () => {
+  let renders = 0;
+  const widget: Component = {
+    render: () => [`frame ${++renders}`],
+    invalidate: () => {},
+  };
+  const read = builtinRenderers("read")!;
+  const inner: ToolRenderers = { renderCall: read.renderCall, renderResult: () => widget };
+  const call: Call = { id: "a", tool: "read", args: { path: "a.ts" }, result: text("x") };
+  const timeline = timelineOver([assistant([toolCall("a")])]);
+  const renderers = createRenderers("read", inner, new RowIndex(), timeline);
+  const context = rowContext(call, true);
+  const view = renderers.renderCall!(call.args, theme, context);
+  renderers.renderResult!(call.result!, { expanded: true, isPartial: false }, theme, context);
+  for (let frame = 1; frame <= 3; frame++) {
+    const before = renders;
+    const lines = view.render(60).map((line) => stripAnsi(line));
+    assert.equal(renders - before, 1);
+    assert.ok(lines.some((line) => line.includes(`frame ${renders}`)));
+  }
+});
+
+test("a collapsed result view's line count names the current expand key", () => {
+  const widget = new Text(Array.from({ length: 9 }, (_, i) => `line ${i}`).join("\n"), 0, 0);
+  const call: Call = { id: "a", tool: "widget", args: {}, result: text("x") };
+  const renderers = createRenderers(
+    "widget",
+    { renderResult: () => widget },
+    new RowIndex(),
+    timelineOver([]),
+  );
+  const state = {};
+  const draw = (key: string) => {
+    const context = { ...rowContext(call, false, state), keyText: () => key } as RenderContext;
+    const view = renderers.renderCall!({}, theme, context);
+    renderers.renderResult!(call.result!, { expanded: false, isPartial: false }, theme, context);
+    return view
+      .render(60)
+      .map((line) => stripAnsi(line))
+      .join("\n");
+  };
+  assert.match(draw("ctrl+o"), /click or ctrl\+o/);
+  const now = draw("ctrl+e");
+  assert.match(now, /click or ctrl\+e/);
+  assert.doesNotMatch(now, /ctrl\+o/);
+});
+
 test("argument keys with line breaks stay on one line", () => {
   assert.equal(summarizeArgs({ "a\nb": 1, c: 2 }), "a\\nb: 1, c: 2");
 });

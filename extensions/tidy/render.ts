@@ -265,7 +265,7 @@ export function exploredCell(
     const head = `${theme.fg("toolTitle", line.verb)} `;
     rows.push(new Fit(head, theme.fg("muted", line.target), tail));
     if (expanded && record.customResult && record.innerResult)
-      rows.push(new Indent(record.innerResult));
+      rows.push(indentOf(record.innerResult));
     else if (expanded) {
       const lines = memo(record, "details", inputs(record, theme), () => details(record, theme));
       if (lines.length > 0)
@@ -537,21 +537,29 @@ class Capped implements Component {
     this.more = more;
   }
 
-  private last: { drawn: string[]; lines: string[] } | undefined;
+  private last: { drawn: string[]; lines: string[]; hidden: number; hint?: string } | undefined;
 
   render(width: number): string[] {
     const drawn = this.inner.render(width);
     // The same lines from `inner` give the same lines here, so a row can tell nothing changed.
-    if (this.last && sameLines(this.last.drawn, drawn)) return this.last.lines;
-    const lines = trimBlank(drawn);
-    this.last = {
-      drawn: [...drawn],
-      lines:
-        lines.length <= this.max
-          ? lines
-          : [...lines.slice(0, this.max - 1), this.more(lines.length - this.max + 1)],
-    };
-    return this.last.lines;
+    if (!this.last || !sameLines(this.last.drawn, drawn)) {
+      const lines = trimBlank(drawn);
+      const hidden = lines.length > this.max ? lines.length - this.max + 1 : 0;
+      this.last = {
+        drawn: [...drawn],
+        lines: hidden ? lines.slice(0, this.max - 1) : lines,
+        hidden,
+      };
+    }
+    const last = this.last;
+    if (last.hidden === 0) return last.lines;
+    // The count names the expand key, which can change while `inner` draws the same lines.
+    const hint = this.more(last.hidden);
+    if (hint !== last.hint) {
+      last.lines = [...last.lines.slice(0, this.max - 1), hint];
+      last.hint = hint;
+    }
+    return last.lines;
   }
 
   invalidate(): void {
@@ -960,6 +968,14 @@ function leaderOf(ids: string[], index: RowIndex): string | undefined {
 
 /** Tools whose results this extension draws itself, unless another extension renders them. */
 const OWN_RESULTS = new Set(["bash", "powershell", "read", "edit", "write", "grep", "find", "ls"]);
+
+/** One `Indent` per component, so a row redrawn around it finds what it drew this frame. */
+const indents = new WeakMap<Component, Indent>();
+function indentOf(inner: Component): Indent {
+  let indent = indents.get(inner);
+  if (!indent) indents.set(inner, (indent = new Indent(inner)));
+  return indent;
+}
 
 /** `inner`, two columns in; clicks reach it. */
 class Indent implements Component {
