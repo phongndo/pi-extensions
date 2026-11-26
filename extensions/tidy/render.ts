@@ -13,7 +13,7 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { builtinRenderers, customResult, sameRenderer } from "./builtins.ts";
-import { clip, Fit, Lines } from "./frame.ts";
+import { clip, Fit, Lines, sameLines } from "./frame.ts";
 import {
   contentLines,
   countMatches,
@@ -542,10 +542,10 @@ class Capped implements Component {
   render(width: number): string[] {
     const drawn = this.inner.render(width);
     // The same lines from `inner` give the same lines here, so a row can tell nothing changed.
-    if (this.last?.drawn === drawn) return this.last.lines;
+    if (this.last && sameLines(this.last.drawn, drawn)) return this.last.lines;
     const lines = trimBlank(drawn);
     this.last = {
-      drawn,
+      drawn: [...drawn],
       lines:
         lines.length <= this.max
           ? lines
@@ -565,8 +565,12 @@ const BULLET_COLOR = { pending: "dim", ok: "success", error: "error" } as const;
 interface Drawn {
   part: Component;
   width: number;
+  /** A copy: the component may change its own array in place. */
   lines: string[];
 }
+
+/** Lines components drew earlier in this frame: draw each only once per frame. */
+type Fresh = Map<Component, { width: number; lines: string[] }>;
 
 interface Region {
   component: Component;
@@ -621,15 +625,17 @@ export function drawBody(
   regions: Region[] = [],
   top = 0,
   foreign: Drawn[] = [],
+  fresh?: Fresh,
 ): string[] {
   const bodyWidth = width - pad - 4;
   if (bodyWidth < 1) return [];
   const left = " ".repeat(pad);
   const lines: string[] = [];
   for (const part of cell.body) {
-    const drawn = part.render(bodyWidth);
+    const earlier = fresh?.get(part);
+    const drawn = earlier?.width === bodyWidth ? earlier.lines : part.render(bodyWidth);
     if (!(part instanceof Lines || part instanceof Fit))
-      foreign.push({ part, width: bodyWidth, lines: drawn });
+      foreign.push({ part, width: bodyWidth, lines: [...drawn] });
     const start = lines.length;
     for (const line of drawn)
       lines.push(
@@ -650,10 +656,11 @@ export function drawCell(
   theme: Theme,
   regions: Region[] = [],
   foreign: Drawn[] = [],
+  fresh?: Fresh,
 ): string[] {
   const header = drawHeader(cell, pad, expanded, width, theme);
   if (header.length === 0) return [];
-  return [...header, ...drawBody(cell, pad, width, theme, regions, header.length, foreign)];
+  return [...header, ...drawBody(cell, pad, width, theme, regions, header.length, foreign, fresh)];
 }
 
 /**
@@ -832,12 +839,14 @@ export class CallView implements Component {
     const key = drawKey(width, run ?? [own], this.theme);
     const drawn = this.drawn;
     // Another renderer's component can change while every input stays the same: such a row
-    // keeps its lines only while each of those components draws the very same lines again.
-    if (
-      drawn &&
-      sameKey(drawn.key, key) &&
-      drawn.foreign.every(({ part, width, lines }) => part.render(width) === lines)
-    ) {
+    // keeps its lines only while each of those components draws the same lines again.
+    const fresh: Fresh = new Map();
+    const unchanged = ({ part, width, lines }: Drawn) => {
+      const now = part.render(width);
+      fresh.set(part, { width, lines: now });
+      return sameLines(now, lines);
+    };
+    if (drawn && sameKey(drawn.key, key) && drawn.foreign.every(unchanged)) {
       this.waitingRun = drawn.waitingRun;
       this.regions = drawn.regions;
       return drawn.lines;
@@ -856,6 +865,7 @@ export class CallView implements Component {
       this.theme,
       this.regions,
       foreign,
+      fresh,
     );
     this.drawn = { key, lines, waitingRun: this.waitingRun, regions: this.regions, foreign };
     return lines;
@@ -965,7 +975,8 @@ class Indent implements Component {
   render(width: number): string[] {
     const drawn = this.inner.render(Math.max(1, width - 2));
     // The same lines from `inner` give the same lines here, so a row can tell nothing changed.
-    if (this.last?.drawn !== drawn) this.last = { drawn, lines: drawn.map((line) => `  ${line}`) };
+    if (!this.last || !sameLines(this.last.drawn, drawn))
+      this.last = { drawn: [...drawn], lines: drawn.map((line) => `  ${line}`) };
     this.height = this.last.lines.length;
     return this.last.lines;
   }

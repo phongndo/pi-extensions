@@ -7,8 +7,25 @@ import {
 
 export function clip(line: string, width: number): string {
   const w = Math.max(1, width);
-  // Most lines fit, and measuring a styled line is much cheaper than walking its graphemes.
-  return visibleWidth(line) <= w ? line : clipToWidth(line, w, "…");
+  // Most lines fit, and measuring a styled line is much cheaper than walking its graphemes. Only
+  // for characters that never join a grapheme: `visibleWidth` measures with escapes removed, so it
+  // can join what truncation, which steps around escapes, keeps apart.
+  return SIMPLE.test(line) && visibleWidth(line) <= w ? line : clipToWidth(line, w, "…");
+}
+
+/**
+ * Escapes, then printable ASCII, Latin, punctuation, arrows, math, box drawing, shapes and
+ * dingbats: characters that are each one grapheme whatever surrounds them.
+ */
+const SIMPLE =
+  // oxlint-disable-next-line no-control-regex
+  /^[\u0007\u001b\u0020-\u007e\u00a0-\u024f\u2010-\u2027\u2030-\u205e\u2190-\u22ff\u2500-\u25ff\u2700-\u27bf]*$/;
+
+/** The same lines, compared by content: a component may hand back one array it changed in place. */
+export function sameLines(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 /**

@@ -255,8 +255,14 @@ export function segmentsOf(
   return segments;
 }
 
-const signature = (items: readonly Item[]) =>
-  items.map((item) => (item.kind === "tool" ? item.id : "|")).join(" ");
+/** Items equal for grouping: the same breaks and calls, each with the same name. */
+const sameItems = (a: readonly Item[], b: readonly Item[]) =>
+  a.length === b.length &&
+  a.every((item, i) => {
+    const other = b[i]!;
+    if (item.kind === "break" || other.kind === "break") return item.kind === other.kind;
+    return item.id === other.id && item.name === other.name;
+  });
 
 const optionsKey = (options: DisplayOptions) =>
   [
@@ -366,7 +372,7 @@ export class Timeline {
     const same =
       message?.timestamp === this.live?.timestamp &&
       (message === undefined) === (this.live === undefined) &&
-      signature(items) === signature(this.liveItems);
+      sameItems(items, this.liveItems);
     // Pi sends each update as a new object: the runs change only with the calls or the response.
     this.live = message;
     if (same) return;

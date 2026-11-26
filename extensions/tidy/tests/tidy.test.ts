@@ -11,7 +11,14 @@ import {
   type Theme,
   type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { Text, visibleWidth, type Component, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import {
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  type Component,
+  type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
+import { clip } from "../frame.ts";
 import { DEFAULT_CONFIG, loadConfig, normalizeConfig } from "../config.ts";
 import { builtinRenderers, ownsItsRow } from "../builtins.ts";
 import { displayOptions, markUserPrompt, standApart } from "../index.ts";
@@ -461,6 +468,48 @@ test("another renderer's component is redrawn only when its lines change", () =>
   );
 });
 
+for (const expanded of [true, false])
+  test(`another renderer's ${expanded ? "expanded" : "collapsed"} component that changes its lines in place is redrawn, once a frame`, () => {
+    const lines = ["one"];
+    let renders = 0;
+    const widget: Component = {
+      render: () => {
+        renders++;
+        return lines;
+      },
+      invalidate: () => {},
+    };
+    const call: Call = { id: "a", tool: "widget", args: {}, result: text("x") };
+    const renderers = createRenderers(
+      "widget",
+      { renderResult: () => widget },
+      new RowIndex(),
+      timelineOver([]),
+    );
+    const context = rowContext(call, expanded);
+    const view = renderers.renderCall!({}, theme, context);
+    renderers.renderResult!(call.result!, { expanded, isPartial: false }, theme, context);
+    view.render(40);
+    view.render(40);
+    lines[0] = "two";
+    renders = 0;
+    assert.deepEqual(
+      view.render(40).map((line) => stripAnsi(line)),
+      [" • Called widget()", "   └ two"],
+    );
+    assert.equal(renders, 1);
+  });
+
+test("clipping matches Pi's truncation, even around escapes inside a grapheme", () => {
+  for (const [line, width] of [
+    ["\u{1F469}\x1b[31m\u200d\u{1F469}", 2],
+    ["e\x1b]8;;x\x07\u{1F3FD}", 2],
+    ["\x1b[1mbold\x1b[22m text", 9],
+    ["plain", 5],
+  ] as const)
+    assert.equal(clip(line, width), truncateToWidth(line, width, "\u2026"));
+});
+
 test("a run whose first read is still running expands on click", () => {
   const entries = [assistant([toolCall("a"), toolCall("b")])];
   const index = new RowIndex();
@@ -592,6 +641,20 @@ test("a streaming response joins the run until the session saves it, and leaving
   assert.deepEqual(timeline.segment("c"), ["a", "b", "c"]);
   timeline.clearLive();
   assert.equal(timeline.segment("c"), undefined);
+});
+
+test("a streamed update regroups when a call gains its name, but not when only text grows", () => {
+  const timeline = timelineOver([user("go"), assistant([toolCall("a")], 1)]);
+  const update = (name: string) =>
+    timeline.setLive({ role: "assistant", content: [toolCall("b", name)], timestamp: 2 });
+  update("");
+  assert.equal(timeline.segment("b"), undefined);
+  update("read");
+  assert.deepEqual(timeline.segment("b"), ["a", "b"]);
+  const runs = timeline.segment("a");
+  // A new object for the same response and calls keeps the runs already found.
+  update("read");
+  assert.equal(timeline.segment("a"), runs);
 });
 
 test("an export draws each row alone and leaves the live row untouched", () => {
