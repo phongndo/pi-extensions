@@ -5,7 +5,11 @@ import {
   type Component,
 } from "@earendil-works/pi-tui";
 
-export const clip = (line: string, width: number) => clipToWidth(line, Math.max(1, width), "…");
+export function clip(line: string, width: number): string {
+  const w = Math.max(1, width);
+  // Most lines fit, and measuring a styled line is much cheaper than walking its graphemes.
+  return visibleWidth(line) <= w ? line : clipToWidth(line, w, "…");
+}
 
 /**
  * Styled lines. Clipped lines keep one screen row each, so a collapsed row's height is known;
