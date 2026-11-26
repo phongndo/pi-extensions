@@ -20,10 +20,14 @@ export function describeGitStatus(porcelain: string): string {
 
 async function gitSummary(cwd: string): Promise<string> {
   try {
-    const { stdout } = await run("git", ["-C", cwd, "status", "--porcelain=v2", "--branch"], {
-      timeout: 2000,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const { stdout } = await run(
+      "git",
+      ["--no-optional-locks", "-C", cwd, "status", "--porcelain=v2", "--branch"],
+      {
+        timeout: 2000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
     return `git: ${describeGitStatus(stdout)}`;
   } catch {
     return "git: not a repository";
@@ -47,8 +51,9 @@ export async function describeEnvironment(cwd: string): Promise<string> {
  */
 export default function envContext(pi: ExtensionAPI): void {
   let cached: { cwd: string; text: Promise<string> } | undefined;
-  pi.on("session_start", () => {
-    cached = undefined;
+  // Start git at session start so the first prompt does not wait for it.
+  pi.on("session_start", (_event, ctx) => {
+    cached = { cwd: ctx.cwd, text: describeEnvironment(ctx.cwd) };
   });
   pi.on("before_agent_start", async (event) => {
     const options = event.systemPromptOptions;
