@@ -1,8 +1,8 @@
 # Pi Extensions
 
-[Question](extensions/question/README.md), [Fast Mode](extensions/fast-mode/README.md), [Advisor](extensions/advisor/README.md), and themes for [Pi](https://github.com/earendil-works/pi).
+[Question](extensions/question/README.md), [Fast Mode](extensions/fast-mode/README.md), [Advisor](extensions/advisor/README.md), [Tidy](extensions/tidy/README.md), and themes for [Pi](https://github.com/earendil-works/pi).
 
-Requires Pi 0.85.1+ and Bun 1.4.2 (`nix develop` provides Bun).
+Requires Pi 0.85.1+ and Bun 1.4.2 (`nix develop` provides Bun). Tidy is built against Pi 1.5.2 and tested on 1.6.1; Pi before 1.0.1 has no tool renderers, so there Tidy leaves tool rows alone.
 
 ```bash
 git clone https://github.com/phongndo/pi-extensions.git
@@ -11,7 +11,7 @@ bun install --frozen-lockfile
 pi install "$PWD"
 ```
 
-Use `/fast` and `/advisor`. Run `/reload` after changes. Extension links above cover configuration.
+Use `/fast`, `/advisor` and `/tidy`. Run `/reload` after changes. Extension links above cover configuration.
 
 For MCP, use [Pi's built-in support](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md) (Pi 0.99.0+); this package does not provide an MCP extension.
 

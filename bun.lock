@@ -82,6 +82,22 @@
         "typebox": "*",
       },
     },
+    "extensions/tidy": {
+      "name": "pi-tidy",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@earendil-works/pi-coding-agent": "1.5.2",
+        "@earendil-works/pi-tui": "1.5.2",
+        "@types/node": "^24.12.4",
+        "oxfmt": "0.61.0",
+        "oxlint": "1.76.0",
+        "typescript": "5.9.3",
+      },
+      "peerDependencies": {
+        "@earendil-works/pi-coding-agent": ">=1.5.2",
+        "@earendil-works/pi-tui": ">=1.5.2",
+      },
+    },
   },
   "trustedDependencies": [
     "@google/genai",
@@ -371,6 +387,8 @@
     "pi-fast-mode": ["pi-fast-mode@workspace:extensions/fast-mode"],
 
     "pi-question": ["pi-question@workspace:extensions/question"],
+
+    "pi-tidy": ["pi-tidy@workspace:extensions/tidy"],
 
     "proper-lockfile": ["proper-lockfile@4.1.2", "", { "dependencies": { "graceful-fs": "4.2.11", "retry": "0.12.0", "signal-exit": "3.0.7" } }, "sha512-TjNPblN4BwAWMXU8s9AEz4JmQxnD1NNL7bNOY/AKUzyamc379FWASUhc/K1pL2noVb+XmZKLL68cjzLsiOAMaA=="],
 
