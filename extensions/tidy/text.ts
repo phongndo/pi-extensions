@@ -15,6 +15,8 @@ export type Args = Record<string, unknown>;
  * the terminal.
  */
 export function sanitize(text: string): string {
+  // Most output holds no controls, and escape sequences start with one: nothing to drop.
+  if (!UNSAFE.test(text)) return text;
   let out = "";
   for (const char of stripVTControlCharacters(text)) {
     if (char === "\t") out += "   ";
@@ -26,6 +28,10 @@ export function sanitize(text: string): string {
 /** C0 and C1 controls, DEL, and the interlinear annotation characters. */
 const isControl = (code: number) =>
   code < 0x20 || (code >= 0x7f && code <= 0x9f) || (code >= 0xfff9 && code <= 0xfffb);
+
+/** Any character `sanitize` would change: the controls above, tab included, newline not. */
+// oxlint-disable-next-line no-control-regex
+const UNSAFE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\ufff9-\ufffb]/;
 
 /** A single-line field, such as a path: a line break inside it shows as `\n`. */
 export const oneLine = (text: string): string => text.replace(/\n/g, "\\n");
